@@ -28,7 +28,7 @@ export function MetricsCompareTable({
 }) {
   return (
     <div className="max-h-[75svh] overflow-auto">
-      <table className="w-full border-separate border-spacing-0 text-sm">
+      <table className="border-separate border-spacing-0 text-sm">
         <caption className="sr-only">Metrics compared side by side</caption>
         <thead>
           <tr>
@@ -42,7 +42,7 @@ export function MetricsCompareTable({
               <th
                 key={person.entityId}
                 scope="col"
-                className="sticky top-0 z-10 border-b bg-card px-3 py-2 text-end font-medium"
+                className="sticky top-0 z-10 min-w-40 border-b bg-card px-3 py-2 text-end font-medium"
               >
                 <Link
                   to="/ic/$person/personal"
@@ -87,7 +87,7 @@ export function MetricsCompareTable({
                       key={person.entityId}
                       className={cn(
                         "border-b px-3 py-1.5 text-end tabular-nums",
-                        index === leader && "bg-primary/10 font-semibold",
+                        index === leader && "font-semibold",
                       )}
                     >
                       <MetricValue
@@ -95,14 +95,9 @@ export function MetricsCompareTable({
                         entityId={person.entityId}
                         personName={person.displayName}
                       />
-                      <span className="ms-2 inline-block w-14 text-start text-xs font-normal text-muted-foreground">
-                        {index === leader
-                          ? "highest"
-                          : gap == null
-                            ? ""
-                            : gap === 0
-                              ? "≈"
-                              : `−${Math.abs(gap)}%`}
+                      {index === leader ? <span className="sr-only"> (highest)</span> : null}
+                      <span className="ms-2 inline-block w-11 text-start text-xs font-normal text-muted-foreground">
+                        {gap == null ? "" : gap === 0 ? "≈" : `−${Math.abs(gap)}%`}
                       </span>
                     </td>
                   );
