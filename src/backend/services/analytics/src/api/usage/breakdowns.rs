@@ -7,9 +7,11 @@ use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
+use uuid::Uuid;
 
 use super::super::person_names::named_persons;
-use super::super::{AppState, require_admin};
+use super::super::roster_names::{self, Naming, Roster};
+use super::super::{AppState, forwarded_authorization, require_admin};
 use super::search::PersonSearch;
 use super::sort::{ActionsSort, Order, PagesSort, PeopleSort, SortKey};
 use super::{
@@ -29,21 +31,31 @@ fn by_page_sql(visitors: &str, order: Order<PagesSort>) -> String {
     )
 }
 
+#[derive(Debug)]
+struct PeopleSearch<'a> {
+    needle: &'a PersonSearch,
+    rostered: &'a [Uuid],
+}
+
 /// The one read whose binds do not match the shared window: the identity join
-/// scopes by tenant again, and a search names the tenant and the needle for its
-/// own lookup, so those values are bound here beside the `?`s that need them.
+/// scopes by tenant again, and a search names the tenant, the needle and the
+/// roster's matches for its own lookup, so those values are bound here beside
+/// the `?`s that need them.
 fn people_query(
     ch: &insight_clickhouse::Client,
     binds: &WindowBinds,
     order: Order<PeopleSort>,
-    search: Option<&PersonSearch>,
+    search: Option<&PeopleSearch<'_>>,
 ) -> clickhouse::query::Query {
     let mut query = binds.query(ch, &people_sql(order, search));
     if let Some(search) = search {
         query = query
             .bind(binds.tenant.as_str())
-            .bind(search.as_str())
-            .bind(search.as_str());
+            .bind(search.needle.as_str())
+            .bind(search.needle.as_str());
+        if !search.rostered.is_empty() {
+            query = query.bind(search.rostered);
+        }
     }
 
     query.bind(binds.tenant.as_str())
@@ -51,15 +63,20 @@ fn people_query(
 
 /// Names come from the mirrored identity rows; a per-caller profile lookup
 /// answers only for the caller's visible set, and this surface is org-wide.
-fn people_sql(order: Order<PeopleSort>, search: Option<&PersonSearch>) -> String {
+fn people_sql(order: Order<PeopleSort>, search: Option<&PeopleSearch<'_>>) -> String {
     let named = named_persons();
     let capped = order.clause("");
     let joined = order.clause("u.");
-    let matching = search.map_or_else(String::new, |_| {
+    let matching = search.map_or_else(String::new, |search| {
+        let rostered = if search.rostered.is_empty() {
+            ""
+        } else {
+            " OR person_id IN ?"
+        };
         format!(
-            " AND person_id IN (SELECT person_id FROM {named} \
+            " AND (person_id IN (SELECT person_id FROM {named} \
              WHERE positionCaseInsensitiveUTF8(display_name, ?) > 0 \
-             OR positionCaseInsensitiveUTF8(username, ?) > 0)"
+             OR positionCaseInsensitiveUTF8(username, ?) > 0){rostered})"
         )
     });
     format!(
@@ -90,16 +107,52 @@ fn actions_sql(visitors: &str, order: Order<ActionsSort>) -> String {
     )
 }
 
-#[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct UsagePersonRow {
+    person_id: String,
+    display_name: String,
+    username: String,
+    visits: u64,
+    page_views: u64,
+    last_seen: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UsagePerson {
     pub person_id: String,
-    /// Empty when the visitor has not been mirrored into the identity rows yet.
+    /// The roster's name when it lists the visitor, as People shows it; else
+    /// the identity rows', empty when they hold none.
     pub display_name: String,
-    /// The account handle, empty when no identity row carries one.
+    /// The account handle, empty when no source carries one.
     pub username: String,
+    /// The roster's address; absent for a visitor the roster does not list.
+    pub email: Option<String>,
     pub visits: u64,
     pub page_views: u64,
     pub last_seen: String,
+}
+
+fn named(row: UsagePersonRow, roster: &Roster) -> UsagePerson {
+    let listed = Uuid::parse_str(&row.person_id)
+        .ok()
+        .and_then(|id| roster.get(&id));
+    let naming = Naming::of(listed, row.display_name, row.username);
+
+    UsagePerson {
+        person_id: row.person_id,
+        display_name: naming.display_name,
+        username: naming.username,
+        email: naming.email,
+        visits: row.visits,
+        page_views: row.page_views,
+        last_seen: row.last_seen,
+    }
+}
+
+fn visitor_ids(rows: &[UsagePersonRow]) -> Vec<Uuid> {
+    rows.iter()
+        .filter_map(|row| Uuid::parse_str(&row.person_id).ok())
+        .collect()
 }
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
@@ -185,13 +238,27 @@ pub async fn get_usage_people(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
-    let (window, order, search) = query.plan()?;
+    let (window, order, needle) = query.plan()?;
     let binds = WindowBinds::new(&ctx, &window);
+    let authorization = forwarded_authorization(&headers);
 
-    let items = people_query(&state.ch, &binds, order, search.as_ref())
-        .fetch_all::<UsagePerson>()
+    let rostered = match &needle {
+        Some(needle) => {
+            roster_names::matching(&state.identity, needle.as_str(), authorization).await
+        }
+        None => Vec::new(),
+    };
+    let search = needle.as_ref().map(|needle| PeopleSearch {
+        needle,
+        rostered: &rostered,
+    });
+    let rows = people_query(&state.ch, &binds, order, search.as_ref())
+        .fetch_all::<UsagePersonRow>()
         .await
         .map_err(read_error)?;
+
+    let roster = roster_names::roster(&state.identity, &visitor_ids(&rows), authorization).await;
+    let items = rows.into_iter().map(|row| named(row, &roster)).collect();
 
     Ok(Json(UsagePeopleResponse {
         since: binds.since,
