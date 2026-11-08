@@ -115,16 +115,32 @@ describe("DIRECTION_LENSES registry", () => {
     expect(inFlight).toContain(IN_FLIGHT_METRICS.commits);
   });
 
-  it("shows how merged PRs split between people beside the commit split on Git output", () => {
+  it("measures Git output in merged PRs, with no commit figure left", () => {
     const gitOutput = lensEntry("dev", "Git output") as LensConfig;
-    const distributed = gitOutput.sections.flatMap((s) =>
-      s.kind === "distribution" ? [s.metric] : [],
+    const metricsOf = (kind: SectionSpec["kind"]) =>
+      gitOutput.sections
+        .filter((s) => s.kind === kind)
+        .flatMap((s) => sectionMetricKeys({ title: "t", sections: [s] }));
+
+    expect(metricsOf("headline")).toEqual([
+      "git.default_branch_prs_merged",
+      "git.default_branch_prs_created",
+      "git.pr_size",
+      "git.default_branch_code_lines",
+    ]);
+    expect(metricsOf("trend")).toEqual(["git.default_branch_prs_merged"]);
+    expect(metricsOf("concentration")).toEqual(["git.default_branch_prs_merged"]);
+    expect(sectionMetricKeys(gitOutput)).not.toContain("git.default_branch_commits");
+  });
+
+  it("lists every person by merged PRs on Git output, unfolded", () => {
+    const gitOutput = lensEntry("dev", "Git output") as LensConfig;
+    const perPerson = gitOutput.sections.flatMap((s) =>
+      s.kind === "contributors" ? [[s.metric, s.limit]] : [],
     );
 
-    expect(distributed).toEqual([
-      "git.default_branch_commits",
-      "git.default_branch_prs_merged",
-    ]);
+    expect(perPerson).toEqual([["git.default_branch_prs_merged", Infinity]]);
+    expect(gitOutput.sections.map((s) => s.kind)).not.toContain("distribution");
   });
 
   it("explains a derived dimension where a label cannot", () => {

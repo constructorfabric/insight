@@ -2,11 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { GROUPS } from "@/lib/insight/groups";
 import { ZONE_SECTIONS } from "@/lib/portal/nav-model";
-import {
-  sectionMetricKeys,
-  type LensConfig,
-  type SectionSpec,
-} from "@/lib/portal/lens-configs";
+import { sectionMetricKeys } from "@/lib/portal/lens-configs";
 import { DEFAULT_OVERVIEW_ITEM, OVERVIEW_ITEMS, overviewMetricKeys } from "./overview-configs";
 
 const KNOWN_KEYS = new Set(
@@ -15,12 +11,6 @@ const KNOWN_KEYS = new Set(
 const NAV_ITEM_IDS = (ZONE_SECTIONS.overview ?? []).flatMap((group) =>
   group.items.map((i) => i.id),
 );
-
-function metricsOf(config: LensConfig, kind: SectionSpec["kind"]): string[] {
-  return config.sections
-    .filter((s) => s.kind === kind)
-    .flatMap((s) => sectionMetricKeys({ title: "t", sections: [s] }));
-}
 
 describe("OVERVIEW_ITEMS registry", () => {
   it("covers every Overview pane item declared in nav-model", () => {
@@ -71,29 +61,6 @@ describe("OVERVIEW_ITEMS registry", () => {
         `headline is missing the ${family} family`,
       ).toBe(true);
     }
-  });
-
-  it("splits merged PRs between people on the contribution breakdown, not commits", () => {
-    const contribution = OVERVIEW_ITEMS.contribution!;
-
-    expect(metricsOf(contribution, "concentration")).toEqual([
-      "git.default_branch_prs_merged",
-    ]);
-    expect(metricsOf(contribution, "distribution")).toContain(
-      "git.default_branch_prs_merged",
-    );
-    expect(sectionMetricKeys(contribution)).not.toContain(
-      "git.default_branch_commits",
-    );
-  });
-
-  it("shows PR size on the contribution breakdown as its headline median alone", () => {
-    const contribution = OVERVIEW_ITEMS.contribution!;
-    const readers = contribution.sections.filter((s) =>
-      sectionMetricKeys({ title: "t", sections: [s] }).includes("git.pr_size"),
-    );
-
-    expect(readers.map((s) => s.kind)).toEqual(["headline"]);
   });
 
   it("direction-cards keys are variant-independent", () => {

@@ -22,7 +22,6 @@ def test_navigation_shows_every_expected_zone_and_entry(
             "At a glance": (),
             "By direction": (),
             "Attention needed": (),
-            "Contribution breakdown": (),
         },
         "Explore": {
             "Development": ("Git output", "Flow", "Repositories"),

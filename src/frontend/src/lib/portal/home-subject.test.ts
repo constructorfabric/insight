@@ -13,8 +13,8 @@ describe("homeSubject", () => {
 
 describe("homeItemShown", () => {
   it.each([
-    ["the contribution split, for a team", "team", "contribution", true],
-    ["the contribution split, for one person", "me", "contribution", false],
+    ["any theme, for a team", "team", "attention", true],
+    ["an item with no own view, for one person", "me", "nope", false],
     ["By direction, for one person", "me", "by-direction", true],
     ["the glance, for one person", "me", "at-a-glance", true],
   ] as const)("decides %s", (_case, subject, item, expected) => {

@@ -111,11 +111,6 @@ describe("<OverviewView>", () => {
       { canSeeOthers: false, item: "attention" },
       ["Attention for me-1"],
     ],
-    [
-      "an IC who opens the split of work between people: Home instead",
-      { canSeeOthers: false, item: "contribution" },
-      ["Recent dashboards", "Glance for me-1"],
-    ],
   ] as const)("shows %s", (_case, { canSeeOthers, item }, expected) => {
     viewer.canSeeOthers = canSeeOthers;
 
@@ -162,29 +157,6 @@ describe("<OverviewView>", () => {
     expect(screen.getByTestId("page-overview-by-direction")).toBeInTheDocument();
   });
 
-  it.each([false, true])(
-    "identifies Contribution only after the subject resolves (team: %s)",
-    (canSeeOthers) => {
-      viewer.reachPending = true;
-
-      const { rerender } = render(<OverviewView item="contribution" />);
-
-      expect(screen.getByRole("status")).toBeInTheDocument();
-      expect(
-        screen.queryByTestId("page-overview-contribution")
-      ).not.toBeInTheDocument();
-
-      viewer.reachPending = false;
-      viewer.canSeeOthers = canSeeOthers;
-      rerender(<OverviewView item="contribution" />);
-
-      const expected = canSeeOthers
-        ? "page-overview-contribution"
-        : "page-overview-at-a-glance";
-
-      expect(screen.getByTestId(expected)).toBeInTheDocument();
-    }
-  );
 
   it("says so for an item the registry does not have", () => {
     viewer.canSeeOthers = true;

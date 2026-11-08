@@ -26,13 +26,6 @@ def test_attention_needed_loads(ceo_portal: PortalPage) -> None:
     ceo_portal.verify_page_loaded("page-overview-attention")
 
 
-@pytest.mark.requires_seed("ceo")
-def test_contribution_breakdown_loads(ceo_portal: PortalPage) -> None:
-    ceo_portal.open_zone("Home")
-    ceo_portal.open_pane_entry("Contribution breakdown")
-    ceo_portal.verify_page_loaded("page-overview-contribution")
-
-
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.requires_custom_catalogue
 def test_my_dashboards_from_home_loads(admin_operator_portal: PortalPage) -> None:

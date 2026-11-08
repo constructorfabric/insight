@@ -22,7 +22,7 @@ import {
  * note naming what would enable it (design D1, rule 9).
  *
  * Metric MEANING stays server-owned; configs carry keys + section composition
- * only. No named individuals anywhere (design D4/rule 10).
+ * only.
  */
 
 export type ConcentrationFraming = "bus-factor" | "load-balance";
@@ -98,10 +98,6 @@ export type SectionSpec =
       dimension: string;
       title: string;
     }
-  // The people who carried one dimension value, ranked, with the leader's
-  // share called out. Only ever rendered inside a drilldown, where the value
-  // is already the subject — a leaderboard of the whole roster is a different
-  // thing and this is not it.
   | {
       kind: "contributors";
       metric: string;
@@ -577,36 +573,26 @@ const DEV: Record<string, LensEntry> = {
         kind: "headline",
         labelSource: "short",
         metrics: [
-          "git.default_branch_commits",
-          "git.default_branch_prs_created",
           "git.default_branch_prs_merged",
+          "git.default_branch_prs_created",
+          "git.pr_size",
           "git.default_branch_code_lines",
         ],
       },
       {
         kind: "trend",
-        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
-      },
-      {
-        kind: "distribution",
-        metric: "git.default_branch_commits",
-        title: "How many commits people made",
-        caption:
-          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
-        unitLabel: "commits per person",
-      },
-      {
-        kind: "distribution",
-        metric: "git.default_branch_prs_merged",
-        title: "How many PRs people merged",
-        caption:
-          "How many people fall in each band of merged pull requests — when the bars stretch far to the right, a few people account for most of it.",
-        unitLabel: "PRs merged per person",
+        metrics: ["git.default_branch_prs_merged"],
       },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
+      },
+      {
+        kind: "contributors",
+        metric: "git.default_branch_prs_merged",
+        title: "PRs merged per person",
+        limit: Infinity,
       },
       {
         kind: "composition",
