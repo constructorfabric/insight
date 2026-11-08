@@ -54,7 +54,7 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [{ kind: "direction-cards", variant: "full" }],
   },
   attention: {
-    title: "Overview · Attention needed",
+    title: "Overview · Worth a look",
     tagline: "who to look at",
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
   },
@@ -100,7 +100,7 @@ export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
   },
   attention: {
     kind: "attention",
-    title: "Attention needed",
+    title: "Worth a look",
     tagline: "what stands out in your work",
   },
 };

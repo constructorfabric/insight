@@ -181,7 +181,7 @@ describe("Home pane", () => {
   it("lists the themes and writes the selection on click", async () => {
     pane();
     const item = renderHook(() => usePortalItem());
-    await userEvent.click(screen.getByText("Attention needed"));
+    await userEvent.click(screen.getByText("Worth a look"));
     expect(item.result.current).toBe("attention");
   });
 

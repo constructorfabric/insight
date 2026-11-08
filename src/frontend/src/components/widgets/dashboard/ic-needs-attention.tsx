@@ -62,7 +62,7 @@ export function IcNeedsAttention({
   return (
     <section>
       {titled ? (
-        <h2 className={cn("mb-3", TEXT_EYEBROW)}>Needs attention</h2>
+        <h2 className={cn("mb-3", TEXT_EYEBROW)}>Worth a look</h2>
       ) : null}
       <Card data-size="sm">
         <CardContent className="text-sm">

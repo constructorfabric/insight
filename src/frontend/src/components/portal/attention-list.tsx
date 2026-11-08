@@ -162,7 +162,7 @@ export function AttentionList({
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        Needs attention
+        Worth a look
       </p>
 
       <Card>

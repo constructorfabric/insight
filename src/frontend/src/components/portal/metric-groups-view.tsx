@@ -202,7 +202,7 @@ export function MetricGroupsView({
   // The previous period counts as part of the picture: attention needs it to
   // tell a change from a standing, so a pending one is still loading and a
   // failed one is an error. Left out, a failed comparison would render as
-  // "nothing needs attention" — the most misleading empty state on the page.
+  // "nothing stands out" — the most misleading empty state on the page.
   //
   // The cohort's own results count too. Every comparison on the page is drawn
   // against them — `injectCohortPeer` only copies peer values that have
@@ -314,7 +314,7 @@ export function MetricGroupsView({
             />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Nothing needs attention this period.
+              Nothing stands out this period.
             </p>
           )
         ) : null}

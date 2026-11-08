@@ -219,6 +219,12 @@ describe("MetricGroupsView", () => {
     ).toBe(true);
   });
 
+  it("says nothing stands out when no metric is worth a look", () => {
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="attention" />);
+
+    expect(screen.getByText("Nothing stands out this period.")).toBeInTheDocument();
+  });
+
   it("asks for the sections over one window pair, not a shifted second request", () => {
     render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="glance" />);
     // Attention compares against the previous period. Asking for it over a

@@ -107,9 +107,14 @@ describe("<OverviewView>", () => {
       ["Lens Overview · By direction"],
     ],
     [
-      "an IC who opens Attention needed: their own list",
+      "an IC who opens Worth a look: their own list",
       { canSeeOthers: false, item: "attention" },
       ["Attention for me-1"],
+    ],
+    [
+      "a viewer with a cohort who opens Worth a look: the team's",
+      { canSeeOthers: true, item: "attention" },
+      ["Lens Overview · Worth a look"],
     ],
     [
       "an IC who opens the split of work between people: Home instead",
@@ -122,6 +127,14 @@ describe("<OverviewView>", () => {
     render(<OverviewView item={item} />);
 
     expect(shownSections(), `case: ${_case}`).toEqual(expected);
+  });
+
+  it("titles an IC's own list Worth a look", () => {
+    render(<OverviewView item="attention" />);
+
+    expect(
+      screen.getByRole("heading", { name: "Worth a look" })
+    ).toBeInTheDocument();
   });
 
   it("leaves out the glance for a viewer with no person record", () => {

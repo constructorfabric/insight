@@ -158,6 +158,11 @@ describe("AttentionList", () => {
     expect(link.querySelector(".lucide-arrow-down-right")).toBeNull();
   });
 
+  it("titles the list as worth a look", () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    expect(screen.getByText("Worth a look")).toBeInTheDocument();
+  });
+
   it("says so when nothing stands out", () => {
     render(<AttentionList flags={[]} summary="All steady." />);
     expect(

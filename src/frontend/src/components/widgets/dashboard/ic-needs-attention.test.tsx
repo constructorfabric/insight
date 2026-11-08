@@ -34,6 +34,13 @@ describe("IcNeedsAttention", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("titles the list as worth a look", () => {
+    render(<IcNeedsAttention items={[item()]} onOpenGroup={vi.fn()} />);
+    expect(
+      screen.getByRole("heading", { name: "Worth a look" })
+    ).toBeInTheDocument();
+  });
+
   it("renders items in the order it is given", () => {
     // Ranking moved to `orderAttentionItems`, next to the rule that produced
     // the items: which of two findings is the stronger is a question about

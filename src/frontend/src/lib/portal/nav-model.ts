@@ -264,7 +264,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
       items: [
         { id: "at-a-glance", label: "At a glance", icon: LayoutGrid },
         { id: "by-direction", label: "By direction", icon: Layers },
-        { id: "attention", label: "Attention needed", icon: AlertTriangle },
+        { id: "attention", label: "Worth a look", icon: AlertTriangle },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },
