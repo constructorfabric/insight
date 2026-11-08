@@ -23,6 +23,7 @@ import { AppTooltips, openTooltip } from "@/test/tooltip";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
+  layout: "wide" as "phone" | "narrow" | "wide",
   roster: [] as PeopleListItem[],
   definitions: [] as MetricDefinition[],
   requestedKeys: [] as readonly string[],
@@ -62,6 +63,9 @@ vi.mock("@/queries/metrics-view", () => ({
     mocks.requestedIds = ids;
     return mocks.data;
   },
+}));
+vi.mock("@/lib/portal/use-shell-layout", () => ({
+  useShellLayout: () => mocks.layout,
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
@@ -136,6 +140,7 @@ beforeEach(() => {
     identityPerson("b"),
   ]);
   mocks.personId = pid("boss");
+  mocks.layout = "wide";
   mocks.roster = peopleFromIdentityTree(tree);
   mocks.definitions = [
     definition("collab.messages", "Messages"),
@@ -472,6 +477,16 @@ describe("MetricsView", () => {
 
     expect(rowHeaders()).toEqual(["boss", "a", "b"]);
   });
+
+  it.each(["narrow", "phone"] as const)(
+    "leaves the menu to the shell's own drawer on a %s screen",
+    (layout) => {
+      mocks.layout = layout;
+      render(<MetricsView />);
+
+      expect(screen.queryByRole("button", { name: "Show menu" })).not.toBeInTheDocument();
+    },
+  );
 
   it("gives the menu back on request", async () => {
     const shown = renderHook(() => useMetricsViewPaneShown());

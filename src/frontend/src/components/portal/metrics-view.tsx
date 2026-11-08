@@ -43,6 +43,7 @@ import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalNavActions, usePortalScope } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
+import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { byFamily } from "@/lib/reports/families";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useMetricsViewData } from "@/queries/metrics-view";
@@ -202,13 +203,13 @@ export function MetricsView() {
 
 function PaneToggle() {
   const shown = useMetricsViewPaneShown();
+  if (useShellLayout() !== "wide") return null;
 
   return (
     <Button
       type="button"
       variant="ghost"
       size="sm"
-      className="hidden lg:inline-flex"
       icon={shown ? <PanelLeftClose /> : <PanelLeftOpen />}
       onClick={() => setMetricsViewPaneShown(!shown)}
     >
