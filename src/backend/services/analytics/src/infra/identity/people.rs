@@ -4,11 +4,16 @@ use uuid::Uuid;
 use super::IdentityClient;
 
 // INVARIANT: identity serves no more people than this in one page.
-const MAX_MATCHES: usize = 500;
+const PAGE_SIZE: usize = 500;
+
+// INVARIANT: the matches are bound into a ClickHouse query, which refuses one
+// past `max_query_size` (256 KiB by default, about 6,500 ids).
+const MAX_MATCHES: usize = 2_000;
 
 #[derive(Debug, Deserialize)]
 struct PeopleList {
     items: Vec<RosterPerson>,
+    next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,8 +41,10 @@ impl IdentityClient {
             .join(",");
         let limit = person_ids.len().to_string();
 
-        self.tenant_roster(&[("ids", &ids), ("limit", &limit)], authorization)
-            .await
+        let page = self
+            .tenant_roster(&[("ids", &ids), ("limit", &limit)], authorization)
+            .await?;
+        Ok(page.items)
     }
 
     pub(crate) async fn tenant_people_matching(
@@ -45,19 +52,33 @@ impl IdentityClient {
         needle: &str,
         authorization: Option<&str>,
     ) -> anyhow::Result<Vec<Uuid>> {
-        let limit = MAX_MATCHES.to_string();
-        let people = self
-            .tenant_roster(&[("q", needle), ("limit", &limit)], authorization)
-            .await?;
+        let limit = PAGE_SIZE.to_string();
+        let mut found = Vec::new();
+        let mut cursor: Option<String> = None;
 
-        Ok(people.into_iter().map(|person| person.person_id).collect())
+        loop {
+            let mut filter = vec![("q", needle), ("limit", limit.as_str())];
+            if let Some(cursor) = &cursor {
+                filter.push(("cursor", cursor));
+            }
+            let page = self.tenant_roster(&filter, authorization).await?;
+
+            found.extend(page.items.into_iter().map(|person| person.person_id));
+            cursor = page.next_cursor;
+            if cursor.is_none() || found.len() >= MAX_MATCHES {
+                break;
+            }
+        }
+
+        found.truncate(MAX_MATCHES);
+        Ok(found)
     }
 
     async fn tenant_roster(
         &self,
         filter: &[(&str, &str)],
         authorization: Option<&str>,
-    ) -> anyhow::Result<Vec<RosterPerson>> {
+    ) -> anyhow::Result<PeopleList> {
         let url = format!("{}/v1/people", self.base_url);
         let req = self
             .http
@@ -66,8 +87,7 @@ impl IdentityClient {
             .query(filter);
 
         let resp = Self::send(req, authorization, "tenant roster").await?;
-        let page: PeopleList = resp.json().await?;
-        Ok(page.items)
+        Ok(resp.json().await?)
     }
 }
 
@@ -90,6 +110,11 @@ mod tests {
     type Seen = Arc<Mutex<Vec<(Option<String>, HashMap<String, String>)>>>;
 
     async fn spawn_people(status: StatusCode, body: serde_json::Value) -> (String, Seen) {
+        spawn_pages(status, vec![body]).await
+    }
+
+    /// Serves `pages[n]` for `cursor=n`, and the last page past the end.
+    async fn spawn_pages(status: StatusCode, pages: Vec<serde_json::Value>) -> (String, Seen) {
         let seen: Seen = Arc::default();
         let record = Arc::clone(&seen);
         let app = Router::new().route(
@@ -97,7 +122,12 @@ mod tests {
             get(
                 move |headers: HeaderMap, Query(params): Query<HashMap<String, String>>| {
                     let record = Arc::clone(&record);
-                    let body = body.clone();
+                    let at = params
+                        .get("cursor")
+                        .and_then(|cursor| cursor.parse::<usize>().ok())
+                        .unwrap_or(0)
+                        .min(pages.len() - 1);
+                    let body = pages[at].clone();
                     async move {
                         let auth = headers
                             .get(AUTHORIZATION)
@@ -196,5 +226,51 @@ mod tests {
         assert_eq!(auth.as_deref(), Some("Bearer t"));
         assert_eq!(params.get("visibility").map(String::as_str), Some("tenant"));
         assert_eq!(params.get("q").map(String::as_str), Some("Example"));
+    }
+
+    fn page(ids: &[Uuid], next: Option<&str>) -> serde_json::Value {
+        let items: Vec<serde_json::Value> = ids
+            .iter()
+            .map(|id| serde_json::json!({"person_id": id.to_string()}))
+            .collect();
+
+        serde_json::json!({"items": items, "next_cursor": next})
+    }
+
+    #[tokio::test]
+    async fn a_search_reads_every_roster_page_with_the_same_query_and_caller() {
+        let ada = Uuid::from_u128(0xa);
+        let bob = Uuid::from_u128(0xb);
+        let (url, seen) = spawn_pages(
+            StatusCode::OK,
+            vec![page(&[ada], Some("1")), page(&[bob], None)],
+        )
+        .await;
+        let client = IdentityClient::new(&url).unwrap();
+
+        let found = client
+            .tenant_people_matching("Example", Some("Bearer t"))
+            .await
+            .unwrap();
+
+        assert_eq!(found, vec![ada, bob]);
+        let seen = seen.lock().unwrap();
+        let (auth, params) = &seen[1];
+        assert_eq!(auth.as_deref(), Some("Bearer t"));
+        assert_eq!(params.get("cursor").map(String::as_str), Some("1"));
+        assert_eq!(params.get("q").map(String::as_str), Some("Example"));
+        assert_eq!(params.get("visibility").map(String::as_str), Some("tenant"));
+    }
+
+    #[tokio::test]
+    async fn a_search_stops_at_the_matches_one_query_can_carry() {
+        let full: Vec<Uuid> = (1..=500).map(Uuid::from_u128).collect();
+        let (url, seen) = spawn_pages(StatusCode::OK, vec![page(&full, Some("1"))]).await;
+        let client = IdentityClient::new(&url).unwrap();
+
+        let found = client.tenant_people_matching("a", None).await.unwrap();
+
+        assert_eq!(found.len(), MAX_MATCHES);
+        assert_eq!(seen.lock().unwrap().len(), MAX_MATCHES / 500);
     }
 }
