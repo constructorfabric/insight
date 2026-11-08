@@ -212,7 +212,7 @@ fn a_search_the_roster_matches_nobody_by_binds_no_empty_set() -> R {
 
 fn visited(person_id: Uuid, display_name: &str) -> UsagePersonRow {
     UsagePersonRow {
-        person_id: person_id.to_string(),
+        person_id,
         display_name: display_name.to_owned(),
         username: display_name.to_owned(),
         visits: 2,

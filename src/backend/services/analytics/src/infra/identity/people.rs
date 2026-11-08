@@ -3,10 +3,10 @@ use uuid::Uuid;
 
 use super::IdentityClient;
 
-/// Identity's own cap on one `ids` lookup.
+// INVARIANT: identity refuses more ids than this in one lookup.
 const MAX_IDS: usize = 200;
 
-/// Identity's own cap on one page.
+// INVARIANT: identity serves no more people than this in one page.
 const MAX_MATCHES: usize = 500;
 
 #[derive(Debug, Deserialize)]
@@ -23,7 +23,6 @@ pub(crate) struct RosterPerson {
 }
 
 impl IdentityClient {
-    /// A person the roster does not list is absent from the answer.
     pub(crate) async fn tenant_people(
         &self,
         person_ids: &[Uuid],
@@ -79,7 +78,10 @@ impl IdentityClient {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "a loopback setup failure should fail the test loudly"
+)]
 mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

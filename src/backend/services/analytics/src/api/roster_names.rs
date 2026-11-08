@@ -83,54 +83,43 @@ mod tests {
         }
     }
 
+    fn naming(display_name: &str, username: &str, email: Option<&str>) -> Naming {
+        Naming {
+            display_name: display_name.to_owned(),
+            username: username.to_owned(),
+            email: email.map(str::to_owned),
+        }
+    }
+
     #[test]
-    fn a_person_on_the_roster_is_named_as_people_names_them() {
-        let person = rostered(
+    fn the_roster_names_a_person_it_lists_and_the_journal_names_anyone_else() {
+        let named = rostered(
             Some("Ada Example"),
             Some("aexample"),
             Some("ada@example.com"),
         );
+        let nameless = rostered(None, None, Some("ada@example.com"));
+        let cases = [
+            (
+                "on the roster",
+                Some(&named),
+                naming("Ada Example", "aexample", Some("ada@example.com")),
+            ),
+            (
+                "on the roster with no name",
+                Some(&nameless),
+                naming("", "", Some("ada@example.com")),
+            ),
+            ("off the roster", None, naming("ada", "ada", None)),
+        ];
 
-        let naming = Naming::of(Some(&person), "ada".to_owned(), "ada".to_owned());
-
-        assert_eq!(
-            naming,
-            Naming {
-                display_name: "Ada Example".to_owned(),
-                username: "aexample".to_owned(),
-                email: Some("ada@example.com".to_owned()),
-            }
-        );
-    }
-
-    #[test]
-    fn the_roster_alone_names_a_person_it_lists_even_where_it_holds_no_name() {
-        let person = rostered(None, None, Some("ada@example.com"));
-
-        let naming = Naming::of(Some(&person), "ada".to_owned(), "ada".to_owned());
-
-        assert_eq!(
-            naming,
-            Naming {
-                display_name: String::new(),
-                username: String::new(),
-                email: Some("ada@example.com".to_owned()),
-            }
-        );
-    }
-
-    #[test]
-    fn a_person_off_the_roster_keeps_the_journal_name() {
-        let naming = Naming::of(None, "bob".to_owned(), "bob".to_owned());
-
-        assert_eq!(
-            naming,
-            Naming {
-                display_name: "bob".to_owned(),
-                username: "bob".to_owned(),
-                email: None,
-            }
-        );
+        for (case, person, expected) in cases {
+            assert_eq!(
+                Naming::of(person, "ada".to_owned(), "ada".to_owned()),
+                expected,
+                "{case}"
+            );
+        }
     }
 
     #[tokio::test]

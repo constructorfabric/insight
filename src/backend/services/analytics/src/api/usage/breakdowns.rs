@@ -37,10 +37,14 @@ struct PeopleSearch<'a> {
     rostered: &'a [Uuid],
 }
 
-/// The one read whose binds do not match the shared window: the identity join
-/// scopes by tenant again, and a search names the tenant, the needle and the
-/// roster's matches for its own lookup, so those values are bound here beside
-/// the `?`s that need them.
+impl PeopleSearch<'_> {
+    fn roster_filter(&self) -> Option<&[Uuid]> {
+        (!self.rostered.is_empty()).then_some(self.rostered)
+    }
+}
+
+// INVARIANT: binds follow the placeholders — the window, then a search's
+// tenant, needle twice and roster hits, then the identity join's tenant.
 fn people_query(
     ch: &insight_clickhouse::Client,
     binds: &WindowBinds,
@@ -53,8 +57,8 @@ fn people_query(
             .bind(binds.tenant.as_str())
             .bind(search.needle.as_str())
             .bind(search.needle.as_str());
-        if !search.rostered.is_empty() {
-            query = query.bind(search.rostered);
+        if let Some(rostered) = search.roster_filter() {
+            query = query.bind(rostered);
         }
     }
 
@@ -68,10 +72,10 @@ fn people_sql(order: Order<PeopleSort>, search: Option<&PeopleSearch<'_>>) -> St
     let capped = order.clause("");
     let joined = order.clause("u.");
     let matching = search.map_or_else(String::new, |search| {
-        let rostered = if search.rostered.is_empty() {
-            ""
-        } else {
+        let rostered = if search.roster_filter().is_some() {
             " OR person_id IN ?"
+        } else {
+            ""
         };
         format!(
             " AND (person_id IN (SELECT person_id FROM {named} \
@@ -80,7 +84,7 @@ fn people_sql(order: Order<PeopleSort>, search: Option<&PeopleSearch<'_>>) -> St
         )
     });
     format!(
-        "SELECT toString(u.person) AS person_id, \
+        "SELECT u.person AS person_id, \
          coalesce(p.display_name, '') AS display_name, \
          coalesce(p.username, '') AS username, \
          u.visits AS visits, u.page_views AS page_views, u.last_seen AS last_seen \
@@ -109,7 +113,8 @@ fn actions_sql(visitors: &str, order: Order<ActionsSort>) -> String {
 
 #[derive(Debug, Deserialize, clickhouse::Row)]
 struct UsagePersonRow {
-    person_id: String,
+    #[serde(with = "clickhouse::serde::uuid")]
+    person_id: Uuid,
     display_name: String,
     username: String,
     visits: u64,
@@ -133,13 +138,10 @@ pub struct UsagePerson {
 }
 
 fn named(row: UsagePersonRow, roster: &Roster) -> UsagePerson {
-    let listed = Uuid::parse_str(&row.person_id)
-        .ok()
-        .and_then(|id| roster.get(&id));
-    let naming = Naming::of(listed, row.display_name, row.username);
+    let naming = Naming::of(roster.get(&row.person_id), row.display_name, row.username);
 
     UsagePerson {
-        person_id: row.person_id,
+        person_id: row.person_id.to_string(),
         display_name: naming.display_name,
         username: naming.username,
         email: naming.email,
@@ -150,9 +152,7 @@ fn named(row: UsagePersonRow, roster: &Roster) -> UsagePerson {
 }
 
 fn visitor_ids(rows: &[UsagePersonRow]) -> Vec<Uuid> {
-    rows.iter()
-        .filter_map(|row| Uuid::parse_str(&row.person_id).ok())
-        .collect()
+    rows.iter().map(|row| row.person_id).collect()
 }
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
