@@ -70,3 +70,22 @@ describe("synthetic metrics follow the catalog", () => {
     expect(values.every((v) => v >= 0 && v <= 100), `out of range: ${values}`).toBe(true);
   });
 });
+
+describe("synthetic breakdowns per period", () => {
+  it.each(["breakdown", "rollup"] as const)("answers a different %s when the period changes", (view) => {
+    const valuesIn = (period: MetricResultsRequest["period"]) =>
+      JSON.stringify(
+        buildMetricResultsResponse({
+          ...request,
+          period,
+          metrics: [
+            { metric_key: "git.commits", views: [{ view, dimensions: ["repository"] }] },
+          ],
+        }).metrics[0]!.views[0],
+      );
+
+    expect(valuesIn({ from: "2026-09-08", to: "2026-09-14" })).not.toBe(
+      valuesIn({ from: "2026-08-15", to: "2026-09-14" }),
+    );
+  });
+});

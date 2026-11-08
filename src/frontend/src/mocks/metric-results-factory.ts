@@ -249,7 +249,7 @@ export function buildMetricResultsResponse(
                     label: pick.label,
                   };
                 }),
-                value: inFormat(valueFor(entityId, key, dimension.value), meta.format),
+                value: inFormat(valueFor(entityId, keyInPeriod, dimension.value), meta.format),
               })),
             ),
           };
@@ -264,7 +264,7 @@ export function buildMetricResultsResponse(
                 value: dimension.value,
                 label: dimension.label,
               })),
-              value: inFormat(valueFor("rollup", key, dimension.value), meta.format),
+              value: inFormat(valueFor("rollup", keyInPeriod, dimension.value), meta.format),
               contributing_entity_count: ids.length,
             })),
           };
