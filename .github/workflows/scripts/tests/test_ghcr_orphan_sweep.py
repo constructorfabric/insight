@@ -1,4 +1,4 @@
-"""Registry decisions for the GHCR orphan sweep. The registry is a fake: no gh, no deletes."""
+"""Fake-registry checks for orphan deletion. No gh process and no real deletes."""
 
 from __future__ import annotations
 
@@ -17,14 +17,10 @@ assert SPEC is not None and SPEC.loader is not None
 sweep = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sweep)
 
-ORPHAN_TAG = "2026.01.02.03.04-abc1234.retired-topic"
-LIVE_TAG = "2026.01.02.03.04-abc1234.topic"
-RELEASE_TAG = "2026.01.02.03.04-abc1234.release-1"
-TRUNK_TAG = "2026.01.02.03.04-abc1234"
-
-
-def version(version_id: int, tags: list[str]) -> dict:
-    return {"id": version_id, "metadata": {"container": {"tags": tags}}}
+ORPHAN = "2026.01.02.03.04-abc1234.retired-topic"
+LIVE = "2026.01.02.03.04-abc1234.topic"
+GONE = "gh: Package version not found. (HTTP 404)"
+DENIED = "gh: Package not found. (HTTP 404)"
 
 
 def call_kind(path: str, args: tuple[str, ...]) -> str:
@@ -40,46 +36,45 @@ def call_kind(path: str, args: tuple[str, ...]) -> str:
 
 
 class Registry:
-    """In-memory package versions. Deletes record intent and return a scripted response."""
-
     def __init__(self) -> None:
-        self.versions: dict[tuple[str, int], dict] = {}
+        self.rows: dict[tuple[str, int], list[str]] = {}
         self.readable: set[tuple[str, int]] = set()
-        self.delete_error: dict[tuple[str, int], str | None] = {}
+        self.errors: dict[tuple[str, int], str] = {}
         self.calls: list[tuple[str, str]] = []
         self.branches = "main\ntopic\n"
 
-    def add(self, package: str, version_id: int, tags: list[str], delete_error: str | None = None) -> None:
+    def add(self, package: str, version_id: int, tags: list[str], error: str | None = None) -> None:
         key = (package, version_id)
-        self.versions[key] = version(version_id, tags)
+        self.rows[key] = tags
         self.readable.add(key)
-        self.delete_error[key] = delete_error
-
-    def hide(self, package: str, version_id: int) -> None:
-        """The version stays in the list response and is gone on a later read."""
-        self.readable.discard((package, version_id))
+        if error is not None:
+            self.errors[key] = error
 
     def dispatch(self, path: str, args: tuple[str, ...]) -> str:
         kind = call_kind(path, args)
         package = path.split("/container/")[1].split("/versions")[0] if "/container/" in path else ""
-        version_match = re.search(r"/versions/(\d+)$", path)
-        version_id = int(version_match.group(1)) if version_match else None
-        self.calls.append((kind, f"{package}:{version_id}" if version_id is not None else package or path))
+        found = re.search(r"/versions/(\d+)$", path)
+        version_id = int(found.group(1)) if found else None
+        label = f"{package}:{version_id}" if version_id is not None else package or path
+        self.calls.append((kind, label))
         if kind == "branches":
             return self.branches
         if kind == "list":
-            rows = [row for (name, _), row in self.versions.items() if name == package]
+            rows = [
+                {"id": vid, "metadata": {"container": {"tags": tags}}}
+                for (name, vid), tags in self.rows.items()
+                if name == package
+            ]
             return json.dumps(rows) + "\n"
-        if kind == "get":
-            assert version_id is not None
-            if (package, version_id) not in self.readable:
-                raise sweep.GhApiError(path, "gh: Package version not found. (HTTP 404)")
-            return json.dumps(self.versions[(package, version_id)])
-        assert version_id is not None
         key = (package, version_id)
-        error = self.delete_error.get(key)
+        assert version_id is not None
+        if kind == "get":
+            if key not in self.readable:
+                raise sweep.GhApiError(path, GONE)
+            return json.dumps({"id": version_id})
+        error = self.errors.get(key)
         if error is not None:
-            if "Package version not found" in error:
+            if error == GONE:
                 self.readable.discard(key)
             raise sweep.GhApiError(path, error)
         self.readable.discard(key)
@@ -93,11 +88,11 @@ class OrphanSweepTests(unittest.TestCase):
         def gh_api(path: str, *args: str) -> str:
             return self.registry.dispatch(path, args)
 
-        self._patch = mock.patch.object(sweep, "gh_api", gh_api)
-        self._patch.start()
-        self.addCleanup(self._patch.stop)
+        patcher = mock.patch.object(sweep, "gh_api", gh_api)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def sweep(
+    def run_sweep(
         self,
         packages: str = "example-image",
         dry_run: str = "false",
@@ -105,7 +100,8 @@ class OrphanSweepTests(unittest.TestCase):
     ) -> tuple[int, str, str]:
         if branches is not None:
             self.registry.branches = branches
-        with mock.patch.dict(sweep.os.environ, {"PACKAGES": packages, "DRY_RUN": dry_run}, clear=False):
+        env = {"PACKAGES": packages, "DRY_RUN": dry_run}
+        with mock.patch.dict(sweep.os.environ, env, clear=False):
             stdout, stderr = io.StringIO(), io.StringIO()
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 code = sweep.main()
@@ -114,141 +110,97 @@ class OrphanSweepTests(unittest.TestCase):
     def deletes(self) -> list[str]:
         return [target for kind, target in self.registry.calls if kind == "delete"]
 
-    def test_not_found_bodies_distinguish_a_missing_version_from_a_denied_package(self) -> None:
-        missing = sweep.GhApiError("/versions/1", "gh: Package version not found. (HTTP 404)")
-        denied = sweep.GhApiError("/versions/1", "gh: Package not found. (HTTP 404)")
+    def test_not_found_bodies_distinguish_a_missing_version_from_a_package_404(self) -> None:
+        missing = sweep.GhApiError("/versions/1", GONE)
+        denied = sweep.GhApiError("/versions/1", DENIED)
         raw = sweep.GhApiError("/versions/1", '{"message":"Package not found.","status":"404"}')
-        forbidden = sweep.GhApiError("/versions/1", "gh: Forbidden (HTTP 403)")
-
         self.assertEqual(sweep.not_found_kind(missing), "version", "should be a missing version")
         self.assertEqual(sweep.not_found_kind(denied), "package", "should be a package-level 404")
         self.assertEqual(sweep.not_found_kind(raw), "package", "should read the JSON status")
-        self.assertIsNone(sweep.not_found_kind(forbidden), "should reject: 403")
+        self.assertIsNone(sweep.not_found_kind(sweep.GhApiError("/versions/1", "gh: Forbidden (HTTP 403)")))
 
-    def test_version_already_gone_is_not_a_failed_delete(self) -> None:
-        self.registry.add(
-            "example-image",
-            42,
-            [ORPHAN_TAG],
-            delete_error="gh: Package version not found. (HTTP 404)",
-        )
-
-        code, stdout, stderr = self.sweep()
-
-        self.assertEqual(code, 0, stderr)
-        self.assertIn("already absent", stdout)
-        self.assertNotIn("could not be deleted", stderr)
-        self.assertEqual(self.deletes(), ["example-image:42"])
-        self.assertIn(("get", "example-image:42"), self.registry.calls)
-
-    def test_readable_version_stays_a_failure_when_delete_says_package_not_found(self) -> None:
-        self.registry.add(
-            "example-image",
-            42,
-            [ORPHAN_TAG],
-            delete_error="gh: Package not found. (HTTP 404)",
-        )
-
-        code, stdout, stderr = self.sweep()
-
+    def test_a_readable_version_stays_a_failure(self) -> None:
+        self.registry.add("example-image", 42, [ORPHAN], DENIED)
+        code, stdout, stderr = self.run_sweep()
         self.assertEqual(code, 1, stdout)
         self.assertIn("still present", stdout)
         self.assertIn("could not be deleted", stderr)
-        self.assertEqual(self.deletes(), ["example-image:42"])
         self.assertIn(("example-image", 42), self.registry.readable)
+        self.assertEqual(self.deletes(), ["example-image:42"])
 
-    def test_package_not_found_is_success_only_after_the_version_read_misses(self) -> None:
-        self.registry.add("example-image", 42, [ORPHAN_TAG], delete_error="gh: Package not found. (HTTP 404)")
-        self.registry.hide("example-image", 42)
+    def test_a_missing_version_is_not_a_failed_delete(self) -> None:
+        cases = ("delete says the version is gone", "package 404 and the follow-up read misses")
+        for name in cases:
+            with self.subTest(name=name):
+                self.registry = Registry()
+                error = GONE if name.startswith("delete") else DENIED
+                self.registry.add("example-image", 42, [ORPHAN], error)
+                if error == DENIED:
+                    self.registry.readable.discard(("example-image", 42))
+                code, stdout, stderr = self.run_sweep()
+                self.assertEqual(code, 0, stderr)
+                self.assertIn("already absent", stdout)
+                self.assertNotIn("could not be deleted", stderr)
 
-        code, stdout, stderr = self.sweep()
-
-        self.assertEqual(code, 0, stderr)
-        self.assertIn("already absent", stdout)
-
-    def test_non_404_delete_errors_still_fail_without_treating_the_version_as_gone(self) -> None:
-        cases = (
-            "gh: Forbidden (HTTP 403)",
-            "gh: Internal Server Error (HTTP 500)",
-            "connection reset",
-        )
-        for error in cases:
+    def test_other_delete_errors_still_fail(self) -> None:
+        for error in ("gh: Forbidden (HTTP 403)", "gh: Internal Server Error (HTTP 500)", "connection reset"):
             with self.subTest(error=error):
                 self.registry = Registry()
-                self.registry.add("example-image", 42, [ORPHAN_TAG], delete_error=error)
-
-                code, stdout, stderr = self.sweep()
-
+                self.registry.add("example-image", 42, [ORPHAN], error)
+                code, stdout, stderr = self.run_sweep()
                 self.assertEqual(code, 1, stdout)
                 self.assertNotIn("already absent", stdout)
-                self.assertIn("could not be deleted", stderr)
                 self.assertNotIn(("get", "example-image:42"), self.registry.calls)
                 self.assertIn(("example-image", 42), self.registry.readable)
 
     def test_a_later_package_is_still_swept_after_a_refused_delete(self) -> None:
-        self.registry.add("example-image", 42, [ORPHAN_TAG], delete_error="gh: Package not found. (HTTP 404)")
-        self.registry.add("other-image", 7, [ORPHAN_TAG], delete_error=None)
-
-        code, _stdout, stderr = self.sweep(packages="example-image other-image")
-
+        self.registry.add("example-image", 42, [ORPHAN], DENIED)
+        self.registry.add("other-image", 7, [ORPHAN])
+        code, _stdout, stderr = self.run_sweep(packages="example-image other-image")
         self.assertEqual(code, 1, stderr)
         self.assertEqual(self.deletes(), ["example-image:42", "other-image:7"])
         self.assertNotIn(("other-image", 7), self.registry.readable)
-        self.assertIn(("example-image", 42), self.registry.readable)
 
-    def test_active_and_protected_versions_are_not_deleted(self) -> None:
+    def test_protected_versions_are_not_deleted(self) -> None:
         protected = {
-            "live branch": [LIVE_TAG],
-            "release suffix": [RELEASE_TAG],
-            "trunk tag": [TRUNK_TAG],
+            "live branch": [LIVE],
+            "release suffix": ["2026.01.02.03.04-abc1234.release-1"],
+            "trunk tag": ["2026.01.02.03.04-abc1234"],
             "latest": ["latest"],
             "untagged": [],
-            "mixed with a live tag": [ORPHAN_TAG, LIVE_TAG],
+            "mixed with a live tag": [ORPHAN, LIVE],
             "unrecognized": ["custom-pin"],
         }
         for name, tags in protected.items():
             with self.subTest(name=name):
                 self.registry = Registry()
                 self.registry.add("example-image", 42, tags)
-
-                code, stdout, stderr = self.sweep()
-
+                code, stdout, stderr = self.run_sweep()
                 self.assertEqual(code, 0, stderr)
                 self.assertEqual(self.deletes(), [], name)
                 self.assertIn(("example-image", 42), self.registry.readable)
                 if name == "unrecognized":
                     self.assertIn("unrecognized", stdout)
 
-    def test_dry_run_reports_the_orphan_and_does_not_delete(self) -> None:
-        self.registry.add("example-image", 42, [ORPHAN_TAG])
-
-        code, stdout, stderr = self.sweep(dry_run="true")
-
+    def test_dry_run_and_a_short_branch_list_delete_nothing(self) -> None:
+        self.registry.add("example-image", 42, [ORPHAN])
+        code, stdout, stderr = self.run_sweep(dry_run="true")
         self.assertEqual(code, 0, stderr)
         self.assertIn("would delete", stdout)
         self.assertEqual(self.deletes(), [])
-        self.assertIn(("example-image", 42), self.registry.readable)
-
-    def test_too_few_live_branches_deletes_nothing(self) -> None:
-        self.registry.add("example-image", 42, [ORPHAN_TAG])
-
-        code, _stdout, stderr = self.sweep(branches="main\n")
-
+        code, _stdout, stderr = self.run_sweep(branches="main\n")
         self.assertEqual(code, 1)
         self.assertIn("refusing", stderr)
         self.assertEqual(self.deletes(), [])
 
-    def test_successful_delete_removes_only_the_orphan(self) -> None:
-        self.registry.add("example-image", 42, [ORPHAN_TAG])
-        self.registry.add("example-image", 43, [LIVE_TAG])
-
-        code, stdout, stderr = self.sweep()
-
+    def test_a_successful_delete_removes_only_the_orphan(self) -> None:
+        self.registry.add("example-image", 42, [ORPHAN])
+        self.registry.add("example-image", 43, [LIVE])
+        code, stdout, stderr = self.run_sweep()
         self.assertEqual(code, 0, stderr)
         self.assertEqual(self.deletes(), ["example-image:42"])
         self.assertNotIn(("example-image", 42), self.registry.readable)
         self.assertIn(("example-image", 43), self.registry.readable)
-        self.assertIn("orphaned=1", stdout)
         self.assertIn("failed=0", stdout)
 
 

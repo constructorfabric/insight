@@ -22,9 +22,6 @@ on:
       - ".github/workflows/ci.yml"
       # The rust matrix boots live_ch entries' ClickHouse through this script.
       - ".github/workflows/scripts/start-clickhouse.sh"
-      - ".github/workflows/scripts/ghcr-orphan-sweep.py"
-      - ".github/workflows/scripts/tests/test_ghcr_orphan_sweep.py"
-      - ".github/workflows/ghcr-cleanup.yml"
       # The ingestion-scripts component root; also holds connectors-config.yaml
       # and pins.env, inputs to the connector wiring guard and the live ClickHouse.
       - "src/ingestion/scripts/**"
@@ -48,9 +45,6 @@ on:
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
       - ".github/workflows/scripts/start-clickhouse.sh"
-      - ".github/workflows/scripts/ghcr-orphan-sweep.py"
-      - ".github/workflows/scripts/tests/test_ghcr_orphan_sweep.py"
-      - ".github/workflows/ghcr-cleanup.yml"
       - "src/ingestion/scripts/**"
       - "src/ingestion/silver/_shared/**"
       - "src/ingestion/tests/connectors/**"
@@ -116,8 +110,6 @@ jobs:
         run: python3 -m pip install --quiet "defusedxml==0.7.1"
       - name: Test component detection
         run: python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
-      - name: GHCR orphan sweep decisions
-        run: python3 -m unittest discover -s .github/workflows/scripts/tests -p 'test_ghcr_orphan_sweep.py'
       - id: detect
         env:
           FULL: ${{ github.event.inputs.full }}

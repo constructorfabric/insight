@@ -160,7 +160,7 @@ def list_versions(package: str) -> list[dict] | None:
 def version_is_absent(package: str, version_id: int, delete_error: GhApiError) -> bool:
     """Whether a failed delete left the version gone."""
     # SAFETY: a DELETE 404 is absence only when a follow-up read reports
-    # "Package version not found". The same status denies a token that can still read the version.
+    # "Package version not found". A version that is still readable was not deleted.
     if http_status(delete_error) != 404:
         return False
 
@@ -173,10 +173,7 @@ def version_is_absent(package: str, version_id: int, delete_error: GhApiError) -
         detail = f"{delete_error.stderr}; follow-up read: {err.stderr}"
         raise GhApiError(delete_error.path, detail) from err
 
-    detail = (
-        f"{delete_error.stderr}; version is still present and was not deleted. "
-        "GitHub returns HTTP 404 Package not found on DELETE when the token lacks admin on the package."
-    )
+    detail = f"{delete_error.stderr}; version is still present and was not deleted"
     raise GhApiError(delete_error.path, detail)
 
 
