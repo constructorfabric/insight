@@ -576,8 +576,6 @@ impl ClickHouseEvidenceReader {
         }
     }
 
-    /// Every source type that has reported an account, sorted and distinct.
-    ///
     /// # Errors
     ///
     /// Returns an error if the query fails.
