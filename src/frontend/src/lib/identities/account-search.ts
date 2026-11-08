@@ -10,12 +10,8 @@ function anchoredToSegment(value: string): string {
   return `_${value.toLowerCase().replaceAll("-", "_")}`;
 }
 
-/**
- * INVARIANT: mirrors the listing's filter in the identity-resolution service
- * (`FILTER_SQL`, `SOURCE_SEGMENTS_SQL`, `NEEDLE_SEGMENT_SQL` in
- * `infra/identity_evidence.rs`) so a narrowed Unmatched block and the listing
- * beneath it answer one typed term the same way.
- */
+/** INVARIANT: mirrors `FILTER_SQL` and the source-segment match in
+ * identity-resolution's `infra/identity_evidence.rs`. */
 export function matchesAccountSearch(
   account: SearchableAccount,
   needle: string
