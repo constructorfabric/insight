@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { headlineMetricKeys } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import type { PeopleListItem } from "@/api/identity-client";
 import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
@@ -102,8 +103,6 @@ beforeEach(() => {
   mocks.roster = peopleFromIdentityTree(mocks.tree);
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
-  // git.default_branch_prs_merged is a real headline key (GROUPS card.preview) — the view
-  // only renders columns from that set.
   mocks.grid.byKey = new Map([
     ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", [[pid("boss"), 50], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "PRs merged" })],
     // a ratio metric: must roll up as MEDIAN, not a summed percentage
@@ -123,6 +122,10 @@ beforeEach(() => {
 });
 
 describe("TeamStateView", () => {
+  it("seeds its counter with a metric the view draws a column for", () => {
+    expect(headlineMetricKeys()).toContain("git.default_branch_prs_merged");
+  });
+
   it("renders the scope header and every member row", () => {
     render(<TeamStateView />);
     expect(screen.getByText("boss's team")).toBeInTheDocument();

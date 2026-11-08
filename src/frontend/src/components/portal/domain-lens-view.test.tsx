@@ -1247,7 +1247,6 @@ describe("direction-cards / attention sections", () => {
   });
 
   it("compares a direction card's per-person figure, not the team total", () => {
-    // Same 40-PR total both periods; two people carried it before, four now.
     mocks.grid.byKey = new Map([
       ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", IDS.map((id) => [id, 10] as [string, number]))],
     ]);

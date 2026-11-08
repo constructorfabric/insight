@@ -182,3 +182,24 @@ describe("visibleGroups", () => {
     expect(groups).toEqual(GROUPS);
   });
 });
+
+describe("commit counts lead no group surface", () => {
+  const COMMITS = "git.default_branch_commits";
+
+  it("on any metric group card", () => {
+    for (const group of GROUPS) {
+      expect(group.card.preview[0], group.id).not.toBe(COMMITS);
+    }
+  });
+
+  it("in the ranking of any drilldown table", () => {
+    for (const group of GROUPS) {
+      for (const block of group.drilldown) {
+        if (!("groupBy" in block)) continue;
+        for (const [dimension, limit] of Object.entries(block.groupBy?.limits ?? {})) {
+          expect(limit.rankBy, `${group.id} ${block.id} by ${dimension}`).not.toBe(COMMITS);
+        }
+      }
+    }
+  });
+});

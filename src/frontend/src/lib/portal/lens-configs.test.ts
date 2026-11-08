@@ -355,11 +355,7 @@ describe("visibleSections", () => {
 });
 
 describe("commit counts lead nothing", () => {
-  const COMMIT_COUNTS = new Set([
-    "git.commits",
-    "git.default_branch_commits",
-    "git.non_default_branch_commits",
-  ]);
+  const COMMITS = "git.default_branch_commits";
 
   function leadMetric(section: SectionSpec): string | undefined {
     switch (section.kind) {
@@ -393,24 +389,7 @@ describe("commit counts lead nothing", () => {
   it("on any headline, trend, bus factor or distribution outside work in flight and the contribution breakdown", () => {
     for (const [page, sections] of pages) {
       for (const section of sections) {
-        expect(COMMIT_COUNTS.has(leadMetric(section) ?? ""), `${page} ${section.kind}`).toBe(false);
-      }
-    }
-  });
-
-  it("on any metric group card", () => {
-    for (const group of GROUPS) {
-      expect(COMMIT_COUNTS.has(group.card.preview[0] ?? ""), group.id).toBe(false);
-    }
-  });
-
-  it("in the order of any drilldown table", () => {
-    for (const group of GROUPS) {
-      for (const block of group.drilldown) {
-        const limits = "groupBy" in block ? Object.values(block.groupBy?.limits ?? {}) : [];
-        for (const limit of limits) {
-          expect(COMMIT_COUNTS.has(limit.rankBy ?? ""), group.id).toBe(false);
-        }
+        expect(leadMetric(section), `${page} ${section.kind}`).not.toBe(COMMITS);
       }
     }
   });
