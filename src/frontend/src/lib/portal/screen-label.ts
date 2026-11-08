@@ -12,6 +12,7 @@ import {
 const SEPARATOR = " › ";
 
 const DASHBOARD_PAGES: Record<string, string> = {
+  dashboards: "Dashboards",
   metrics: "Metrics",
   widgets: "Widgets",
   datasets: "Datasets",
@@ -34,14 +35,21 @@ function sectionLabel(section: string): string {
   return GROUPS.find((group) => group.id === section)?.title ?? section;
 }
 
-function detailLabel(zone: string, third: string, fourth?: string): string {
+function customLabel([page, ...rest]: string[]): string {
+  const head = page === ":id" ? "Dashboard" : (DASHBOARD_PAGES[page] ?? page);
+  const tail = rest.filter(Boolean).map((segment) => DASHBOARD_PAGES[segment] ?? segment);
+  return [head, ...tail].join(SEPARATOR);
+}
+
+function detailLabel(zone: string, detail: string[]): string {
+  const [third, fourth] = detail;
   if (zone === "directions") {
     const direction = DIRECTIONS.find((candidate) => candidate.id === third);
     if (!direction) return third;
     if (!fourth) return direction.name;
     return `${direction.name}${SEPARATOR}${lensBySlug(direction, fourth) ?? fourth}`;
   }
-  if (zone === "custom") return DASHBOARD_PAGES[third] ?? "Dashboard";
+  if (zone === "custom") return customLabel(detail);
   const item = itemLabel(zone, third);
   if (zone === "manage" && third === "identities" && fourth) {
     return `${item}${SEPARATOR}${MODE_LABELS[fourth] ?? fourth}`;
@@ -50,7 +58,8 @@ function detailLabel(zone: string, third: string, fourth?: string): string {
 }
 
 export function screenLabel(path: string): string {
-  const [, first, second, third, fourth] = path.split("/");
+  const [, first, second, ...detail] = path.split("/");
+  const [third, fourth] = detail;
 
   if (!first) return "Home";
 
@@ -59,7 +68,7 @@ export function screenLabel(path: string): string {
     const zone = zoneById(second);
     if (!zone) return GROUPS.find((group) => group.id === second)?.title ?? path;
     if (!third) return zone.label;
-    return `${zone.label}${SEPARATOR}${detailLabel(second, third, fourth)}`;
+    return `${zone.label}${SEPARATOR}${detailLabel(second, detail)}`;
   }
 
   if (first === "ic" && second) {

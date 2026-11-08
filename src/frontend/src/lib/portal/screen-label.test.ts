@@ -74,6 +74,47 @@ describe("screenLabel", () => {
     );
   });
 
+  it("names a dashboard by the name its path carries", () => {
+    expect(screenLabel("/portal/custom/q3-hiring-plan")).toBe("Dashboards › q3-hiring-plan");
+  });
+
+  it("names a dashboard whose id was masked", () => {
+    expect(screenLabel("/portal/custom/:id")).toBe("Dashboards › Dashboard");
+  });
+
+  it("names the definition a custom page opened", () => {
+    expect(screenLabel("/portal/custom/metrics/deploy-frequency")).toBe(
+      "Dashboards › Metrics › deploy-frequency",
+    );
+    expect(screenLabel("/portal/custom/edit/dashboards/release-health")).toBe(
+      "Dashboards › Edit › Dashboards › release-health",
+    );
+    expect(screenLabel("/portal/custom/alerts/:id/edit")).toBe(
+      "Dashboards › Alerts › :id › Edit",
+    );
+  });
+
+  it("gives every custom page its own title", () => {
+    const paths = [
+      "/portal/custom/:id",
+      "/portal/custom/q3-hiring-plan",
+      "/portal/custom/release-health",
+      "/portal/custom/:id/overview",
+      "/portal/custom/metrics",
+      "/portal/custom/metrics/deploy-frequency",
+      "/portal/custom/new/dashboards",
+      "/portal/custom/new/metrics",
+      "/portal/custom/edit/dashboards/:id",
+      "/portal/custom/edit/dashboards/release-health",
+      "/portal/custom/edit/metrics/deploy-frequency",
+      "/portal/custom/alerts/new",
+      "/portal/custom/alerts/:id",
+      "/portal/custom/alerts/:id/edit",
+    ];
+
+    expect(new Set(paths.map(screenLabel)).size).toBe(paths.length);
+  });
+
   it("keeps a path it cannot name rather than inventing one", () => {
     expect(screenLabel("/some/new/route")).toBe("/some/new/route");
     expect(screenLabel("/portal/manage/not-a-real-item")).toBe(
