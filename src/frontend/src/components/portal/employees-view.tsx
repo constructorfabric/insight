@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { PeopleListItem } from "@/api/identity-client";
+import { useViewer } from "@/auth";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Badge, Input } from "@gears-frontx/ui-kit";
@@ -15,10 +16,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { personName } from "@/lib/identities/person-display";
-import { normalizePersonId } from "@/lib/metrics/entity";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
-import { useDirectoryNames } from "@/queries/directory-names";
 import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useSupervisorName } from "@/queries/supervisor-name";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import { cn } from "@/lib/utils";
 
@@ -35,34 +35,24 @@ interface EmployeeRow {
   status: string;
 }
 
-function rosterNames(
-  roster: readonly PeopleListItem[],
-): ReadonlyMap<string, string> {
-  return new Map(
-    roster.map((person) => [
-      normalizePersonId(person.person_id),
-      personName(person) ?? "",
-    ]),
-  );
-}
-
-function managersOffRoster(
-  roster: readonly PeopleListItem[],
-  onRoster: ReadonlyMap<string, string>,
-): string[] {
-  const missing = roster
-    .map((person) => person.manager_person_id)
-    .filter((id): id is string => id != null)
-    .map(normalizePersonId)
-    .filter((id) => !onRoster.has(id));
-
-  return [...new Set(missing)].sort();
-}
-
 function rosterEmployees(
   roster: readonly PeopleListItem[],
-  managerNames: ReadonlyMap<string, string>,
+  viewerId: string | null,
+  viewerManager: string | null,
 ): EmployeeRow[] {
+  const byId = new Map(
+    roster.map((person) => [person.person_id.toLowerCase(), person]),
+  );
+
+  function managerName(person: PeopleListItem): string | null {
+    if (person.manager_person_id) {
+      return personName(byId.get(person.manager_person_id.toLowerCase()) ?? {});
+    }
+    return person.person_id.toLowerCase() === viewerId?.toLowerCase()
+      ? viewerManager
+      : null;
+  }
+
   return roster
     .map((person) => ({
       personId: person.person_id,
@@ -70,9 +60,7 @@ function rosterEmployees(
       jobTitle: person.attributes.job_title ?? "",
       department: person.attributes.department ?? "",
       division: person.attributes.division ?? "",
-      supervisorName: person.manager_person_id
-        ? (managerNames.get(normalizePersonId(person.manager_person_id)) ?? "")
-        : "",
+      supervisorName: managerName(person) ?? "",
       status: person.attributes.status ?? "",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -87,23 +75,12 @@ export function EmployeesView() {
   const { isFlat } = useVisibilityPolicy();
   const visibleRoster = useVisibleRoster(true);
   const [query, setQuery] = useState("");
+  const { personId: viewerId } = useViewer();
+  const viewerManager = useSupervisorName(isFlat ? null : viewerId);
 
-  const onRoster = useMemo(
-    () => rosterNames(visibleRoster.roster),
-    [visibleRoster.roster],
-  );
-  const offRoster = useMemo(
-    () => managersOffRoster(visibleRoster.roster, onRoster),
-    [visibleRoster.roster, onRoster],
-  );
-  const directoryNames = useDirectoryNames(offRoster);
   const employees = useMemo(
-    () =>
-      rosterEmployees(
-        visibleRoster.roster,
-        new Map([...directoryNames, ...onRoster]),
-      ),
-    [visibleRoster.roster, directoryNames, onRoster],
+    () => rosterEmployees(visibleRoster.roster, viewerId, viewerManager),
+    [visibleRoster.roster, viewerId, viewerManager],
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

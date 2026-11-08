@@ -474,7 +474,6 @@ export interface PageRequest {
 
 export interface PeopleListRequest extends PageRequest {
   q?: string;
-  ids?: readonly string[];
   visibility?: "caller" | "tenant";
 }
 
@@ -494,7 +493,6 @@ export async function listPeople(
   const params = new URLSearchParams();
   if (page.visibility) params.set("visibility", page.visibility);
   if (page.q) params.set("q", page.q);
-  if (page.ids?.length) params.set("ids", page.ids.join(","));
   if (page.cursor) params.set("cursor", page.cursor);
   if (page.limit != null) params.set("limit", String(page.limit));
   const query = params.toString();
@@ -788,4 +786,27 @@ export async function revokePersonRole(personRoleId: string): Promise<void> {
     const body = await res.json().catch(() => null);
     throw new IdentityApiError(res.status, body);
   }
+}
+
+interface ProfilesBatchResponse {
+  profiles?: { supervisor?: { attributes: Record<string, string> } }[];
+}
+
+export async function getSupervisor(
+  personId: string,
+  signal?: AbortSignal
+): Promise<Record<string, string> | null> {
+  const res = await fetchWithAuth(`${BASE}/profiles/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ person_ids: [normalizePersonId(personId)] }),
+    signal,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+
+  const answered = (await res.json()) as ProfilesBatchResponse;
+  return answered.profiles?.[0]?.supervisor?.attributes ?? null;
 }
