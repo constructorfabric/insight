@@ -1,18 +1,26 @@
 import { Link } from "@tanstack/react-router";
 
+import {
+  MetricHelpTooltip,
+  MetricValue,
+} from "@/components/portal/metrics-table";
 import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
-import { formatMetricValue } from "@/lib/format";
-import type { CompareRow } from "@/lib/portal/metrics-view";
+import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
+import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { cn } from "@/lib/utils";
 
 const STICKY_START = "sticky start-0 z-10 bg-card";
 
 export function MetricsCompareTable({
   people,
-  rows,
+  keys,
+  byKey,
+  helpByKey,
 }: {
   people: readonly MembersGridMember[];
-  rows: readonly CompareRow[];
+  keys: readonly string[];
+  byKey: ReadonlyMap<string, NormalizedMetricResult>;
+  helpByKey: ReadonlyMap<string, MetricHelpText>;
 }) {
   return (
     <div className="max-h-[75svh] overflow-auto">
@@ -44,24 +52,38 @@ export function MetricsCompareTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.key} className="hover:bg-muted/50">
-              <th
-                scope="row"
-                className={cn(STICKY_START, "border-b px-3 py-1.5 text-start font-normal")}
-              >
-                {row.label}
-              </th>
-              {row.values.map((value, index) => (
-                <td
-                  key={people[index]?.entityId ?? index}
-                  className="border-b px-3 py-1.5 text-end tabular-nums"
+          {keys.flatMap((key) => {
+            const result = byKey.get(key);
+            if (!result) return [];
+
+            return [
+              <tr key={key} className="hover:bg-muted/50">
+                <th
+                  scope="row"
+                  className={cn(STICKY_START, "border-b px-3 py-1.5 text-start font-normal")}
                 >
-                  {value == null ? "—" : formatMetricValue(value, row.format, row.unit)}
-                </td>
-              ))}
-            </tr>
-          ))}
+                  <MetricHelpTooltip
+                    label={result.label}
+                    help={helpByKey.get(key) ?? metricHelp(result)}
+                  >
+                    <span className="cursor-help">{result.label}</span>
+                  </MetricHelpTooltip>
+                </th>
+                {people.map((person) => (
+                  <td
+                    key={person.entityId}
+                    className="border-b px-3 py-1.5 text-end tabular-nums"
+                  >
+                    <MetricValue
+                      result={result}
+                      entityId={person.entityId}
+                      personName={person.displayName}
+                    />
+                  </td>
+                ))}
+              </tr>,
+            ];
+          })}
         </tbody>
       </table>
     </div>

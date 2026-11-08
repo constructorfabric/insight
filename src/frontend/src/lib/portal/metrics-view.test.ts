@@ -3,11 +3,16 @@ import { describe, expect, it } from "vitest";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 
+import { identityPerson, pid } from "@/test/identity";
+
 import {
   chunkKeys,
-  compareRows,
   keysWithData,
+  metricGroups,
+  metricsRows,
   metricsViewCatalog,
+  sortRows,
+  type MetricsRow,
 } from "./metrics-view";
 
 function definition(
@@ -129,28 +134,78 @@ describe("keysWithData", () => {
   });
 });
 
-describe("compareRows", () => {
-  it("gives one row per metric with each person's value in the given order", () => {
-    const byKey = new Map([
-      ["git.commits", result("git.commits", [["p1", 3], ["p2", 5]], { short_label: "Commits" })],
-      ["git.prs", result("git.prs", [["p2", 1]])],
-    ]);
+describe("metricsRows", () => {
+  const tree = identityPerson("boss", {}, [
+    identityPerson("b"),
+    identityPerson("a", {}, [identityPerson("c")]),
+  ]);
+  const shape = (rows: MetricsRow[]) =>
+    rows.map((row) => [row.displayName, row.depth, row.hasReports, row.expanded]);
 
-    expect(compareRows(["git.commits", "git.prs", "missing"], byKey, ["p2", "p1"])).toEqual([
-      {
-        key: "git.commits",
-        label: "Commits",
-        format: "integer",
-        unit: null,
-        values: [5, 3],
-      },
-      {
-        key: "git.prs",
-        label: "git.prs label",
-        format: "integer",
-        unit: null,
-        values: [1, null],
-      },
+  it("nests reports under their expanded manager, by name", () => {
+    const rows = metricsRows(tree, [], new Set([pid("boss"), pid("a")]));
+
+    expect(shape(rows)).toEqual([
+      ["boss", 0, true, true],
+      ["a", 1, true, true],
+      ["c", 2, false, false],
+      ["b", 1, false, false],
+    ]);
+  });
+
+  it("hides the reports of a collapsed manager", () => {
+    const rows = metricsRows(tree, [], new Set([pid("boss")]));
+
+    expect(shape(rows)).toEqual([
+      ["boss", 0, true, true],
+      ["a", 1, true, false],
+      ["b", 1, false, false],
+    ]);
+  });
+
+  it("lists everyone flat and by name when there is no org chart", () => {
+    const people = [
+      { person_id: pid("z"), display_name: "z", email: "", username: "" },
+      { person_id: pid("m"), display_name: "m", email: "", username: "" },
+    ];
+
+    expect(shape(metricsRows(null, people, new Set()))).toEqual([
+      ["m", 0, false, false],
+      ["z", 0, false, false],
+    ]);
+  });
+});
+
+describe("sortRows", () => {
+  const row = (name: string): MetricsRow => ({
+    entityId: name,
+    displayName: name,
+    depth: 2,
+    hasReports: false,
+    expanded: false,
+  });
+  const byKey = new Map([
+    ["git.commits", result("git.commits", [["a", 1], ["b", 3], ["c", null], ["d", 2]])],
+  ]);
+  const rows = ["a", "b", "c", "d"].map(row);
+
+  it.each([
+    ["descending", ["b", "d", "a", "c"]],
+    ["ascending", ["a", "d", "b", "c"]],
+  ] as const)("orders people by a metric %s, with no value last", (direction, order) => {
+    const sorted = sortRows(rows, "git.commits", direction, byKey);
+
+    expect(sorted.map((r) => r.entityId), `should order ${direction}`).toEqual(order);
+    expect(sorted.every((r) => r.depth === 0)).toBe(true);
+  });
+});
+
+describe("metricGroups", () => {
+  it("groups neighbouring metrics under their family name", () => {
+    expect(metricGroups(["git.commits", "git.prs", "tasks.closed", "ai.cost"])).toEqual([
+      { family: "git", name: "Development · Git", keys: ["git.commits", "git.prs"] },
+      { family: "tasks", name: "Development · Delivery", keys: ["tasks.closed"] },
+      { family: "ai", name: "AI", keys: ["ai.cost"] },
     ]);
   });
 });

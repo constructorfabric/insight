@@ -84,6 +84,23 @@ describe("useMetricsViewData", () => {
     expect(req.compare_to).toBeUndefined();
   });
 
+  it("asks again for the new period when the period changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ range }) => useMetricsViewData(["git.commits"], ["a@x.com"], range),
+      { wrapper: wrapper(), initialProps: { range: RANGE } },
+    );
+    await waitFor(() => expect(result.current.byKey.has("git.commits")).toBe(true));
+
+    rerender({ range: { from: "2026-04-24", to: "2026-04-30" } });
+
+    await waitFor(() =>
+      expect(mock.mock.calls.map(([req]) => req.period.from)).toEqual([
+        "2026-04-01",
+        "2026-04-24",
+      ]),
+    );
+  });
+
   it("does not fetch when the scope has no people", () => {
     const { result } = renderHook(() => useMetricsViewData(KEYS, [], RANGE), {
       wrapper: wrapper(),

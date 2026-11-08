@@ -1,12 +1,13 @@
 import { useMemo, useState, type SetStateAction } from "react";
-import { Columns3, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Columns3, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
-import { MemberFilter } from "@/components/portal/member-filter";
-import {
-  selectedMembers,
-  type MemberSelection,
-} from "@/components/portal/member-selection";
+import { useViewer } from "@/auth";
+import { MetricsComparePicker } from "@/components/portal/metrics-compare-picker";
 import { MetricsCompareTable } from "@/components/portal/metrics-compare-table";
+import {
+  MetricsTable,
+  type MetricsSort,
+} from "@/components/portal/metrics-table";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
 import {
   ReportMetricPicker,
@@ -17,40 +18,33 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  MembersGrid,
-  type MembersGridMember,
-} from "@/components/widgets/dashboard/members-grid";
-import {
-  Button,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Switch,
-} from "@gears-frontx/ui-kit";
+import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
+import { Button } from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { personDisplayName } from "@/lib/identities/person-display";
+import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
-  compareRows,
+  compareTeams,
   keysWithData,
+  metricGroups,
+  metricsRows,
   metricsViewCatalog,
+  sortRows,
 } from "@/lib/portal/metrics-view";
 import {
   setMetricsViewPaneShown,
   useMetricsViewPaneShown,
 } from "@/lib/portal/metrics-view-pane";
 import { metricVisible } from "@/lib/portal/nav-policy";
-import { usePortalNavActions } from "@/lib/portal/portal-nav";
+import { usePortalNavActions, usePortalScope } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useOrgScope, type ManagerNode } from "@/lib/portal/use-org-scope";
+import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { byFamily } from "@/lib/reports/families";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useMetricsViewData } from "@/queries/metrics-view";
+import type { IdentityPerson } from "@/types/insight";
 
 const TEST_ID = "page-people-metrics";
 
@@ -69,6 +63,16 @@ export function MetricsView() {
   );
   const catalogKeys = useMemo(
     () => catalog.map((metric) => metric.metric_key),
+    [catalog],
+  );
+  const helpByKey = useMemo(
+    () =>
+      new Map(
+        catalog.flatMap((metric) => {
+          const help = metricHelp(metric);
+          return help ? [[metric.metric_key, help] as const] : [];
+        }),
+      ),
     [catalog],
   );
   const families = useMemo(
@@ -91,13 +95,17 @@ export function MetricsView() {
   }, [catalogKeys, selected]);
 
   const { pivot, roster } = orgScope;
+  const people = useMemo(
+    () => [...(pivot ? [pivot] : []), ...(roster ?? [])],
+    [pivot, roster],
+  );
   const members = useMemo<MembersGridMember[]>(
     () =>
-      [...(pivot ? [pivot] : []), ...(roster ?? [])].map((person) => ({
+      people.map((person) => ({
         entityId: normalizePersonId(person.person_id),
         displayName: personDisplayName(person),
       })),
-    [pivot, roster],
+    [people],
   );
   const memberIds = useMemo(
     () => members.map((member) => member.entityId),
@@ -123,15 +131,21 @@ export function MetricsView() {
   });
 
   return (
-    <div data-testid={TEST_ID} className="flex flex-col gap-4 p-4 md:p-6">
+    <div data-testid={TEST_ID} className="flex flex-col gap-3 p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <PaneToggle />
-        <h1 className="me-auto text-lg font-semibold tracking-tight">Metrics view</h1>
-        <TeamSelect managers={orgScope.managerNodes} value={orgScope.pivotPersonId} />
+        <h1 className="text-lg font-semibold tracking-tight">Metrics view</h1>
+        <ScopeChip label={orgScope.label} />
         <Popover>
           <PopoverTrigger
             render={
-              <Button type="button" variant="outline" size="sm" icon={<Columns3 />}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                icon={<Columns3 />}
+                className="ms-auto"
+              >
                 {`Metrics: ${metricKeys.length} of ${catalogKeys.length}`}
               </Button>
             }
@@ -140,6 +154,26 @@ export function MetricsView() {
             align="end"
             className="max-h-[70svh] w-[min(56rem,90vw)] overflow-y-auto p-0"
           >
+            <div className="flex items-center justify-end gap-2 border-b px-4 py-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Select all metrics"
+                onClick={() => setPicked(null)}
+              >
+                Select all
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Clear all metrics"
+                onClick={() => setPicked([])}
+              >
+                Clear all
+              </Button>
+            </div>
             <ReportMetricPicker
               families={families}
               selected={selected}
@@ -149,11 +183,14 @@ export function MetricsView() {
         </Popover>
       </div>
       {gate ?? (
-        <MetricsTable
+        <MetricsBody
           key={orgScope.pivotPersonId}
+          pivot={pivot}
+          people={people}
           members={members}
           metricKeys={metricKeys}
           byKey={data.byKey}
+          helpByKey={helpByKey}
         />
       )}
     </div>
@@ -177,97 +214,159 @@ function PaneToggle() {
   );
 }
 
-function TeamSelect({
-  managers,
-  value,
-}: {
-  managers: readonly ManagerNode[];
-  value: string;
-}) {
+function ScopeChip({ label }: { label: string }) {
+  const { root } = usePortalScope();
+  const { personId } = useViewer();
   const { setScope } = usePortalNavActions();
-  if (managers.length === 0) return null;
 
-  const current = managers.find(
-    (manager) => normalizePersonId(manager.person_id) === normalizePersonId(value),
-  );
+  const scopedToSomeoneElse =
+    root != null &&
+    normalizePersonId(root) !== normalizePersonId(personId ?? "");
+  if (!scopedToSomeoneElse) return null;
 
   return (
-    <Select
-      value={current?.person_id ?? null}
-      onValueChange={(root) => {
-        if (root) setScope({ root: String(root) });
-      }}
-    >
-      <SelectTrigger size="sm" aria-label="Team" className="w-56">
-        <SelectValue>{current ? `${current.name}'s team` : "Team"}</SelectValue>
-      </SelectTrigger>
-      <SelectContent align="end">
-        {managers.map((manager) => (
-          <SelectItem
-            key={manager.person_id}
-            value={manager.person_id}
-            style={{ paddingInlineStart: `${0.5 + manager.depth}rem` }}
-          >
-            {`${manager.name} (${manager.subtreeMemberCount})`}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <span className="flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 ps-3 pe-1 text-sm">
+      <span className="text-muted-foreground">Scoped:</span>
+      <span className="font-medium">{label}</span>
+      <button
+        type="button"
+        aria-label={`Clear scope ${label}`}
+        onClick={() => setScope({ root: null })}
+        className="flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <X className="size-3.5" />
+      </button>
+    </span>
   );
 }
 
-function MetricsTable({
+function managerIds(node: IdentityPerson | null): string[] {
+  if (!node || node.subordinates.length === 0) return [];
+  return [
+    normalizePersonId(node.person_id),
+    ...node.subordinates.flatMap(managerIds),
+  ];
+}
+
+function nextSort(current: MetricsSort | null, key: string): MetricsSort | null {
+  if (current?.key !== key) return { key, direction: "descending" };
+  if (current.direction === "descending") return { key, direction: "ascending" };
+  return null;
+}
+
+function MetricsBody({
+  pivot,
+  people,
   members,
   metricKeys,
   byKey,
+  helpByKey,
 }: {
+  pivot: IdentityPerson | null;
+  people: ReadonlyArray<{ person_id: string; display_name?: string | null }>;
   members: MembersGridMember[];
   metricKeys: readonly string[];
   byKey: Map<string, NormalizedMetricResult>;
+  helpByKey: ReadonlyMap<string, MetricHelpText>;
 }) {
-  const [selection, setSelection] = useState<MemberSelection>({ kind: "all" });
-  const [compare, setCompare] = useState(false);
+  const { setScope } = usePortalNavActions();
+  const [comparing, setComparing] = useState<string[] | null>(null);
+  const [sort, setSort] = useState<MetricsSort | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set(pivot ? [normalizePersonId(pivot.person_id)] : []),
+  );
+  const allManagers = managerIds(pivot);
+  const allExpanded = allManagers.every((id) => expanded.has(id));
 
-  const shown = selectedMembers(members, selection);
-  const shownIds = shown.map((member) => member.entityId);
-  const columns = keysWithData(metricKeys, byKey, shownIds);
-  const canCompare = selection.kind === "selected" && shown.length >= 2;
-  const comparing = compare && canCompare;
+  const byId = new Map(members.map((member) => [member.entityId, member]));
+  const compared = (comparing ?? []).flatMap((id) => {
+    const member = byId.get(id);
+    return member ? [member] : [];
+  });
+  const inView = comparing ? compared : members;
+  const inViewIds = inView.map((member) => member.entityId);
+  const columns = keysWithData(metricKeys, byKey, inViewIds);
+
+  const toggle = (entityId: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(entityId)) next.add(entityId);
+      return next;
+    });
+
+  const rows = sort
+    ? sortRows(metricsRows(null, people, expanded), sort.key, sort.direction, byKey)
+    : metricsRows(pivot, people, expanded);
 
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <p className="me-auto text-sm text-muted-foreground">
-          {`${shown.length} people · ${columns.length} metrics with data`}
+        <p className="text-sm text-muted-foreground">
+          {comparing
+            ? `Comparing ${inView.length} people · ${columns.length} metrics with data`
+            : `${inView.length} people · ${columns.length} metrics with data`}
         </p>
-        <label className="flex items-center gap-2 text-sm select-none">
-          <span aria-hidden>Compare</span>
-          <Switch
-            aria-label="Compare"
-            checked={comparing}
-            disabled={!canCompare}
-            onCheckedChange={setCompare}
+        {allManagers.length > 0 && !sort && !comparing ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setExpanded(new Set(allExpanded ? [] : allManagers))}
+          >
+            {allExpanded ? "Collapse all" : "Expand all"}
+          </Button>
+        ) : null}
+        <div className="ms-auto flex items-center gap-2">
+          {comparing ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={<X />}
+              onClick={() => setComparing(null)}
+            >
+              Exit compare
+            </Button>
+          ) : null}
+          <MetricsComparePicker
+            people={members}
+            teams={compareTeams(pivot)}
+            picked={comparing ?? []}
+            onCompare={setComparing}
           />
-        </label>
-        <MemberFilter members={members} selection={selection} onChange={setSelection} />
+        </div>
       </div>
-      <Card>
-        <CardContent className="p-0">
-          {shown.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">No people selected.</p>
-          ) : comparing ? (
-            <MetricsCompareTable people={shown} rows={compareRows(columns, byKey, shownIds)} />
-          ) : (
-            <MembersGrid
-              members={shown}
-              defaultSort="input"
-              metricKeys={columns}
-              byKey={byKey}
-              caption="People × metrics"
-            />
-          )}
-        </CardContent>
-      </Card>
+      {metricKeys.length === 0 ? (
+        <EmptyNote text="No metrics picked." />
+      ) : comparing ? (
+        <div className="rounded-lg border bg-card">
+          <MetricsCompareTable
+            people={compared}
+            keys={columns}
+            byKey={byKey}
+            helpByKey={helpByKey}
+          />
+        </div>
+      ) : (
+        <MetricsTable
+          rows={rows}
+          groups={metricGroups(columns)}
+          byKey={byKey}
+          helpByKey={helpByKey}
+          sort={sort}
+          onSort={(key) => setSort((current) => nextSort(current, key))}
+          onToggle={toggle}
+          onScope={(entityId) => setScope({ root: entityId })}
+        />
+      )}
     </section>
+  );
+}
+
+function EmptyNote({ text }: { text: string }) {
+  return (
+    <p className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
+      {text}
+    </p>
   );
 }

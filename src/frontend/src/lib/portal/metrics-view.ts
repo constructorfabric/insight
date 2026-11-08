@@ -1,18 +1,31 @@
-import type { MetricFormat } from "@/api/metric-results-client";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
+import {
+  personDisplayName,
+  type PersonNaming,
+} from "@/lib/identities/person-display";
 import {
   forEntity,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
-import { byFamily } from "@/lib/reports/families";
+import { normalizePersonId } from "@/lib/metrics/entity";
+import { byFamily, familyName, familyOf } from "@/lib/reports/families";
+import type { IdentityPerson } from "@/types/insight";
 
-export interface CompareRow {
-  key: string;
-  label: string;
-  format: MetricFormat;
-  unit: string | null;
-  values: Array<number | null>;
+export interface MetricsRow {
+  entityId: string;
+  displayName: string;
+  depth: number;
+  hasReports: boolean;
+  expanded: boolean;
 }
+
+export interface MetricGroup {
+  family: string;
+  name: string;
+  keys: string[];
+}
+
+export type SortDirection = "ascending" | "descending";
 
 function servesData(metric: MetricDefinition): boolean {
   if (metric.schema_status === "error") return false;
@@ -61,23 +74,103 @@ export function keysWithData(
   });
 }
 
-export function compareRows(
-  keys: readonly string[],
-  byKey: ReadonlyMap<string, NormalizedMetricResult>,
-  entityIds: readonly string[],
-): CompareRow[] {
-  return keys.flatMap((key) => {
-    const result = byKey.get(key);
-    if (!result) return [];
+function byName(a: { displayName: string }, b: { displayName: string }): number {
+  return a.displayName.localeCompare(b.displayName);
+}
 
-    return [
-      {
-        key,
-        label: result.short_label ?? result.label,
-        format: result.format,
-        unit: result.unit,
-        values: entityIds.map((id) => finiteValue(result, id)),
-      },
-    ];
-  });
+function treeRows(
+  node: IdentityPerson,
+  depth: number,
+  expanded: ReadonlySet<string>,
+): MetricsRow[] {
+  const entityId = normalizePersonId(node.person_id);
+  const hasReports = node.subordinates.length > 0;
+  const open = hasReports && expanded.has(entityId);
+  const row = {
+    entityId,
+    displayName: personDisplayName(node),
+    depth,
+    hasReports,
+    expanded: open,
+  };
+  if (!open) return [row];
+
+  const reports = [...node.subordinates].sort((a, b) =>
+    personDisplayName(a).localeCompare(personDisplayName(b)),
+  );
+
+  return [row, ...reports.flatMap((report) => treeRows(report, depth + 1, expanded))];
+}
+
+export function metricsRows(
+  root: IdentityPerson | null,
+  people: ReadonlyArray<PersonNaming & { person_id: string }>,
+  expanded: ReadonlySet<string>,
+): MetricsRow[] {
+  if (root) return treeRows(root, 0, expanded);
+
+  return people
+    .map((person) => ({
+      entityId: normalizePersonId(person.person_id),
+      displayName: personDisplayName(person),
+      depth: 0,
+      hasReports: false,
+      expanded: false,
+    }))
+    .sort(byName);
+}
+
+export function sortRows(
+  rows: readonly MetricsRow[],
+  metricKey: string,
+  direction: SortDirection,
+  byKey: ReadonlyMap<string, NormalizedMetricResult>,
+): MetricsRow[] {
+  const result = byKey.get(metricKey);
+  const valueOf = (row: MetricsRow) => (result ? finiteValue(result, row.entityId) : null);
+  const sign = direction === "ascending" ? 1 : -1;
+
+  return rows
+    .map((row) => ({ ...row, depth: 0 }))
+    .sort((a, b) => {
+      const left = valueOf(a);
+      const right = valueOf(b);
+      if (left == null) return right == null ? byName(a, b) : 1;
+      if (right == null) return -1;
+      return (left - right) * sign || byName(a, b);
+    });
+}
+
+export function metricGroups(keys: readonly string[]): MetricGroup[] {
+  const groups: MetricGroup[] = [];
+  for (const key of keys) {
+    const family = familyOf(key);
+    const last = groups.at(-1);
+    if (last?.family === family) last.keys.push(key);
+    else groups.push({ family, name: familyName(family), keys: [key] });
+  }
+  return groups;
+}
+
+export interface CompareTeam {
+  id: string;
+  name: string;
+  memberIds: string[];
+}
+
+function subtreeIds(node: IdentityPerson): string[] {
+  return [normalizePersonId(node.person_id), ...node.subordinates.flatMap(subtreeIds)];
+}
+
+export function compareTeams(root: IdentityPerson | null): CompareTeam[] {
+  if (!root || root.subordinates.length === 0) return [];
+
+  return [
+    {
+      id: normalizePersonId(root.person_id),
+      name: personDisplayName(root),
+      memberIds: subtreeIds(root),
+    },
+    ...root.subordinates.flatMap(compareTeams),
+  ];
 }

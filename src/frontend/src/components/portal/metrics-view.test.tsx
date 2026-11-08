@@ -6,7 +6,7 @@ vi.mock("@tanstack/react-router", async () => {
 
 import { portalRouter } from "@/test/portal-router";
 
-import { act, render, renderHook, screen, within } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,7 +17,9 @@ import {
   setMetricsViewPaneShown,
   useMetricsViewPaneShown,
 } from "@/lib/portal/metrics-view-pane";
+import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
+import { AppTooltips, openTooltip } from "@/test/tooltip";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
@@ -98,10 +100,12 @@ function result(
   key: string,
   label: string,
   values: Array<[string, number | null]>,
+  over: Partial<NormalizedMetricResult> = {},
 ): NormalizedMetricResult {
   return {
     metric_key: key,
     label,
+    ...over,
     unit: null,
     computation: "sum",
     format: "integer",
@@ -127,7 +131,10 @@ beforeEach(() => {
   mocks.roster = peopleFromIdentityTree(tree);
   mocks.definitions = [
     definition("collab.messages", "Messages"),
-    definition("git.commits", "Commits"),
+    definition("git.commits", "Default branch commits", {
+      description: "Commits that landed on the default branch.",
+      explanation: "Counted per author, merges included.",
+    }),
     definition("tasks.closed", "Tasks closed"),
     definition("ci.runs", "CI runs", { entity_type: "tenant" }),
   ];
@@ -136,12 +143,26 @@ beforeEach(() => {
   mocks.data.byKey = new Map([
     [
       "git.commits",
-      result("git.commits", "Commits", [
-        [pid("boss"), 50],
-        [pid("a"), 10],
-        [pid("b"), 20],
-        [pid("c"), 30],
-      ]),
+      result(
+        "git.commits",
+        "Default branch commits",
+        [
+          [pid("boss"), 50],
+          [pid("a"), 10],
+          [pid("b"), 20],
+          [pid("c"), 30],
+        ],
+        {
+          short_label: "Commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "git.commits",
+            entity: { type: "person", ids: [pid("boss")] },
+            period: { from: "2026-07-01", to: "2026-07-31" },
+            filters: [],
+          },
+        },
+      ),
     ],
     [
       "collab.messages",
@@ -165,13 +186,50 @@ beforeEach(() => {
 });
 
 describe("MetricsView", () => {
-  it("lists everyone in scope against every metric that has data", () => {
+  it("opens on the scope's manager with their direct reports under them", () => {
     render(<MetricsView />);
 
-    expect([...rowHeaders()].sort()).toEqual(["a", "b", "boss", "c"]);
-    expect(screen.getByRole("columnheader", { name: /Commits/ })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: /Messages/ })).toBeInTheDocument();
+    expect(rowHeaders()).toEqual(["boss", "a", "b"]);
+  });
+
+  it("shows a manager's reports once expanded", async () => {
+    render(<MetricsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand a" }));
+
+    expect(rowHeaders()).toEqual(["boss", "a", "c", "b"]);
+  });
+
+  it("opens every manager at once", async () => {
+    render(<MetricsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
+
+    expect(rowHeaders()).toEqual(["boss", "a", "c", "b"]);
+  });
+
+  it("names every metric column in full, under its family", () => {
+    render(<MetricsView />);
+
+    expect(screen.getByRole("columnheader", { name: "Default branch commits" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Development · Git" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Messages" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /Tasks closed/ })).not.toBeInTheDocument();
+  });
+
+  it("shows each person's value as plain text in its cell", () => {
+    render(<MetricsView />);
+
+    const rowOfB = screen
+      .getAllByRole("rowheader")
+      .find((header) => header.textContent === "b")!
+      .closest("tr")!;
+
+    expect(
+      within(rowOfB)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["20", "6"]);
   });
 
   it("asks for every person-level metric, in family order", () => {
@@ -191,46 +249,172 @@ describe("MetricsView", () => {
     expect(screen.queryByRole("columnheader", { name: /Messages/ })).not.toBeInTheDocument();
   });
 
-  it("narrows the table to the team the reader picks", async () => {
+  it("clears every metric at once, and brings them all back", async () => {
+    const user = userEvent.setup();
     render(<MetricsView />);
 
-    await userEvent.click(screen.getByRole("combobox", { name: "Team" }));
-    await userEvent.click(await screen.findByRole("option", { name: /^a\b/ }));
+    await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
+    await user.click(screen.getByRole("button", { name: "Clear all metrics" }));
+
+    expect(mocks.requestedKeys).toEqual([]);
+    expect(screen.getByText("No metrics picked.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Select all metrics" }));
+
+    expect(mocks.requestedKeys).toEqual(["git.commits", "tasks.closed", "collab.messages"]);
+  });
+
+  it("scopes the table to the person whose name is clicked", async () => {
+    render(<MetricsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: "a" }));
 
     expect(portalRouter.search).toMatchObject({ scope: pid("a") });
   });
 
-  it("keeps Compare off until two people are picked", () => {
+  it("names the scoped person and clears the scope from that chip", async () => {
+    act(() => portalRouter.set({ scope: pid("a") }));
     render(<MetricsView />);
 
-    expect(screen.getByRole("switch", { name: "Compare" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    expect(rowHeaders()).toEqual(["a", "c"]);
+    await userEvent.click(screen.getByRole("button", { name: "Clear scope a" }));
+
+    expect(portalRouter.search.scope).toBeFalsy();
+  });
+
+  it("ranks everyone in scope by a metric when its header is clicked", async () => {
+    render(<MetricsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Default branch commits" }));
+
+    expect(rowHeaders()).toEqual(["boss", "c", "b", "a"]);
+  });
+
+  it("opens the records behind a value when it is clicked", async () => {
+    const openEvidenceTargets = vi.fn();
+    render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence: vi.fn(), openEvidenceTargets, openEvidencePeople: vi.fn() }}
+      >
+        <MetricsView />
+      </EvidenceDialogContext.Provider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "b — Default branch commits: 20" }));
+
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          label: "Default branch commits",
+          selection: expect.objectContaining({
+            metric_key: "git.commits",
+            entity: { type: "person", id: pid("b") },
+          }),
+        }),
+      ],
+      { activeMetricKey: "git.commits" },
     );
   });
 
-  it("compares the picked people side by side, one row per metric", async () => {
+  it("explains a metric when its title is hovered", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />, { wrapper: AppTooltips });
+
+    await user.hover(screen.getByRole("button", { name: "Sort by Default branch commits" }));
+
+    await waitFor(() =>
+      expect(openTooltip()).toHaveTextContent(
+        "Commits that landed on the default branch.Counted per author, merges included.",
+      ),
+    );
+  });
+
+  it("keeps the comparison shut until two people are picked", async () => {
     const user = userEvent.setup();
     render(<MetricsView />);
 
-    await user.click(screen.getByRole("button", { name: "Filter people, all 4 shown" }));
-    await user.click(screen.getByRole("button", { name: "None" }));
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    await user.click(screen.getByRole("checkbox", { name: "a" }));
+
+    expect(screen.getByRole("button", { name: "Compare (1)" })).toBeDisabled();
+  });
+
+  it("compares the people picked in the Compare picker, one row per metric", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
     await user.click(screen.getByRole("checkbox", { name: "a" }));
     await user.click(screen.getByRole("checkbox", { name: "b" }));
-    await user.click(screen.getByRole("switch", { name: "Compare" }));
+    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
 
     const table = screen.getByRole("table");
-    expect(rowHeaders()).toEqual(["Commits", "Messages"]);
+    expect(rowHeaders()).toEqual(["Default branch commits", "Messages"]);
     expect(
       within(table)
         .getAllByRole("columnheader")
         .map((header) => header.textContent),
     ).toEqual(["Metric", "a", "b"]);
     expect(
-      within(within(table).getByRole("row", { name: /Commits/ }))
+      within(within(table).getByRole("row", { name: /Default branch commits/ }))
         .getAllByRole("cell")
         .map((cell) => cell.textContent),
     ).toEqual(["10", "20"]);
+  });
+
+  it("adds a whole team to the comparison in one pick", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    await user.click(screen.getByRole("button", { name: "Add a's team" }));
+    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["Metric", "a", "c"]);
+  });
+
+  it("opens the records behind a compared value when it is clicked", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = vi.fn();
+    render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence: vi.fn(), openEvidenceTargets, openEvidencePeople: vi.fn() }}
+      >
+        <MetricsView />
+      </EvidenceDialogContext.Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    await user.click(screen.getByRole("checkbox", { name: "a" }));
+    await user.click(screen.getByRole("checkbox", { name: "b" }));
+    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+    await user.click(screen.getByRole("button", { name: "a — Default branch commits: 10" }));
+
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          selection: expect.objectContaining({ entity: { type: "person", id: pid("a") } }),
+        }),
+      ],
+      { activeMetricKey: "git.commits" },
+    );
+  });
+
+  it("goes back to the table when the comparison is closed", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    await user.click(screen.getByRole("checkbox", { name: "a" }));
+    await user.click(screen.getByRole("checkbox", { name: "b" }));
+    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+    await user.click(screen.getByRole("button", { name: "Exit compare" }));
+
+    expect(rowHeaders()).toEqual(["boss", "a", "b"]);
   });
 
   it("gives the menu back on request", async () => {
