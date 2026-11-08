@@ -65,6 +65,7 @@ export function MetricsCompareTable({
                 const { value } = forEntity(result, person.entityId);
                 return value != null && Number.isFinite(value) ? value : null;
               }),
+              result.direction,
             );
 
             return [
@@ -95,9 +96,9 @@ export function MetricsCompareTable({
                         entityId={person.entityId}
                         personName={person.displayName}
                       />
-                      {index === leader ? <span className="sr-only"> (highest)</span> : null}
+                      {index === leader ? <span className="sr-only"> (best)</span> : null}
                       <span className="ms-2 inline-block w-14 text-start text-xs font-normal text-muted-foreground">
-                        {gap == null ? "" : gap === 0 ? "≈" : `−${Math.abs(gap)}%`}
+                        {gap == null ? "" : gap === 0 ? "≈" : `${gap > 0 ? "+" : "−"}${Math.abs(gap)}%`}
                       </span>
                     </td>
                   );

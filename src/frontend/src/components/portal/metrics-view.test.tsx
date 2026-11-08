@@ -105,7 +105,6 @@ function result(
   return {
     metric_key: key,
     label,
-    ...over,
     unit: null,
     computation: "sum",
     format: "integer",
@@ -114,6 +113,7 @@ function result(
       view: "period",
       values: values.map(([entity_id, value]) => ({ entity_id, value })),
     },
+    ...over,
   } as NormalizedMetricResult;
 }
 
@@ -359,7 +359,30 @@ describe("MetricsView", () => {
       within(within(table).getByRole("row", { name: /Default branch commits/ }))
         .getAllByRole("cell")
         .map((cell) => cell.textContent),
-    ).toEqual(["10−50%", "20 (highest)"]);
+    ).toEqual(["10−50%", "20 (best)"]);
+  });
+
+  it("marks the smallest value best when lower is better", async () => {
+    mocks.definitions.push(definition("git.pr_cycle_time_h", "PR cycle time"));
+    mocks.data.byKey.set(
+      "git.pr_cycle_time_h",
+      result("git.pr_cycle_time_h", "PR cycle time", [[pid("a"), 10], [pid("b"), 40]], {
+        direction: "lower_is_better",
+      }),
+    );
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    await user.click(screen.getByRole("checkbox", { name: "a" }));
+    await user.click(screen.getByRole("checkbox", { name: "b" }));
+    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+
+    expect(
+      within(within(screen.getByRole("table")).getByRole("row", { name: /PR cycle time/ }))
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["10 (best)", "40+300%"]);
   });
 
   it("adds a whole team to the comparison in one pick", async () => {

@@ -212,22 +212,30 @@ describe("metricGroups", () => {
 });
 
 describe("compareGaps", () => {
-  it("marks the biggest value and gives everyone else's gap to it in percent", () => {
-    expect(compareGaps([50, 200, null, 100])).toEqual({
+  it("marks the biggest value best when higher is better, with everyone else's gap in percent", () => {
+    expect(compareGaps([50, 200, null, 100], "higher_is_better")).toEqual({
       leader: 1,
       gaps: [-75, null, null, -50],
     });
   });
 
-  it.each([
-    ["everyone equal", [5, 5]],
-    ["a single value", [7, null]],
-    ["no values", [null, null]],
-  ] as const)("names no leader with %s", (_case, values) => {
-    expect(compareGaps(values).leader).toBeNull();
+  it("marks the smallest value best when lower is better, with everyone else's excess in percent", () => {
+    expect(compareGaps([83, 698], "lower_is_better")).toEqual({
+      leader: 0,
+      gaps: [null, 741],
+    });
   });
 
-  it("gives no percent when the biggest value is zero", () => {
-    expect(compareGaps([0, -4]).gaps).toEqual([null, null]);
+  it.each([
+    ["a neutral metric", [1, 9], "neutral"],
+    ["everyone equal", [5, 5], "higher_is_better"],
+    ["a single value", [7, null], "higher_is_better"],
+    ["no values", [null, null], "lower_is_better"],
+  ] as const)("names no best with %s", (_case, values, direction) => {
+    expect(compareGaps(values, direction).leader).toBeNull();
+  });
+
+  it("gives no percent when the best value is zero", () => {
+    expect(compareGaps([0, 4], "lower_is_better")).toEqual({ leader: 0, gaps: [null, null] });
   });
 });

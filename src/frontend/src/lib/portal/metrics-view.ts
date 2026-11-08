@@ -1,4 +1,5 @@
 import type { MetricDefinition } from "@/api/metric-definitions-client";
+import type { MetricDirection } from "@/api/metric-results-client";
 import {
   personDisplayName,
   type PersonNaming,
@@ -180,20 +181,27 @@ export interface CompareGaps {
   gaps: Array<number | null>;
 }
 
-export function compareGaps(values: ReadonlyArray<number | null>): CompareGaps {
+export function compareGaps(
+  values: ReadonlyArray<number | null>,
+  direction: MetricDirection,
+): CompareGaps {
   const present = values.filter((value): value is number => value != null);
-  const max = Math.max(...present);
-  const leader =
-    present.length >= 2 && present.some((value) => value !== max)
-      ? values.indexOf(max)
-      : null;
+  if (direction === "neutral" || present.length < 2) {
+    return { leader: null, gaps: values.map(() => null) };
+  }
 
+  const best = direction === "lower_is_better" ? Math.min(...present) : Math.max(...present);
+  if (present.every((value) => value === best)) {
+    return { leader: null, gaps: values.map(() => null) };
+  }
+
+  const leader = values.indexOf(best);
   return {
     leader,
     gaps: values.map((value, index) =>
-      leader == null || index === leader || value == null || max === 0
+      index === leader || value == null || best === 0
         ? null
-        : Math.round(((value - max) / Math.abs(max)) * 100),
+        : Math.round(((value - best) / Math.abs(best)) * 100),
     ),
   };
 }
