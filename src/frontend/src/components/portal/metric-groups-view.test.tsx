@@ -13,6 +13,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 import type { MetricResult } from "@/api/metric-results-client";
 import type { GroupId } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";

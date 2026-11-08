@@ -1,7 +1,9 @@
 import { Layers, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { CountBadge, ItemBadge, ItemButton } from "@/components/portal/pane-nav";
+import { resolveText } from "@/i18n/localized-text";
 import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
@@ -194,6 +196,7 @@ function AiCostGroup() {
 }
 
 function AiCostFolder({ group, active }: { group: PaneGroup; active: string | null }) {
+  const { t } = useTranslation();
   const { openItem } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
   const [collapsed, setCollapsed] = useState(false);
@@ -219,7 +222,7 @@ function AiCostFolder({ group, active }: { group: PaneGroup; active: string | nu
       }}
       rows={items.map((item) => ({
         key: item.id,
-        label: item.label,
+        label: resolveText(t, item.label),
         active: active === item.id,
         muted: item.readiness != null,
         badge: <ItemBadge item={item} />,

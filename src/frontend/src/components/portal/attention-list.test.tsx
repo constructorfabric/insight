@@ -10,6 +10,8 @@ import { act, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 import type { AttentionFlag } from "@/lib/insight/attention-flags";
 import { usePortalZone } from "@/lib/portal/portal-nav";
 

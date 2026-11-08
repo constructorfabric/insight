@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -107,6 +108,7 @@ export function MetricGroupsView({
   onSelectGroup,
   embedded = false,
 }: MetricGroupsViewProps) {
+  const { t } = useTranslation();
   const showKpis = content === "glance";
   const showAttention = content !== "none";
   const cohortLabel = useCohortLabel();
@@ -314,7 +316,7 @@ export function MetricGroupsView({
             />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Nothing stands out this period.
+              {t("worth_a_look.nothing_stands_out")}
             </p>
           )
         ) : null}

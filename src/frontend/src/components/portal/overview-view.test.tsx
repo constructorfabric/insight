@@ -43,28 +43,34 @@ vi.mock("@/components/portal/metric-groups-view", () => ({
 vi.mock("@/components/portal/home-dashboards", () => ({
   HomeDashboards: () => <section aria-label="Recent dashboards" />,
 }));
-vi.mock("@/components/portal/domain-lens-view", () => ({
-  DomainLensView: ({
-    config,
-    personId,
-    "data-testid": testId,
-  }: {
-    config: { title: string };
-    personId?: string | null;
-    "data-testid"?: string;
-  }) => (
-    <section
-      data-testid={testId}
-      aria-label={`Lens ${config.title}${personId ? ` for ${personId}` : ""}`}
-    />
-  ),
-  Pending: ({ label }: { label: string }) => <p>{label}</p>,
-}));
+vi.mock("@/components/portal/domain-lens-view", async () => {
+  const { default: i18n } = await import("@/i18n");
+  const { resolveText } = await import("@/i18n/localized-text");
+
+  return {
+    DomainLensView: ({
+      config,
+      personId,
+      "data-testid": testId,
+    }: {
+      config: { title: DisplayText };
+      personId?: string | null;
+      "data-testid"?: string;
+    }) => (
+      <section
+        data-testid={testId}
+        aria-label={`Lens ${resolveText(i18n.t, config.title)}${personId ? ` for ${personId}` : ""}`}
+      />
+    ),
+    Pending: ({ label }: { label: string }) => <p>{label}</p>,
+  };
+});
 
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { DisplayText } from "@/i18n/localized-text";
 import { zoneItems } from "@/lib/portal/nav-model";
 import { homeItemShown } from "@/lib/portal/home-subject";
 import { portalRouter } from "@/test/portal-router";

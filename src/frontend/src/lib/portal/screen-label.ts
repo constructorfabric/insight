@@ -1,3 +1,5 @@
+import i18n from "@/i18n";
+import { resolveText } from "@/i18n/localized-text";
 import { GROUPS } from "@/lib/insight/groups";
 import { MODE_LABELS } from "@/lib/portal/identity-modes";
 import {
@@ -27,7 +29,8 @@ const PERSON_VIEWS: Record<string, string> = {
 function itemLabel(zone: string, item: string): string {
   const items =
     zone === "manage" ? MANAGE_ITEMS : zone === "people" ? PEOPLE_ITEMS : zoneItems(zone);
-  return items.find((candidate) => candidate.id === item)?.label ?? item;
+  const label = items.find((candidate) => candidate.id === item)?.label;
+  return label === undefined ? item : resolveText(i18n.t, label);
 }
 
 function sectionLabel(section: string): string {

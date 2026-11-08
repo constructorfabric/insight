@@ -1,3 +1,4 @@
+import type { DisplayText } from "@/i18n/localized-text";
 import { evidenceCarriers } from "@/lib/metrics/evidence-via";
 import {
   directionHidden,
@@ -128,7 +129,7 @@ export type SectionSpec =
   | { kind: "direction-cards"; variant: "compact" | "full" };
 
 export interface LensConfig {
-  title: string;
+  title: DisplayText;
   /** Subtitle tail after "N people · " (defaults to "trend & balance"). */
   tagline?: string;
   sections: readonly SectionSpec[];
