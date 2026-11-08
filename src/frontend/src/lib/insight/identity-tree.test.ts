@@ -39,6 +39,7 @@ function rosterPerson(
     email: null,
     attributes,
     manager_person_id: managerPersonId,
+    manager_name: null,
   };
 }
 
