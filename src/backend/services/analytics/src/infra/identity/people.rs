@@ -113,7 +113,6 @@ mod tests {
         spawn_pages(status, vec![body]).await
     }
 
-    /// Serves `pages[n]` for `cursor=n`, and the last page past the end.
     async fn spawn_pages(status: StatusCode, pages: Vec<serde_json::Value>) -> (String, Seen) {
         let seen: Seen = Arc::default();
         let record = Arc::clone(&seen);
