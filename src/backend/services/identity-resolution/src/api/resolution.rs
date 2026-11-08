@@ -21,10 +21,12 @@ use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::CorrectionError;
 use super::gate::require_admin;
+use super::kind_set::KindSet;
 use super::listing;
+use super::source_set::SourceSet;
 use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
-use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
+use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, QueueItem, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 use crate::infra::db::{ops_repo, persons_repo, resolution_repo, seed_repo};
 use crate::infra::identity_evidence::{
@@ -711,6 +713,8 @@ fn bindings_beyond_ceiling() -> CanonicalError {
 /// Query knobs for the review queue.
 #[derive(Debug, Deserialize)]
 pub struct AttentionParams {
+    pub source: Option<String>,
+    pub kind: Option<String>,
     /// Cap on returned items (rates always cover every observed account).
     pub limit: Option<i64>,
 }
@@ -843,13 +847,14 @@ pub async fn attention(
     require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    let sources = parse_sources(params.source.as_deref())?;
+    let kinds = parse_kinds(params.kind.as_deref())?;
     let (review, truncated) = build_review(&state, tenant).await?;
 
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
     });
-    let items_truncated = review.items.len() > limit;
-    let page: Vec<_> = review.items.into_iter().take(limit).collect();
+    let (page, items_truncated) = queue_page(review.items, &sources, &kinds, limit);
 
     let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
     // Over the candidate ids, NOT the hydrated cards' keys: a login-minted
@@ -974,6 +979,9 @@ pub struct AccountMatchResponse {
     /// The person holding it, hydrated. Absent means nobody holds it yet —
     /// except when `excluded` is set, which is a different fact entirely.
     pub person: Option<PersonSummaryResponse>,
+    /// The person an unbound account's address resolves to. Present only
+    /// when the account has no binding.
+    pub address_holder: Option<PersonSummaryResponse>,
     /// The account is deliberately excluded from person metrics (a bot, CI, a
     /// service account). Without this an exclusion — an operator's recorded
     /// decision — would read as "bound to nobody" and invite undoing it.
@@ -994,6 +1002,7 @@ impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
 #[derive(Debug, Deserialize)]
 pub struct AccountSearchParams {
     pub q: Option<String>,
+    pub source: Option<String>,
     pub limit: Option<i64>,
     pub cursor: Option<String>,
 }
@@ -1028,17 +1037,20 @@ pub async fn search_accounts(
 
     let needle = params.q.unwrap_or_default().trim().to_owned();
     reject_long_query(&needle)?;
+    let sources = parse_sources(params.source.as_deref())?;
+    let scope = account_cursor_scope(&needle, &sources);
     let limit = super::listing::clamp_limit(
         params.limit,
         DEFAULT_ACCOUNT_SEARCH_LIMIT,
         MAX_ACCOUNT_SEARCH_LIMIT,
     );
-    let resume = account_resume_from(params.cursor.as_deref(), tenant, &needle)?;
+    let resume = account_resume_from(params.cursor.as_deref(), tenant, &scope)?;
 
     let reader = evidence_reader(&state);
     let page = reader
         .list(
             (!needle.is_empty()).then_some(needle.as_str()),
+            sources.as_slice(),
             resume.as_ref().map(|key| AfterAccount {
                 order_label: &key.order_label,
                 source_type: &key.source,
@@ -1052,7 +1064,7 @@ pub async fn search_accounts(
 
     let next_cursor = page
         .more
-        .then(|| next_account_cursor(page.accounts.last(), tenant, &needle))
+        .then(|| next_account_cursor(page.accounts.last(), tenant, &scope))
         .transpose()?
         .flatten();
 
@@ -1062,9 +1074,25 @@ pub async fn search_accounts(
         .await
         .map_err(|e| internal(&e, "failed to read current bindings"))?;
 
+    let claimed = seed_repo::latest_email_to_person(&state.db, tenant)
+        .await
+        .map_err(|e| internal(&e, "failed to read claimed addresses"))?;
+    let holders: HashMap<SourceAccountKey, Uuid> = found
+        .iter()
+        .filter_map(|account| {
+            let holder = review_queue::address_holder(
+                account.email.as_deref(),
+                bindings.get(&account.account),
+                &claimed,
+            )?;
+            Some((account.account.clone(), holder))
+        })
+        .collect();
+
     let person_ids: Vec<Uuid> = bindings
         .values()
         .map(|b| b.person_id)
+        .chain(holders.values().copied())
         .filter(|id| *id != EXCLUDED_PERSON)
         .collect::<HashSet<_>>()
         .into_iter()
@@ -1080,6 +1108,7 @@ pub async fn search_accounts(
         .into_iter()
         .map(|account| {
             let binding = bindings.get(&account.account);
+            let holder = holders.get(&account.account);
             AccountMatchResponse {
                 source: account.account.source_type,
                 source_id: account.account.source_id,
@@ -1090,16 +1119,10 @@ pub async fn search_accounts(
                 // A holder with no card attributes (a login-minted stub) is
                 // still a holder: back-fill an id-only card rather than
                 // presenting a bound account as unbound.
-                person: binding.filter(|b| b.person_id != EXCLUDED_PERSON).map(|b| {
-                    let card = cards
-                        .get(&b.person_id)
-                        .cloned()
-                        .unwrap_or_else(|| PersonCard::empty(b.person_id));
-                    PersonSummaryResponse {
-                        provisional: provisional.contains(&b.person_id),
-                        ..PersonSummaryResponse::from(card)
-                    }
-                }),
+                person: binding
+                    .filter(|b| b.person_id != EXCLUDED_PERSON)
+                    .map(|b| person_summary(b.person_id, &cards, &provisional)),
+                address_holder: holder.map(|id| person_summary(*id, &cards, &provisional)),
                 excluded: binding.is_some_and(|b| b.person_id == EXCLUDED_PERSON),
                 bound_by_operator: binding.is_some_and(KnownBinding::is_operator_authored),
             }
@@ -1109,16 +1132,82 @@ pub async fn search_accounts(
     Ok(Json(AccountSearchResponse { items, next_cursor }))
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SourcesResponse {
+    pub items: Vec<String>,
+}
+impl toolkit::api::api_dto::ResponseApiDto for SourcesResponse {}
+
+pub async fn sources(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_admin(&state.db, &ctx).await?;
+
+    let items = evidence_reader(&state)
+        .sources()
+        .await
+        .map_err(|e| internal(&e, "failed to read the sources"))?;
+
+    Ok(Json(SourcesResponse { items }))
+}
+
+fn person_summary(
+    person_id: Uuid,
+    cards: &HashMap<Uuid, PersonCard>,
+    provisional: &HashSet<Uuid>,
+) -> PersonSummaryResponse {
+    let card = cards
+        .get(&person_id)
+        .cloned()
+        .unwrap_or_else(|| PersonCard::empty(person_id));
+
+    PersonSummaryResponse {
+        provisional: provisional.contains(&person_id),
+        ..PersonSummaryResponse::from(card)
+    }
+}
+
+fn parse_sources(raw: Option<&str>) -> Result<SourceSet, CanonicalError> {
+    SourceSet::parse(raw).map_err(|e| invalid("source", &e.to_string()))
+}
+
+fn parse_kinds(raw: Option<&str>) -> Result<KindSet, CanonicalError> {
+    KindSet::parse(raw).map_err(|e| invalid("kind", &e.to_string()))
+}
+
+fn queue_page(
+    items: Vec<QueueItem>,
+    sources: &SourceSet,
+    kinds: &KindSet,
+    limit: usize,
+) -> (Vec<QueueItem>, bool) {
+    let narrowed = review_queue::items_from_sources(items, |source| {
+        sources.is_empty() || sources.contains(source)
+    });
+    let narrowed: Vec<QueueItem> = narrowed
+        .into_iter()
+        .filter(|item| kinds.is_empty() || kinds.contains(kind_label(item.kind)))
+        .collect();
+    let truncated = narrowed.len() > limit;
+
+    (narrowed.into_iter().take(limit).collect(), truncated)
+}
+
+fn account_cursor_scope(needle: &str, sources: &SourceSet) -> String {
+    format!("{}{needle}", sources.cursor_scope())
+}
+
 fn account_resume_from(
     cursor: Option<&str>,
     tenant: Uuid,
-    needle: &str,
+    scope: &str,
 ) -> Result<Option<AccountPageKey>, CanonicalError> {
     let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
         return Ok(None);
     };
 
-    super::listing::decode_cursor::<AccountPageKey>(cursor, tenant, needle)
+    super::listing::decode_cursor::<AccountPageKey>(cursor, tenant, scope)
         .map(Some)
         .map_err(|rejected| invalid("cursor", rejected.message()))
 }
@@ -1127,12 +1216,12 @@ fn account_resume_from(
 fn next_account_cursor(
     last: Option<&ListedAccount>,
     tenant: Uuid,
-    needle: &str,
+    scope: &str,
 ) -> Result<Option<String>, CanonicalError> {
     last.map(|row| {
         super::listing::encode_cursor(
             tenant,
-            needle,
+            scope,
             &AccountPageKey {
                 order_label: row.order_label.clone(),
                 source: row.evidence.account.source_type.clone(),
@@ -1457,5 +1546,125 @@ mod tests {
         ] {
             assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
         }
+    }
+
+    fn queued(kind: ItemKind, source: &str, account_id: &str) -> QueueItem {
+        QueueItem {
+            kind,
+            account: SourceAccountKey {
+                source_type: source.to_owned(),
+                source_id: Uuid::from_u128(1),
+                account_id: account_id.to_owned(),
+            },
+            email: None,
+            username: None,
+            description: review_queue::AccountDescription::default(),
+            bound_to: None,
+            candidates: Vec::new(),
+        }
+    }
+
+    fn ids(items: &[QueueItem]) -> Vec<&str> {
+        items
+            .iter()
+            .map(|i| i.account.account_id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn the_kind_filter_applies_before_the_limit() -> anyhow::Result<()> {
+        let items = vec![
+            queued(ItemKind::BindingConflict, "gitlab", "x-1"),
+            queued(ItemKind::BindingConflict, "gitlab", "x-2"),
+            queued(ItemKind::Contested, "gitlab", "c-1"),
+            queued(ItemKind::NoEvidence, "gitlab", "e-1"),
+            queued(ItemKind::NoEvidence, "github", "e-2"),
+        ];
+        let kinds = KindSet::parse(Some("contested,no_evidence"))?;
+
+        let (page, truncated) = queue_page(items.clone(), &SourceSet::default(), &kinds, 2);
+        assert_eq!(ids(&page), ["c-1", "e-1"]);
+        assert!(truncated, "e-2 was cut by the limit");
+
+        let (page, truncated) = queue_page(items.clone(), &SourceSet::default(), &kinds, 3);
+        assert_eq!(ids(&page), ["c-1", "e-1", "e-2"]);
+        assert!(!truncated);
+
+        let sources = SourceSet::parse(Some("gitlab"))?;
+        let (page, truncated) = queue_page(items.clone(), &sources, &kinds, 2);
+        assert_eq!(ids(&page), ["c-1", "e-1"]);
+        assert!(!truncated, "the source filter applies with the kind filter");
+
+        let (page, _) = queue_page(items, &SourceSet::default(), &KindSet::default(), 10);
+        assert_eq!(page.len(), 5, "no kind set keeps every kind");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unknown_kind_matches_nothing() -> anyhow::Result<()> {
+        let items = vec![queued(ItemKind::Contested, "gitlab", "c-1")];
+
+        let (page, truncated) = queue_page(
+            items,
+            &SourceSet::default(),
+            &KindSet::parse(Some("nope"))?,
+            10,
+        );
+
+        assert!(page.is_empty());
+        assert!(!truncated);
+        Ok(())
+    }
+
+    fn scope(needle: &str, sources: &str) -> anyhow::Result<String> {
+        Ok(account_cursor_scope(
+            needle,
+            &SourceSet::parse(Some(sources))?,
+        ))
+    }
+
+    fn account_cursor(tenant: Uuid, scope: &str) -> anyhow::Result<String> {
+        Ok(listing::encode_cursor(
+            tenant,
+            scope,
+            &AccountPageKey {
+                order_label: "a@example.com".to_owned(),
+                source: "gitlab".to_owned(),
+                source_id: Uuid::from_u128(1).to_string(),
+                account_id: "gl-1".to_owned(),
+            },
+        )?)
+    }
+
+    fn resumes(cursor: &str, tenant: Uuid, scope: &str) -> bool {
+        matches!(
+            account_resume_from(Some(cursor), tenant, scope),
+            Ok(Some(_))
+        )
+    }
+
+    #[test]
+    fn an_account_cursor_resumes_only_under_the_source_set_it_was_issued_for() -> anyhow::Result<()>
+    {
+        let tenant = Uuid::from_u128(7);
+        let cursor = account_cursor(tenant, &scope("", "gitlab")?)?;
+
+        assert!(
+            resumes(&cursor, tenant, &scope("", "gitlab, gitlab")?),
+            "the same set should resume"
+        );
+
+        for (case, presented) in [
+            ("another source", scope("", "github")?),
+            ("no source", scope("", "")?),
+            ("a wider set", scope("", "github,gitlab")?),
+            ("another needle", scope("ann", "gitlab")?),
+        ] {
+            assert!(
+                !resumes(&cursor, tenant, &presented),
+                "should reject a cursor presented for: {case}"
+            );
+        }
+        Ok(())
     }
 }

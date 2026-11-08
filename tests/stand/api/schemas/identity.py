@@ -450,6 +450,13 @@ class RoleResponse(BaseModel):
     role_id: UUID
 
 
+class SourcesResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[str]
+
+
 class SubchartNode(BaseModel):
     """
     One node in the org subchart tree.
@@ -537,6 +544,7 @@ class AccountMatchResponse(BaseModel):
         extra='forbid',
     )
     account_id: str
+    address_holder: PersonSummaryResponse | None = None
     bound_by_operator: bool = Field(..., description='`true` when a person decided this binding rather than automation.')
     display_name: str | None = None
     email: str | None = None

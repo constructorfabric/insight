@@ -95,6 +95,7 @@ from .identity import (
     MeResponse,
     PersonAccountsResponse,
     PersonListResponse,
+    SourcesResponse,
     SubchartNode,
     VisibilityPolicy,
 )
@@ -184,6 +185,7 @@ __all__: Sequence[str] = (
     "SavedQuery",
     "SavedQueryListResponse",
     "SeedOperationList",
+    "SourcesResponse",
     "Subchart",
     "SubchartForest",
     "SubchartNode",

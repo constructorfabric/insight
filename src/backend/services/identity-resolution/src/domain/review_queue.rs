@@ -209,6 +209,14 @@ pub fn build(
     Review { items, rates }
 }
 
+#[must_use]
+pub fn items_from_sources(items: Vec<QueueItem>, keep: impl Fn(&str) -> bool) -> Vec<QueueItem> {
+    items
+        .into_iter()
+        .filter(|item| keep(&item.account.source_type))
+        .collect()
+}
+
 /// Accounts sharing an e-mail whose bindings disagree, with no operator-authored
 /// binding explaining the split.
 fn binding_conflicts(
@@ -285,12 +293,25 @@ fn has_matchable_evidence(account: &EvidenceAccount) -> bool {
 /// it differently here would either hide an account the seed skips or queue one
 /// the seed resolves; both are states nobody can see from the other side.
 fn address_is_claimed(account: &EvidenceAccount, claimed: &HashMap<String, Uuid>) -> bool {
-    account
-        .email
-        .as_deref()
+    address_holder(account.email.as_deref(), None, claimed).is_some()
+}
+
+/// INVARIANT: normalization and the sentinel exclusion are the seed's, shared
+/// with [`address_is_claimed`]; a bound account has no address holder.
+#[must_use]
+pub fn address_holder(
+    email: Option<&str>,
+    binding: Option<&KnownBinding>,
+    claimed: &HashMap<String, Uuid>,
+) -> Option<Uuid> {
+    if binding.is_some() {
+        return None;
+    }
+
+    email
         .map(normalize_email)
         .and_then(|email| claimed.get(&email).copied())
-        .is_some_and(|person| person != EXCLUDED_PERSON)
+        .filter(|person| *person != EXCLUDED_PERSON)
 }
 
 /// The item an already-bound account earns, when its binding still awaits a
@@ -931,5 +952,93 @@ mod tests {
         assert!(review.items.is_empty());
         assert_eq!(review.rates.excluded, 1);
         assert_eq!(review.rates.bound, 0, "excluded is its own state");
+    }
+
+    #[test]
+    fn filtering_by_source_keeps_the_queue_order_and_drops_the_rest() {
+        let bindings = HashMap::new();
+        let review = build(
+            vec![
+                without_source_id("github", "gh-1", None),
+                without_source_id("gitlab", "gl-1", None),
+                without_source_id("hr", "hr-1", None),
+                without_source_id("gitlab", "gl-2", None),
+            ],
+            &bindings,
+            &HashMap::new(),
+        );
+
+        let kept = items_from_sources(review.items, |s| s == "gitlab" || s == "hr");
+
+        let ids: Vec<&str> = kept.iter().map(|i| i.account.account_id.as_str()).collect();
+        assert_eq!(ids, ["gl-1", "gl-2", "hr-1"], "order kept, github dropped");
+    }
+
+    #[test]
+    fn a_filter_that_accepts_everything_keeps_the_queue_whole() {
+        let review = build(
+            vec![
+                without_source_id("github", "gh-1", None),
+                without_source_id("gitlab", "gl-1", None),
+            ],
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        let before = review.items.len();
+
+        let kept = items_from_sources(review.items, |_| true);
+
+        assert_eq!(kept.len(), before);
+    }
+
+    #[test]
+    fn the_address_holder_is_the_person_an_unbound_address_resolves_to() {
+        let holder = Uuid::from_u128(7);
+        let claimed = HashMap::from([
+            ("a@example.com".to_owned(), holder),
+            ("bot@example.com".to_owned(), EXCLUDED_PERSON),
+        ]);
+        let bound = seed_bound(9);
+        let excluded = KnownBinding {
+            person_id: EXCLUDED_PERSON,
+            author_person_id: Uuid::nil(),
+            provenance: Provenance::Resolved,
+        };
+
+        for (case, email, binding, expected) in [
+            ("bound", Some("a@example.com"), Some(&bound), None),
+            (
+                "bound to the excluded person",
+                Some("a@example.com"),
+                Some(&excluded),
+                None,
+            ),
+            (
+                "unbound and claimed",
+                Some("a@example.com"),
+                None,
+                Some(holder),
+            ),
+            (
+                "claimed by the excluded person",
+                Some("bot@example.com"),
+                None,
+                None,
+            ),
+            ("no address", None, None, None),
+            (
+                "address differing only in case",
+                Some("A@Example.COM"),
+                None,
+                Some(holder),
+            ),
+            ("unclaimed address", Some("b@example.com"), None, None),
+        ] {
+            assert_eq!(
+                address_holder(email, binding, &claimed),
+                expected,
+                "wrong holder for: {case}"
+            );
+        }
     }
 }
