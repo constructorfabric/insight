@@ -107,7 +107,13 @@ pub async fn list_feedback(
         .await
         .map_err(read_error)?;
 
-    let names = person_names::lookup(&state.ch, tenant, &senders(&rows)).await;
+    let names = person_names::lookup(
+        &state.ch,
+        &state.config.roster_source_type,
+        tenant,
+        &senders(&rows),
+    )
+    .await;
 
     Ok(Json(FeedbackListResponse {
         since: window.since.to_string(),

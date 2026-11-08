@@ -30,23 +30,26 @@ fn by_page_sql(visitors: &str, order: Order<PagesSort>) -> String {
 }
 
 /// The one read whose binds do not match the shared window: the identity join
-/// scopes by tenant again, and a search names the tenant and the needle for its
-/// own lookup, so those values are bound here beside the `?`s that need them.
+/// names the roster and the tenant again, and a search names them and the needle
+/// for its own lookup, so those values are bound here beside the `?`s that need
+/// them.
 fn people_query(
     ch: &insight_clickhouse::Client,
     binds: &WindowBinds,
+    roster: &str,
     order: Order<PeopleSort>,
     search: Option<&PersonSearch>,
 ) -> clickhouse::query::Query {
     let mut query = binds.query(ch, &people_sql(order, search));
     if let Some(search) = search {
         query = query
+            .bind(roster)
             .bind(binds.tenant.as_str())
             .bind(search.as_str())
             .bind(search.as_str());
     }
 
-    query.bind(binds.tenant.as_str())
+    query.bind(roster).bind(binds.tenant.as_str())
 }
 
 /// Names come from the mirrored identity rows; a per-caller profile lookup
@@ -188,10 +191,16 @@ pub async fn get_usage_people(
     let (window, order, search) = query.plan()?;
     let binds = WindowBinds::new(&ctx, &window);
 
-    let items = people_query(&state.ch, &binds, order, search.as_ref())
-        .fetch_all::<UsagePerson>()
-        .await
-        .map_err(read_error)?;
+    let items = people_query(
+        &state.ch,
+        &binds,
+        &state.config.roster_source_type,
+        order,
+        search.as_ref(),
+    )
+    .fetch_all::<UsagePerson>()
+    .await
+    .map_err(read_error)?;
 
     Ok(Json(UsagePeopleResponse {
         since: binds.since,
@@ -247,6 +256,9 @@ pub async fn get_usage_actions(
         items,
     }))
 }
+
+#[cfg(test)]
+mod live_tests;
 
 #[cfg(test)]
 mod tests;

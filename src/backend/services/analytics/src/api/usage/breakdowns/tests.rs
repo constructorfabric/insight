@@ -27,8 +27,8 @@ fn every_caller_value_in_a_read_is_a_placeholder() -> R {
         people_sql(Order::parse(Some("last_seen"), Some("asc"))?, None)
             .matches('?')
             .count(),
-        4,
-        "people_query binds the tenant a second time for the identity join"
+        5,
+        "people_query binds the roster and the tenant again for the identity join"
     );
     Ok(())
 }
@@ -141,8 +141,8 @@ fn a_search_is_bound_never_spliced_in() -> R {
     assert!(!sql.contains(needle), "{sql}");
     assert_eq!(
         sql.matches('?').count(),
-        7,
-        "window, the name lookup's tenant, the needle twice, the join's tenant"
+        9,
+        "window, the name lookup's roster and tenant, the needle twice, the join's roster and tenant"
     );
     Ok(())
 }

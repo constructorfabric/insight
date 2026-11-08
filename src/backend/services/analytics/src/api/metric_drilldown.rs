@@ -208,6 +208,7 @@ async fn roster_names(
         QUERY_TIMEOUT,
         person_names::lookup_bounded(
             &state.ch,
+            &state.config.roster_source_type,
             validated.tenant_id,
             &ids,
             with_evidence_query_limits,

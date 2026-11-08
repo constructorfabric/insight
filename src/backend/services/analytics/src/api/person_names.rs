@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use uuid::Uuid;
 
-/// A `person_id → display_name / username` relation for one tenant, taking one
-/// bound tenant parameter. Names come from the mirrored rows: a per-caller
-/// profile lookup answers only for the caller's visible set, and these surfaces
-/// are org-wide.
+/// A `person_id → display_name / username` relation for one tenant, binding the
+/// roster source type and then the tenant. Names come from the mirrored rows: a
+/// per-caller profile lookup answers only for the caller's visible set, and
+/// these surfaces are org-wide.
 pub(crate) fn named_persons() -> String {
     format!("({})", aggregate(""))
 }
@@ -31,10 +31,11 @@ pub(crate) struct PersonName {
 /// being named are the thing on screen.
 pub(crate) async fn lookup(
     ch: &insight_clickhouse::Client,
+    roster: &str,
     tenant: Uuid,
     ids: &[Uuid],
 ) -> HashMap<Uuid, PersonName> {
-    lookup_bounded(ch, tenant, ids, |query| query).await
+    lookup_bounded(ch, roster, tenant, ids, |query| query).await
 }
 
 /// The same lookup under the caller's own resource limits.
@@ -43,6 +44,7 @@ pub(crate) async fn lookup(
 /// aggregate scans the identity journal, which carries no index on the tenant.
 pub(crate) async fn lookup_bounded(
     ch: &insight_clickhouse::Client,
+    roster: &str,
     tenant: Uuid,
     ids: &[Uuid],
     bound: impl FnOnce(clickhouse::query::Query) -> clickhouse::query::Query,
@@ -52,6 +54,7 @@ pub(crate) async fn lookup_bounded(
     }
 
     match bound(ch.query(&aggregate(" AND person_id IN ?")))
+        .bind(roster)
         .bind(tenant.to_string())
         .bind(ids)
         .fetch_all::<PersonName>()
@@ -92,6 +95,9 @@ fn by_person(found: Vec<PersonName>) -> HashMap<Uuid, PersonName> {
 /// before the `GROUP BY` — after it, the argMax state is built for the whole
 /// tenant and then discarded. The identity log carries no index on the tenant,
 /// which makes that the difference between a scan and a seek.
+///
+/// INVARIANT: a person the roster speaks for is named from the roster's rows
+/// alone, as identity's People listing names them; anyone else by every source.
 fn aggregate(person: &str) -> String {
     format!(
         "SELECT person_id, \
@@ -105,9 +111,14 @@ fn aggregate(person: &str) -> String {
            '' \
          ) AS display_name, \
          coalesce(nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'username'), ''), '') AS username \
-         FROM identity.identity_persons \
-         WHERE value_type IN ('display_name', 'first_name', 'last_name', 'username') \
-         AND insight_tenant_id = toUUID(?){person} \
+         FROM (\
+           SELECT person_id, value_type, value_effective, created_at, id, \
+           insight_source_type = ? AS from_roster, \
+           max(from_roster) OVER (PARTITION BY person_id) AS on_roster \
+           FROM identity.identity_persons \
+           WHERE value_type IN ('display_name', 'first_name', 'last_name', 'username') \
+           AND insight_tenant_id = toUUID(?){person}) \
+         WHERE from_roster = on_roster \
          GROUP BY person_id"
     )
 }
@@ -133,7 +144,7 @@ mod tests {
     async fn nobody_to_name_asks_the_server_nothing() {
         // The client points at a closed port: reaching the network here would
         // fail rather than return empty.
-        let names = lookup(&offline_client(), Uuid::now_v7(), &[]).await;
+        let names = lookup(&offline_client(), "roster", Uuid::now_v7(), &[]).await;
 
         assert!(names.is_empty());
     }
@@ -162,13 +173,13 @@ mod tests {
     }
 
     #[test]
-    fn the_relation_binds_the_tenant_and_nothing_else() {
-        assert_eq!(named_persons().matches('?').count(), 1);
+    fn the_relation_binds_the_roster_and_the_tenant_and_nothing_else() {
+        assert_eq!(named_persons().matches('?').count(), 2);
     }
 
     #[test]
-    fn the_lookup_binds_the_tenant_and_the_person_set() {
-        assert_eq!(aggregate(" AND person_id IN ?").matches('?').count(), 2);
+    fn the_lookup_binds_the_roster_the_tenant_and_the_person_set() {
+        assert_eq!(aggregate(" AND person_id IN ?").matches('?').count(), 3);
     }
 
     /// A `nullIf` the outer `coalesce` does not cover leaves the column
@@ -186,12 +197,16 @@ mod tests {
     }
 
     #[test]
-    fn the_person_filter_sits_before_the_grouping() {
+    fn the_person_filter_sits_before_the_ranking_and_the_grouping() -> Result<(), &'static str> {
         let sql = aggregate(" AND person_id IN ?");
+        let filter = sql.find("person_id IN ?").ok_or("no person filter")?;
+        let ranked = sql.find("WHERE from_roster").ok_or("no roster ranking")?;
+        let grouped = sql.find("GROUP BY").ok_or("no grouping")?;
 
         assert!(
-            sql.find("person_id IN ?") < sql.find("GROUP BY"),
-            "filtering after the GROUP BY aggregates the whole tenant: {sql}"
+            filter < ranked && ranked < grouped,
+            "filtering after the window or the GROUP BY ranks the whole tenant: {sql}"
         );
+        Ok(())
     }
 }
