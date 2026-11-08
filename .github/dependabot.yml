@@ -2,15 +2,13 @@
 # risk of a moving tag being repointed, but a digest never ages out on its own —
 # this file is the other half of that trade.
 #
-# Semgrep is the pip entry on /.github. The lock is a hashed requirements file
-# and has no sibling .in, so Dependabot rewrites each == pin and that pin's
-# --hash lines in place. It does not recompile the lock. .python-version there
-# is the interpreter the Semgrep lane installs; the pip resolver reads it.
+# Semgrep's direct pin is .github/semgrep-requirements.in. The hashed txt beside
+# it is the lock CI installs with --require-hashes. The pip entry recompiles
+# that lock from the .in, so one bump moves the whole closure. .python-version
+# in that directory is the interpreter the Semgrep lane installs.
 #
-# Trivy and TruffleHog are not covered. Their version and sha256 are shell
-# assignments in .github/actions/install-scanners/action.yml. No ecosystem reads
-# those, and github-actions only bumps `uses:` refs. Both fields of a pair are
-# still refreshed by hand from that release's checksums.txt.
+# Trivy and TruffleHog version and sha256 pairs are shell assignments in
+# .github/actions/install-scanners/action.yml. No entry here updates them.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -181,8 +179,7 @@ updates:
       - dependency-name: playwright
         versions: [">1.62.1"]
 
-  # Hash lock only. No sibling .in, so this stays an in-place pin update.
-  # INVARIANT: every .txt under this directory is scanned. The allowlist is not a manifest.
+  # Recompile the hash lock from the .in. The allowlist txt is not a manifest.
   - package-ecosystem: pip
     directory: /.github
     schedule:
