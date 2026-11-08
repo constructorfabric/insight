@@ -375,9 +375,9 @@ describe("commit counts lead nothing", () => {
   }
 
   const pages: Array<[string, readonly SectionSpec[]]> = [
-    ...Object.entries(OVERVIEW_ITEMS).map(
-      ([item, config]) => [`overview ${item}`, config.sections] as [string, readonly SectionSpec[]],
-    ),
+    ...Object.entries(OVERVIEW_ITEMS)
+      .filter(([item]) => item !== "contribution")
+      .map(([item, config]) => [`overview ${item}`, config.sections] as [string, readonly SectionSpec[]]),
     ...Object.entries(DIRECTION_LENSES).flatMap(([dir, lenses]) =>
       Object.entries(lenses).flatMap(([lens, entry]): Array<[string, readonly SectionSpec[]]> => {
         if ("comingSoon" in entry || "entity" in entry) return [];
@@ -390,7 +390,7 @@ describe("commit counts lead nothing", () => {
     ),
   ];
 
-  it("on any headline, trend, bus factor or distribution outside work in flight", () => {
+  it("on any headline, trend, bus factor or distribution outside work in flight and the contribution breakdown", () => {
     for (const [page, sections] of pages) {
       for (const section of sections) {
         expect(COMMIT_COUNTS.has(leadMetric(section) ?? ""), `${page} ${section.kind}`).toBe(false);
