@@ -109,6 +109,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - id: filter
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
@@ -129,13 +132,14 @@ jobs:
           #
           # No base means a schedule or a dispatch: nothing to filter, so it
           # runs either way and the comparison only decides what to build.
+          # INVARIANT: on main origin/main is HEAD, so diffing against it builds nothing.
           forced=false
           if [ -n "${BASE:-}" ]; then
             base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
           else
             forced=true
-            base_point="$(git rev-parse --verify --quiet origin/main || true)"
-            echo "no base sha — running, and comparing against origin/main to decide what to build"
+            base_point="$(python3 scripts/ci/stand_pin_base.py)"
+            echo "no base sha — running, and comparing against the oldest commit a pinned image was built from (${base_point:-none})"
           fi
           # No comparison point: build both rather than pin on a comparison that
           # was never made.
