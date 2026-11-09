@@ -66,6 +66,7 @@ export function ContextPane() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dismissDrawer = useDismissDrawer();
   const { state } = useSidebar();
+  const { t } = useTranslation();
 
   return (
     <Sidebar
@@ -91,7 +92,10 @@ export function ContextPane() {
           </span>
         </SidebarHeader>
       )}
-      <SidebarContent role="navigation" aria-label="Section navigation">
+      <SidebarContent
+        role="navigation"
+        aria-label={t("common.a11y.section_navigation")}
+      >
         {isPhone ? <MobileRailNav /> : null}
         {rail ? <RailPane rail={rail.id} nav={nav} /> : null}
       </SidebarContent>

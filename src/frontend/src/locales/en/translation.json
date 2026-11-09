@@ -83,7 +83,8 @@
     "copied": "Copied",
     "copy_failed": "Unable to copy",
     "a11y": {
-      "notifications": "Notifications"
+      "notifications": "Notifications",
+      "section_navigation": "Section navigation"
     }
   },
   "theme": {

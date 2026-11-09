@@ -109,6 +109,8 @@ vi.mock("@/lib/portal/use-person-sections", async (orig) => ({
   usePersonSectionStandings: () => mocks.standings,
 }));
 
+import "@/i18n";
+
 import { ContextPane } from "./context-pane";
 
 const pane = () =>
