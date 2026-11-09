@@ -115,6 +115,34 @@ describe("DIRECTION_LENSES registry", () => {
     expect(inFlight).toContain(IN_FLIGHT_METRICS.commits);
   });
 
+  it("measures Git output in merged PRs, with no commit figure left", () => {
+    const gitOutput = lensEntry("dev", "Git output") as LensConfig;
+    const metricsOf = (kind: SectionSpec["kind"]) =>
+      gitOutput.sections
+        .filter((s) => s.kind === kind)
+        .flatMap((s) => sectionMetricKeys({ title: "t", sections: [s] }));
+
+    expect(metricsOf("headline")).toEqual([
+      "git.default_branch_prs_merged",
+      "git.default_branch_prs_created",
+      "git.pr_size",
+      "git.default_branch_code_lines",
+    ]);
+    expect(metricsOf("trend")).toEqual(["git.default_branch_prs_merged"]);
+    expect(metricsOf("concentration")).toEqual(["git.default_branch_prs_merged"]);
+    expect(sectionMetricKeys(gitOutput)).not.toContain("git.default_branch_commits");
+  });
+
+  it("lists every person by merged PRs on Git output, unfolded", () => {
+    const gitOutput = lensEntry("dev", "Git output") as LensConfig;
+    const perPerson = gitOutput.sections.flatMap((s) =>
+      s.kind === "contributors" ? [[s.metric, s.limit]] : [],
+    );
+
+    expect(perPerson).toEqual([["git.default_branch_prs_merged", Infinity]]);
+    expect(gitOutput.sections.map((s) => s.kind)).not.toContain("distribution");
+  });
+
   it("explains a derived dimension where a label cannot", () => {
     const entry = lensEntry("dev", "Overview");
     const composition = (entry as LensConfig).sections.find(
@@ -371,9 +399,9 @@ describe("commit counts lead nothing", () => {
   }
 
   const pages: Array<[string, readonly SectionSpec[]]> = [
-    ...Object.entries(OVERVIEW_ITEMS)
-      .filter(([item]) => item !== "contribution")
-      .map(([item, config]) => [`overview ${item}`, config.sections] as [string, readonly SectionSpec[]]),
+    ...Object.entries(OVERVIEW_ITEMS).map(
+      ([item, config]) => [`overview ${item}`, config.sections] as [string, readonly SectionSpec[]],
+    ),
     ...Object.entries(DIRECTION_LENSES).flatMap(([dir, lenses]) =>
       Object.entries(lenses).flatMap(([lens, entry]): Array<[string, readonly SectionSpec[]]> => {
         if ("comingSoon" in entry || "entity" in entry) return [];
@@ -386,7 +414,7 @@ describe("commit counts lead nothing", () => {
     ),
   ];
 
-  it("on any headline, trend, bus factor or distribution outside work in flight and the contribution breakdown", () => {
+  it("on any headline, trend, bus factor or distribution outside work in flight", () => {
     for (const [page, sections] of pages) {
       for (const section of sections) {
         expect(leadMetric(section), `${page} ${section.kind}`).not.toBe(COMMITS);

@@ -97,6 +97,10 @@ describe("resolveZoneItem", () => {
     expect(resolveZoneItem("overview", "trend")).toBe("at-a-glance");
   });
 
+  it("sends a link to the dropped Contribution breakdown to At a glance", () => {
+    expect(resolveZoneItem("overview", "contribution")).toBe("at-a-glance");
+  });
+
   it("falls back for an item that belongs to another zone", () => {
     expect(resolveZoneItem("people", "by-direction")).toBe("roster");
   });

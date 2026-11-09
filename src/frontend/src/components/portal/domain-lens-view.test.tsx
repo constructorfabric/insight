@@ -668,6 +668,73 @@ describe("aggregate sections open the people behind them", () => {
     // Busiest tenth of 4 contributors = 1 person, and it is the busiest one.
     expect(view.rows.map((row: { value: number }) => row.value)).toEqual([9]);
   });
+
+  const CONTRIBUTORS_CONFIG: LensConfig = {
+    title: "T",
+    sections: [{ kind: "contributors", metric: "t.commits", title: "Per person" }],
+  };
+
+  it("opens one person's own records from their bar", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: true });
+    drawWithEvidence(CONTRIBUTORS_CONFIG);
+
+    await user.click(
+      screen.getByRole("button", { name: "Open the records behind d" })
+    );
+
+    expect(openEvidence).toHaveBeenCalledTimes(1);
+    const [selection, label] = openEvidence.mock.calls[0]!;
+    expect(selection.entity).toEqual({ type: "person", id: pid("d") });
+    expect(label).toBe("Commits · d");
+  });
+
+  it("leaves a person's bar inert when the metric's records cannot be read", () => {
+    seedSpread({ drillable: false });
+    drawWithEvidence(CONTRIBUTORS_CONFIG);
+
+    expect(
+      screen.queryByRole("button", { name: /Open the records behind/ })
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("concentration names the busiest tenth on the card", () => {
+  function seedRoster(size: number) {
+    const labels = Array.from({ length: size }, (_, i) => `p${String(i).padStart(2, "0")}`);
+    mocks.tree = person("boss", {}, labels.map((l) => person(l)));
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          labels.map((l, i) => [pid(l), i + 1] as [string, number]),
+          { short_label: "Commits" }
+        ),
+      ],
+    ]);
+    mocks.grid.previousByKey = new Map();
+  }
+
+  const config: LensConfig = {
+    title: "T",
+    sections: [{ kind: "concentration", metrics: ["t.commits"], framing: "bus-factor" }],
+  };
+
+  it("lists the busiest people by name, busiest first", () => {
+    seedRoster(20);
+    render(<DomainLensView config={config} />);
+
+    expect(screen.getByText("p19, p18")).toBeInTheDocument();
+  });
+
+  it("names five and counts the rest when the busiest tenth is larger", () => {
+    seedRoster(60);
+    render(<DomainLensView config={config} />);
+
+    expect(screen.getByText("p59, p58, p57, p56, p55 +1 more")).toBeInTheDocument();
+  });
 });
 
 describe("distribution (rule 4: integer 1/2/5 bins, self-suppressing)", () => {

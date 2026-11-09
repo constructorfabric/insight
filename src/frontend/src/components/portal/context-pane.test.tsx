@@ -691,22 +691,6 @@ describe("Home pane", () => {
     pane();
     expect(screen.queryByText("At a glance")).toBeNull();
   });
-
-  it.each([
-    ["a viewer without a cohort", false, false],
-    ["a viewer looking at their team", true, true],
-  ] as const)(
-    "lists the split of work between people only for %s",
-    (_case, canSeeOthers, shown) => {
-      mocks.canSeeOthers = canSeeOthers;
-      pane();
-      expect(screen.getByText("By direction")).toBeInTheDocument();
-      expect(
-        screen.queryByText("Contribution breakdown") !== null,
-        `case: ${_case}`,
-      ).toBe(shown);
-    },
-  );
 });
 
 describe("ContextPane highlight", () => {

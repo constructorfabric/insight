@@ -89,3 +89,29 @@ describe("synthetic breakdowns per period", () => {
     );
   });
 });
+
+describe("default-branch git metrics", () => {
+  it("carry the catalog's labels, units and computation", () => {
+    const keys = [
+      "git.default_branch_commits",
+      "git.default_branch_prs_merged",
+      "git.default_branch_prs_created",
+      "git.pr_size",
+      "git.default_branch_code_lines",
+    ];
+    const response = buildMetricResultsResponse({
+      ...request,
+      metrics: keys.map((metric_key) => ({ metric_key, views: [{ view: "period" as const }] })),
+    });
+
+    expect(
+      response.metrics.map((m) => [m.metric_key, m.label, m.short_label, m.unit, m.computation]),
+    ).toEqual([
+      ["git.default_branch_commits", "Commits", undefined, "commits", "sum"],
+      ["git.default_branch_prs_merged", "PRs merged", "PRs merged", "PRs", "sum"],
+      ["git.default_branch_prs_created", "PRs opened", "PRs opened", "PRs", "sum"],
+      ["git.pr_size", "PR size", undefined, "lines", "median"],
+      ["git.default_branch_code_lines", "Code lines", "Code lines", "lines", "sum"],
+    ]);
+  });
+});

@@ -901,6 +901,7 @@ function Section({
           grid={grid}
           memberIds={memberIds}
           nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
         />
       );
     case "heatmap-hours":
@@ -1742,12 +1743,20 @@ function ConcentrationSection({
   );
 }
 
+const CONCENTRATION_NAMES = 5;
+
+function concentrationNames(people: EvidencePeopleView): string {
+  const names = people.rows.map((row) => row.name);
+  const shown = names.slice(0, CONCENTRATION_NAMES).join(", ");
+  const rest = names.length - CONCENTRATION_NAMES;
+  return rest > 0 ? `${shown} +${rest} more` : shown;
+}
+
 /**
  * One concentration figure, and who the busiest tenth actually is.
  *
  * The card opens that subset rather than the roster: a list of everyone would
- * answer a different question from the one the card raises. Names stay inside
- * the dialog — the card itself still says nothing about any individual.
+ * answer a different question from the one the card raises.
  */
 function ConcentrationCard({
   card,
@@ -1772,6 +1781,9 @@ function ConcentrationCard({
       <div className="text-xs text-muted-foreground">
         carried by the {c.subset} · {note}
       </div>
+      {c.people.rows.length ? (
+        <div className="mt-2 text-sm">{concentrationNames(c.people)}</div>
+      ) : null}
     </CardContent>
   );
 
@@ -1924,31 +1936,40 @@ function CompositionSection({
   );
 }
 
-/* ── contributors + heatmap-hours (inside a drilldown) ───────────────── */
+/* ── contributors + heatmap-hours ────────────────────────────────────── */
 
 const CONTRIBUTOR_ROWS = 8;
 
-/**
- * The people who carried this one value, ranked.
- *
- * Named, unlike every roster-wide section: the subject is already one
- * repository, and "who works on this" is the question a reader descends to ask.
- * The roster-wide screens stay anonymous — see `AttentionSection` for the only
- * other place a name appears.
- */
 function ContributorsSection({
   spec,
   grid,
   memberIds,
   nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "contributors" }>;
   grid: GridData;
   memberIds: readonly string[];
   nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
+  const evidence = useMetricEvidenceOptional();
   const r = grid.byKey.get(spec.metric);
   if (!r) return null;
+
+  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric)) ?? null;
+  const people = peopleEvidenceView(
+    r,
+    memberIds,
+    spec.title,
+    { nameByEntity, personIdByEntity },
+    carrier
+  );
+  const targetByEntity = new Map(
+    people.rows.flatMap((row) =>
+      row.target ? [[row.entityId, row.target] as const] : []
+    )
+  );
 
   const ranked = entityValues(r, memberIds)
     .filter((e) => e.value > 0)
@@ -1971,12 +1992,19 @@ function ContributorsSection({
     });
   }
 
+  const openPerson = (row: BarRow) => {
+    const target = targetByEntity.get(row.key);
+    if (target) evidence?.openEvidence(target.selection, target.label);
+  };
+
   return (
     <BarList
       title={spec.title}
       rows={toBarRows(bucket)}
       format={r.format}
       unit={r.unit}
+      onOpen={evidence && targetByEntity.size ? openPerson : undefined}
+      canOpen={(row) => targetByEntity.has(row.key)}
     />
   );
 }
