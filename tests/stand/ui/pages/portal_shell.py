@@ -1,7 +1,7 @@
 """The portal shell — the lens rail a signed-in reader lands on.
 
-Rail zones and pane items are the same kit `SidebarMenuButton`, separable only
-by container: the rail through `[data-testid="lens-rail"]`, the pane through its
+The rail and the pane are two columns of one kit sidebar. Their items are the
+same `SidebarMenuButton`, separable only by column: the rail through `[data-testid="lens-rail"]`, the pane through its
 "Section navigation" landmark. A pane entry is the control directly inside an
 item of a top-level list; a sub-entry sits in a list nested under one.
 """
@@ -106,30 +106,6 @@ class PortalShell:
         with step(f"Open the {zone} zone"):
             entry = self.entry(self.safe_navigation(self.rail.zones()), zone)
             entry.click()
-            with step("Move away from the rail and wait for the pane to be uncovered"):
-                entry.blur()
-                self.main.hover()
-                self.page.wait_for_function(
-                    """({railSelector, paneSelector}) => {
-                        const rail = document.querySelector(railSelector);
-                        const buttons = [...document.querySelectorAll(paneSelector)]
-                            .filter(button => button.checkVisibility({visibilityProperty: true}));
-                        return rail && buttons.length > 0 && buttons.every(button => {
-                            const rect = button.getBoundingClientRect();
-                            const left = Math.max(0, rect.left);
-                            const right = Math.min(innerWidth, rect.right);
-                            const top = Math.max(0, rect.top);
-                            const bottom = Math.min(innerHeight, rect.bottom);
-                            if (right <= left || bottom <= top) return true;
-                            const inset = Math.min(1, (right - left) / 2);
-                            const y = (top + bottom) / 2;
-                            return [left + inset, (left + right) / 2, right - inset]
-                                .every(x => !rail.contains(document.elementFromPoint(x, y)));
-                        });
-                    }""",
-                    arg={"railSelector": RAIL, "paneSelector": PANE_BUTTONS},
-                    timeout=30_000,
-                )
 
     def open_pane_entry(self, label: str) -> None:
         with step(f'Open "{label}" in the pane'):

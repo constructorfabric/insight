@@ -52,7 +52,6 @@
   --border-strong: light-dark(#cbd5e1, #3b4a63);
   --input: light-dark(#cbd5e1, #334155);
   --ring: light-dark(#0065e3, #4d95f0);
-  --rail: light-dark(#e8edf3, #0b1220);
   --sidebar: light-dark(#f1f5f9, #0f172a);
   --sidebar-foreground: var(--foreground);
   --sidebar-accent: light-dark(#ffffff, #1e293b);

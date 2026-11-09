@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { CSSProperties } from "react";
 
 import { SidebarProvider } from "@gears-frontx/ui-kit";
 import { handlers } from "@/mocks/handlers";
@@ -13,7 +12,7 @@ const meta: Meta<typeof LensRail> = {
   parameters: { layout: "fullscreen", msw: { handlers } },
   decorators: [
     (Story) => (
-      <SidebarProvider style={{ "--rail-width": "3.5rem" } as CSSProperties}>
+      <SidebarProvider>
         <Story />
       </SidebarProvider>
     ),
@@ -34,17 +33,17 @@ export const TestIconsSitCentredInTheirButtons: Story = {
       expectHorizontallyCentred(
         button,
         button.querySelector("svg")!,
-        button.title
+        button.textContent ?? ""
       );
     }
   },
 };
 
-export const TestLogoSitsCentredInTheRail: Story = {
+export const TestLogoSitsCentredInTheRailHeader: Story = {
   tags: ["test"],
   play: async ({ canvas }) => {
     const logo = await canvas.findByRole("img", { name: "Constructor Fabric" });
 
-    expectHorizontallyCentred(canvas.getByTestId("lens-rail"), logo, "Logo");
+    expectHorizontallyCentred(logo.parentElement!, logo, "Logo");
   },
 };

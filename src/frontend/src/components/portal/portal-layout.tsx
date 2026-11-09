@@ -7,6 +7,7 @@ import { ContextPane } from "@/components/portal/context-pane";
 import { LensRail } from "@/components/portal/lens-rail";
 import { PortalTopBar } from "@/components/portal/portal-topbar";
 import {
+  Sidebar,
   SidebarInset,
   SidebarProvider,
   useSidebar,
@@ -23,8 +24,9 @@ import { useIsAdmin } from "@/queries/identity-me";
 
 /**
  * Portal shell (Phase 1 buildout), rendered unless the reader opts out via
- * `insight.portal`. Composition (one SidebarProvider, all normal flow):
- *   [ lens rail ] [ zone-contextual pane ] [ content ]
+ * `insight.portal`. Composition: one SidebarProvider, one collapsible shell
+ * sidebar holding two columns, then the content:
+ *   [ lens rail | zone-contextual pane ] [ content ]
  * Every zone renders through `<ZoneContent/>` (Person / People / Directions /
  * Overview / … all portal-native); the route only carries the active person.
  */
@@ -73,14 +75,12 @@ export function PortalLayout() {
   return (
     <SidebarProvider
       className="h-svh overflow-hidden"
-      style={{ "--rail-width": "3.5rem" } as CSSProperties}
+      style={{ "--sidebar-width": SHELL_SIDEBAR_WIDTH } as CSSProperties}
     >
       <PaneStateForLayout />
-      <LensRail />
-      <ContextPane />
+      <ShellSidebar />
       {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
-          topbar included — under the rail and the pane, which open across it
-          on the tier where the pane is off-canvas. */}
+          topbar included — under the fixed shell sidebar. */}
       <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
         <MockBanner />
         {/* The impersonation indicator: it names whose data is on screen and
@@ -94,11 +94,34 @@ export function PortalLayout() {
   );
 }
 
+/** Rail plus pane: the provider's width is the whole open sidebar. */
+const SHELL_SIDEBAR_WIDTH = "calc(var(--sidebar-width-icon) + 1px + 16rem)";
+
 /**
- * The pane is in normal flow only on a wide screen; narrower, it is off-canvas
- * and must START collapsed, or a tablet is back to 312px of chrome. The
- * provider's `open` defaults to true and survives a resize, so a layout change
- * has to reset it.
+ * Collapsible to the icon rail: the rail column stays, the pane beside it goes.
+ * On a phone the kit renders the same two columns in its drawer.
+ */
+export function ShellSidebar() {
+  return (
+    <Sidebar
+      collapsible="icon"
+      className={
+        // WORKAROUND: the kit's phone drawer is a Sheet, whose 24px inset pads
+        // the sidebar inside it; the sidebar's rows carry their own spacing.
+        "overflow-hidden *:flex-row [--sheet-inset:0]"
+      }
+    >
+      <LensRail />
+      <ContextPane />
+    </Sidebar>
+  );
+}
+
+/**
+ * The pane is open by default only on a wide screen; narrower, the shell
+ * sidebar must START collapsed to its rail, or a tablet is back to 305px of
+ * chrome. The provider's `open` defaults to true and survives a resize, so a
+ * layout change has to reset it.
  *
  * Guarded on the layout actually CHANGING: `setOpen` from the provider is a new
  * function on every open-state change, so an unguarded effect would re-fire and

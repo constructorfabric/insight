@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Mobile shell semantics. Two fixed sidebars (56px rail + 256px pane) left a
- * 375px phone ~60px of content, so below the breakpoint the rail hides and the
- * pane becomes the single off-canvas drawer. These tests pin the parts that
- * make that usable: the rail really disappears, the drawer carries the zones
- * (collapsed, so the zone's own sections stay above the fold) and the settings
- * menu, a zone pick keeps the drawer open while a section pick closes it, and
- * NOTHING of this leaks into the desktop layout.
+ * Shell semantics per width tier. The rail and the pane are two columns of one
+ * collapsible sidebar: on a phone both live in the drawer, on a tablet the
+ * sidebar collapses to the rail. A zone pick keeps the pane in view while a
+ * section pick gets it out of the way.
  */
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
@@ -110,16 +107,14 @@ import {
 } from "@/lib/portal/portal-nav";
 import { act, renderHook } from "@testing-library/react";
 
-import { ContextPane } from "./context-pane";
-import { LensRail } from "./lens-rail";
+import { ShellSidebar } from "./portal-layout";
 
-/** The real shell wiring: trigger in the topbar, pane as the drawer. */
+/** The real shell wiring: trigger in the topbar, rail and pane in one sidebar. */
 function Shell() {
   return (
     <SidebarProvider>
-      <LensRail />
+      <ShellSidebar />
       <SidebarTrigger />
-      <ContextPane />
     </SidebarProvider>
   );
 }
@@ -151,9 +146,10 @@ beforeEach(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
-/** The context pane's own box, around its header, sections and footer. */
+/** The context pane's own column, around its header and sections. */
 const sectionsPane = () =>
-  screen.getByRole("navigation", { name: "Section navigation" }).parentElement as HTMLElement;
+  screen.getByRole("navigation", { name: "Section navigation", hidden: true })
+    .parentElement as HTMLElement;
 
 const openDrawer = async () => {
   const user = userEvent.setup();
@@ -162,66 +158,24 @@ const openDrawer = async () => {
 };
 
 describe("shell layout: phone", () => {
-  it("hides the icon rail — it would eat 56px of a 375px screen", () => {
-    render(
-      <SidebarProvider>
-        <LensRail />
-      </SidebarProvider>,
-    );
-    expect(screen.queryByTestId("lens-rail")).toBeNull();
-  });
-
-  it("keeps the rail on a tablet — 56px is affordable there", () => {
-    mocks.layout = "narrow";
-    render(
-      <SidebarProvider>
-        <LensRail />
-      </SidebarProvider>,
-    );
-    expect(screen.getByTestId("lens-rail")).toBeInTheDocument();
-  });
-
-  it("keeps the rail on desktop", () => {
-    mocks.layout = "wide";
-    render(
-      <SidebarProvider>
-        <LensRail />
-      </SidebarProvider>,
-    );
-    expect(screen.getByTestId("lens-rail")).toBeInTheDocument();
-  });
-
-  it("keeps the pane closed until the topbar trigger opens it", async () => {
+  it("keeps the drawer closed until the topbar trigger opens it, rail and pane together", async () => {
     render(<Shell />);
     expect(screen.queryByText("At a glance")).not.toBeInTheDocument();
+
     await openDrawer();
+
+    expect(screen.getByRole("button", { name: "Explore" })).toBeInTheDocument();
     expect(screen.getByText("At a glance")).toBeInTheDocument();
   });
 
-  it("shows the zone switcher collapsed, so sections stay above the fold", async () => {
-    render(<Shell />);
-    await openDrawer();
-    // One row for the active zone; the other zones are not listed yet.
-    expect(screen.getByRole("button", { name: "Home", expanded: false })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Explore" })).not.toBeInTheDocument();
-    // …and the zone's own sections are already there.
-    expect(screen.getByText("By direction")).toBeInTheDocument();
-  });
-
-  it("expands the zone list on demand and re-collapses after a pick", async () => {
+  it("keeps the drawer open on a zone pick, so the zone's sections are next", async () => {
     render(<Shell />);
     const user = await openDrawer();
     const zoneState = renderHook(() => usePortalZone());
 
-    await user.click(screen.getByRole("button", { name: "Home", expanded: false }));
-    const explore = screen.getByRole("button", { name: "Explore" });
+    await user.click(screen.getByRole("button", { name: "Explore" }));
 
-    await user.click(explore);
     expect(zoneState.result.current).toBe("directions");
-    // Collapsed again: "Manage" only exists while the list is expanded, so its
-    // absence is the collapse. The drawer itself stays open — the Settings row
-    // is still there — so the new zone's sections are what the reader sees next.
-    expect(screen.queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
@@ -237,9 +191,6 @@ describe("shell layout: phone", () => {
   });
 
   it("keeps the settings menu one tap away instead of inline", async () => {
-    // Inline it costs six of the ~14 rows a phone has, which is what the
-    // sections need. Behind one row it costs one — the same trade the desktop
-    // rail makes with its settings icon.
     render(<Shell />);
     const user = await openDrawer();
     expect(screen.queryByTestId("settings-menu")).not.toBeInTheDocument();
@@ -248,7 +199,7 @@ describe("shell layout: phone", () => {
     expect(screen.getByTestId("settings-menu")).toBeInTheDocument();
   });
 
-  it("shuts the settings menu once it has sent the reader somewhere", async () => {
+  it("shuts the settings menu and the drawer once it has sent the reader somewhere", async () => {
     render(<Shell />);
     const user = await openDrawer();
     await user.click(screen.getByRole("button", { name: "Settings" }));
@@ -256,15 +207,7 @@ describe("shell layout: phone", () => {
     await user.click(screen.getByRole("button", { name: "Go somewhere" }));
 
     expect(screen.queryByTestId("settings-menu")).not.toBeInTheDocument();
-  });
-
-  it("offers feedback from the drawer itself, not from inside the settings menu", async () => {
-    render(<Shell />);
-    const user = await openDrawer();
-
-    await user.click(screen.getByRole("button", { name: "Send feedback" }));
-
-    expect(mocks.openFeedback).toHaveBeenCalled();
+    expect(screen.queryByText("At a glance")).not.toBeInTheDocument();
   });
 
   it("closes the drawer with the feedback box, which opens behind it", async () => {
@@ -273,10 +216,11 @@ describe("shell layout: phone", () => {
 
     await user.click(screen.getByRole("button", { name: "Send feedback" }));
 
+    expect(mocks.openFeedback).toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
   });
 
-  it("leaves feedback out of the settings menu the drawer already offers it beside", async () => {
+  it("leaves feedback out of the settings menu the rail already offers it beside", async () => {
     render(<Shell />);
     const user = await openDrawer();
 
@@ -287,29 +231,6 @@ describe("shell layout: phone", () => {
       "false",
     );
   });
-
-  it("drops the header — the zone row already names the zone", async () => {
-    render(<Shell />);
-    await openDrawer();
-    expect(screen.queryByText("Constructor Insight")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Home", expanded: false })).toBeInTheDocument();
-  });
-
-  it("adds neither the zone switcher nor the settings menu on desktop", () => {
-    mocks.layout = "wide";
-    render(
-      <SidebarProvider>
-        <ContextPane />
-      </SidebarProvider>,
-    );
-    // Desktop keeps its header, and the rail's duties stay in the rail.
-    const pane = sectionsPane();
-    expect(screen.getByText("At a glance")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(
-      within(pane as HTMLElement).queryByRole("button", { name: "Home", expanded: false }),
-    ).not.toBeInTheDocument();
-  });
 });
 
 describe("shell layout: narrow (tablet)", () => {
@@ -317,41 +238,34 @@ describe("shell layout: narrow (tablet)", () => {
     mocks.layout = "narrow";
   });
 
-  it("seats the open pane beside the rail, and lets a collapsed one leave", async () => {
-    // The drawer is positioned from the viewport edge, and at this tier the
-    // rail is what stands there. Collapsed, nothing may hold it on screen.
-    const user = userEvent.setup();
-    render(<Shell />);
-    const offset = "data-[side=left]:left-(--rail-width)";
-    expect(sectionsPane().parentElement, "expanded pane").toHaveClass(offset);
-
-    await user.click(screen.getByText("By direction"));
-    expect(sectionsPane().parentElement, "collapsed pane").not.toHaveClass(offset);
-  });
-
-  it("collapses the pane off-canvas instead of Sheeting it", () => {
-    // The rail is still there, so the pane must NOT take over the rail's duties
-    // — no zone list, no settings row, and the header stays.
+  it("keeps the rail's duties in the rail, out of the pane", () => {
     render(<Shell />);
     const pane = sectionsPane();
-    // Settings still exist — in the RAIL, where they belong at this width.
     expect(within(pane).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(
-      within(pane).queryByRole("button", { name: "Home", expanded: false }),
-    ).not.toBeInTheDocument();
+    expect(within(pane).queryByRole("button", { name: "Explore" })).not.toBeInTheDocument();
   });
 
-  it("closes the pane after a section pick, same as the phone drawer", async () => {
+  it("collapses to the rail after a section pick", async () => {
     const user = userEvent.setup();
     render(<Shell />);
     const itemState = renderHook(() => usePortalItem());
 
-    // The pane starts expanded in this bare harness (no PaneStateForLayout), so
-    // the sections are reachable; picking one must collapse it.
+    // The pane starts expanded in this bare harness (no PaneStateForLayout).
     await user.click(screen.getByText("By direction"));
 
     expect(itemState.result.current).toBe("by-direction");
     expect(document.querySelector('[data-state="collapsed"]')).not.toBeNull();
+    expect(screen.getByTestId("lens-rail")).toBeInTheDocument();
+  });
+
+  it("reopens the pane when a rail item is picked", async () => {
+    const user = userEvent.setup();
+    render(<Shell />);
+    await user.click(screen.getByText("By direction"));
+
+    await user.click(screen.getByRole("button", { name: "People" }));
+
+    expect(document.querySelector('[data-state="expanded"]')).not.toBeNull();
   });
 });
 
@@ -362,21 +276,18 @@ describe("shell layout: narrow (tablet), keyboard", () => {
 
   it("leaves an expanded pane in the Tab order", () => {
     render(<Shell />);
-    expect(sectionsPane().parentElement).not.toHaveAttribute("inert");
+    expect(sectionsPane()).not.toHaveAttribute("inert");
   });
 
-  // WORKAROUND: the kit's Sidebar does not mark a collapsed off-canvas panel
-  // `inert`; flip back to `it` once it does.
-  it.fails("takes a collapsed pane out of the Tab order and puts it back once opened", async () => {
+  it("takes a collapsed pane out of the Tab order and puts it back once opened", async () => {
     const user = userEvent.setup();
     render(<Shell />);
-    const pane = () => sectionsPane().parentElement;
 
     await user.click(screen.getByText("By direction"));
-    expect(pane(), "collapsed pane").toHaveAttribute("inert");
+    expect(sectionsPane(), "collapsed pane").toHaveAttribute("inert");
 
     await user.click(screen.getByRole("button", { name: /sidebar/i }));
-    expect(pane(), "reopened pane").not.toHaveAttribute("inert");
+    expect(sectionsPane(), "reopened pane").not.toHaveAttribute("inert");
   });
 });
 
