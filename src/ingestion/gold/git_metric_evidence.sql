@@ -735,43 +735,6 @@ SELECT
     '' AS account_source_id,
     '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
-    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
-    day_measure AS measure_key,
-    concat(
-        toString(metric_date),
-        ':',
-        day_measure,
-        ':',
-        hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), source_dimensions))))
-    ) AS record_id,
-    'commit_day' AS record_kind,
-    'derived_population' AS granularity,
-    'commit day' AS record_label,
-    toNullable(toFloat64(1)) AS contribution,
-    toNullable(toString(metric_date)) AS subject_key,
-    source_dimensions AS dimensions,
-    CAST(map() AS Map(String, String)) AS details
-FROM {{ ref('git_authored_commits') }}
-ARRAY JOIN arrayConcat(
-    ['commit_day'],
-    if(branch_scope_value = 'default', ['default_commit_day'], [])
-) AS day_measure
-WHERE tenant_id IS NOT NULL
-  AND entity_id IS NOT NULL
-  AND metric_date IS NOT NULL
-GROUP BY tenant_id, entity_id, metric_date, source_dimensions, day_measure
-
-UNION ALL
-
-SELECT
-    assumeNotNull(tenant_id) AS tenant_id,
-    'git' AS source_key,
-    'person' AS entity_type,
-    assumeNotNull(entity_id) AS entity_id,
-    '' AS account_source_type,
-    '' AS account_source_id,
-    '' AS account_id,
-    assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     commit_measure.1 AS measure_key,
     concat(source_value, ':', commit_hash, ':', commit_measure.1) AS record_id,
@@ -779,25 +742,27 @@ SELECT
     'event' AS granularity,
     if(message = '', commit_hash, message) AS record_label,
     toNullable(toFloat64(commit_measure.2)) AS contribution,
-    CAST(NULL AS Nullable(String)) AS subject_key,
-    -- The hour block rides HERE and not on git_authored_commits: the
-    -- `commit_day` rows group by that model's own dimension tuple, so a
-    -- dimension added there would split one active day into one row per
-    -- block and inflate every active-day reading.
+    if(commit_measure.3, toNullable(toString(metric_date)), CAST(NULL AS Nullable(String))) AS subject_key,
+    -- Day rows keep the bare source dimensions: an hour block there splits
+    -- one active day into one observation row per block.
     --
     -- INVARIANT: the appended element is CAST to the array's own named tuple
     -- type. `arrayConcat` with an anonymous or wider-nullability tuple widens
     -- the whole column to `Tuple(String, Nullable(String), Nullable(String))`,
     -- which changes this table's DDL and every relation that unions it.
-    arrayConcat(
+    if(
+        commit_measure.3,
         source_dimensions,
-        CAST(
-            [tuple(
-                'hour_block',
-                coalesce({{ hour_block_value('observed_at') }}, '__unknown__'),
-                toNullable(coalesce({{ hour_block_label('observed_at') }}, 'Unknown'))
-            )]
-            AS Array(Tuple(key String, value String, label Nullable(String)))
+        arrayConcat(
+            source_dimensions,
+            CAST(
+                [tuple(
+                    'hour_block',
+                    coalesce({{ hour_block_value('observed_at') }}, '__unknown__'),
+                    toNullable(coalesce({{ hour_block_label('observed_at') }}, 'Unknown'))
+                )]
+                AS Array(Tuple(key String, value String, label Nullable(String)))
+            )
         )
     ) AS dimensions,
     map(
@@ -812,16 +777,19 @@ SELECT
     ) AS details
 FROM authored_commits
 ARRAY JOIN arrayConcat(
-    [tuple('commit_count', toFloat64(1))],
+    [tuple('commit_count', toFloat64(1), false)],
     [tuple(
         if(branch_scope_value = 'default', 'default_commit_count', 'non_default_commit_count'),
-        toFloat64(1)
+        toFloat64(1),
+        false
     )],
     if(
         lines_added IS NOT NULL AND lines_removed IS NOT NULL,
-        [tuple('commit_change_size', toFloat64(lines_added + lines_removed))],
+        [tuple('commit_change_size', toFloat64(lines_added + lines_removed), false)],
         []
-    )
+    ),
+    [tuple('commit_day', toFloat64(1), true)],
+    if(branch_scope_value = 'default', [tuple('default_commit_day', toFloat64(1), true)], [])
 ) AS commit_measure
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL

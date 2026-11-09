@@ -56,11 +56,13 @@ sources:
             - { key: lines_added, label: Lines added, type: number }
             - { key: lines_removed, label: Lines removed, type: number }
       - key: commit_day
-        evidence_granularity: derived_population
+        evidence_granularity: event
         alias_collapse: max
+        evidence_presentation: *commit_row
       - key: default_commit_day
-        evidence_granularity: derived_population
+        evidence_granularity: event
         alias_collapse: max
+        evidence_presentation: *commit_row
       - key: commit_change_size
         evidence_granularity: event
         evidence_presentation:

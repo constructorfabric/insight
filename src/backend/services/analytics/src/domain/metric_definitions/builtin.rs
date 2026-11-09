@@ -742,10 +742,6 @@ mod tests {
     #[test]
     fn every_git_and_task_metric_drills_down_to_its_source_records() {
         const NOT_YET_LINKED: &[&str] = &[
-            "git.active_days",
-            "git.default_branch_active_days",
-            "git.commits_per_active_day",
-            "git.default_branch_commits_per_active_day",
             "tasks.flow_efficiency",
             "tasks.reopen_rate",
             "tasks.estimation_accuracy",
@@ -775,14 +771,16 @@ mod tests {
                     .flatten()
                     .is_some_and(EvidencePresentation::names_a_record)
             });
-            let linked = every_input_is_a_record
-                && metric.computation.denominator_aggregation() == RatioDenominatorAggregation::Sum;
             assert_eq!(
-                linked,
+                every_input_is_a_record,
                 !NOT_YET_LINKED.contains(&metric.metric_key.as_str()),
                 "{}: its drilldown {} reach the records it counts",
                 metric.metric_key,
-                if linked { "does" } else { "does not" }
+                if every_input_is_a_record {
+                    "does"
+                } else {
+                    "does not"
+                }
             );
         }
     }
