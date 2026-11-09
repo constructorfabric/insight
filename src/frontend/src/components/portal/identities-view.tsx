@@ -57,7 +57,7 @@ import {
 } from "@/components/ui/empty";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
-import { usePortalSearch } from "@/lib/portal/portal-search";
+import { type IdentitiesSearch, usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
@@ -104,13 +104,15 @@ export function IdentitiesView({ mode }: { mode?: string }) {
         value={active}
         // A mode change closes whatever was open: a case or a person picked in
         // one mode means nothing in another, and carrying either would open a
-        // window over a list that does not contain it.
+        // window over a list that does not contain it. The roster's terms and
+        // the source filter come along.
         onValueChange={(next) => {
           const picked = String(next);
+          const search = (prev: IdentitiesSearch) => ({ find: prev.find, src: prev.src });
           void navigate(
             picked === DEFAULT_MODE
-              ? { to: "/manage/identities" }
-              : { to: "/manage/identities/$mode", params: { mode: picked } },
+              ? { to: "/manage/identities", search }
+              : { to: "/manage/identities/$mode", params: { mode: picked }, search },
           );
         }}
       >

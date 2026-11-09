@@ -50,6 +50,7 @@ describe("screenPath", () => {
     ["/dashboards", "/dashboards"],
     ["/dashboards/", "/dashboards/"],
     ["/dashboards/q3-hiring-plan", "/dashboards/:id"],
+    ["/exp/preview/dashboards/q3-hiring-plan", "/exp/preview/dashboards/:id"],
     ["/dashboards/Board%20for%20Jane", "/dashboards/:id"],
     ["/dashboards/metrics", "/dashboards/metrics"],
     ["/dashboards/widgets", "/dashboards/widgets"],

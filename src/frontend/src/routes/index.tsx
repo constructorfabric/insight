@@ -8,8 +8,10 @@ import { linkTo } from "@/lib/portal/portal-routes";
 /** The landing page: Home, or the reader's own page where the install leaves Home out. */
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
-    const person = getViewerPersonId() ?? "";
+    const person = getViewerPersonId();
     const zone = bareLandingZone(getPortalShowPlanned());
-    throw redirect(linkTo(zone === "overview" ? { zone } : { zone, person }));
+    if (zone === "overview") throw redirect(linkTo({ zone }));
+    // A session that names no person has no page of its own to land on.
+    throw redirect(person ? linkTo({ zone, person }) : { to: "/dashboards" });
   },
 });

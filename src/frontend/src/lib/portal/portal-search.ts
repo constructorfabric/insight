@@ -250,6 +250,8 @@ export function useSetPortalSearch(): (
           return applySearchPatch(prev, resolved);
         },
         replace: opts?.replace ?? false,
+        // The page stays; only its setup changes, so the reader keeps their place.
+        resetScroll: false,
       });
     },
     [navigate],

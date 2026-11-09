@@ -81,7 +81,7 @@ function isDashboardId(segments: readonly string[], i: number): boolean {
   const segment = segments[i] ?? "";
   if (segment === "") return false;
 
-  const page = i === 2 && segments[1] === "dashboards";
+  const page = segments[i - 1] === "dashboards";
   const editor =
     segments[i - 3] === "dashboards" &&
     segments[i - 2] === "edit" &&

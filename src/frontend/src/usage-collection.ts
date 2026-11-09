@@ -1,19 +1,22 @@
-import type { RouterHistory } from "@tanstack/react-router";
+import type { AnyRouter } from "@tanstack/react-router";
 
 import { recordPageView } from "@/telemetry";
 
-// The path names the screen; the query only sets it up, so a filter change is
-// not a new screen.
-export function recordScreens(history: RouterHistory): void {
+/**
+ * Record each screen the reader lands on.
+ *
+ * SAFETY: only paths the router resolved are recorded. A hand-edited path
+ * whose segments name no page (`/home/<anything>`) redirects before it
+ * resolves, so free text never reaches the usage rows; the person segment is
+ * masked by `screenPath`.
+ */
+export function recordScreens(router: Pick<AnyRouter, "subscribe">): void {
   let recorded: string | null = null;
-  const record = () => {
-    // WORKAROUND: the router defers its pushState to a microtask, so `window`
-    // still holds the previous screen here.
-    const screen = history.location.pathname;
+  router.subscribe("onResolved", ({ toLocation }) => {
+    // The path names the screen; a query change only sets it up.
+    const screen = toLocation.pathname;
     if (screen === recorded) return;
     recorded = screen;
     recordPageView(screen);
-  };
-  history.subscribe(record);
-  record();
+  });
 }

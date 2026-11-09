@@ -8,7 +8,7 @@
  * and the strip sizes the tenant in four figures, colouring only the one that
  * is the operator's own work.
  */
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -796,16 +796,18 @@ describe("IdentitiesView", () => {
   // link opens the one it was sent from.
   it("switches modes by path, leaving behind what was open in the old one", async () => {
     attention.q.data = { items: [item({})], rates: RATES };
+    act(() => portalRouter.set({ acct: "malformed", person: "not-a-person", find: "ann", src: "github" }));
     render(<IdentitiesView />);
     portalRouter.navigations.length = 0;
 
     await userEvent.click(screen.getByRole("tab", { name: /a person and their accounts/i }));
 
-    // No search rides along: a case picked in the queue means nothing in a
-    // list it is not part of, and the router carries only the shell's keys.
     expect(portalRouter.navigations).toEqual([
-      { to: "/manage/identities/$mode", params: { mode: "person" } },
+      expect.objectContaining({ to: "/manage/identities/$mode", params: { mode: "person" } }),
     ]);
+    // A case picked in the queue means nothing in a list it is not part of;
+    // what the operator typed and filtered by is kept.
+    expect(portalRouter.search).toEqual({ find: "ann", src: "github" });
   });
 
   it("opens the mode its path names", () => {

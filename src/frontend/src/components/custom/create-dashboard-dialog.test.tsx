@@ -288,7 +288,7 @@ describe("<CreateDashboardDialog>", () => {
 
   it.each([
     ["from Dashboards, staying there", "/dashboards", 0],
-    ["from Home, moving to Dashboards", "/portal", 1],
+    ["from Home, moving to Dashboards", "/home", 1],
   ])(
     "hands the name to the Assistant %s, creating nothing",
     async (_where, pathname, navigations) => {

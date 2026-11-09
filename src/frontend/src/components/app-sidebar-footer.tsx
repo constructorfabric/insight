@@ -100,11 +100,7 @@ export function AppSidebarFooter({
   );
 }
 
-/**
- * Active state resolves through `resolveZoneItem`, the resolver the context
- * pane and the zone content use: a private comparison disagrees with them on a
- * bare `?zone=manage` and on a `?zone=` stranded by a person route.
- */
+/** Active state resolves through `resolveZoneItem`, as the context pane's does. */
 function MenuEntry({
   surface,
   icon: Icon,

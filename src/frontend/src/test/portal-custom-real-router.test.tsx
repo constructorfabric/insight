@@ -1,6 +1,6 @@
 /**
- * `/dashboards` and `/dashboards/$name` are file routes nested under
- * `/portal`, and `PortalLayout` renders them through its `<Outlet/>` — so the
+ * `/dashboards` and `/dashboards/$name` are file routes nested under the
+ * `_shell` layout, and `PortalLayout` renders them through its `<Outlet/>` — so the
  * rail, the topbar and the context pane are around them, and the pane lists
  * the dashboards.
  *
@@ -398,24 +398,53 @@ describe("the /dashboards routes, through the real router", { timeout: 20_000 },
 });
 
 describe("the portal shell, through the real router", { timeout: 20_000 }, () => {
-  it("stays mounted while the reader moves between zones", async () => {
+  const PERSON = "aaaaaaaa-1111-4111-8111-111111111111";
+
+  function withDashboards() {
     vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchFolders).mockResolvedValue({ folders: [], unfiled: 1 });
     vi.mocked(customClient.fetchPins).mockResolvedValue([]);
     vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: [] });
+  }
+
+  it("stays mounted while the reader moves between zones", async () => {
+    withDashboards();
     const { router } = renderAt("/dashboards");
     const rail = await screen.findByTestId("lens-rail", {}, { timeout: 10000 });
 
     await act(() =>
-      router.navigate({
-        to: "/people/$person/team",
-        params: { person: "aaaaaaaa-1111-4111-8111-111111111111" },
-      }),
+      router.navigate({ to: "/people/$person/team/$view", params: { person: PERSON, view: "metrics" } }),
     );
+    expect(router.state.location.pathname).toBe(`/people/${PERSON}/team/metrics`);
     await act(() => router.navigate({ to: "/manage/$surface", params: { surface: "news" } }));
+    expect(router.state.location.pathname).toBe("/manage/news");
 
     // The same element, not an equal one: a shell rebuilt per page drops what
     // the reader had open in it — the phone drawer, the pane's state, scroll.
     expect(screen.getByTestId("lens-rail")).toBe(rail);
+  });
+
+  it("carries scope and period to the next page, and nothing else", async () => {
+    withDashboards();
+    const { router } = renderAt(`/dashboards?period=quarter&scope=${PERSON}&owned=me`);
+    await screen.findByTestId("lens-rail", {}, { timeout: 10000 });
+
+    await act(() => router.navigate({ to: "/manage/$surface", params: { surface: "news" } }));
+
+    expect(router.state.location.search).toEqual({ period: "quarter", scope: PERSON });
+  });
+
+  it.each([
+    ["/explore/ai/nonsense", "/explore/ai"],
+    ["/home/nonsense", "/home"],
+    ["/manage/identities/nonsense", "/manage/identities"],
+    [`/people/${PERSON.toUpperCase()}/team`, `/people/${PERSON}/team`],
+  ])("sends %s to %s", async (from, to) => {
+    withDashboards();
+    const { router } = renderAt(from);
+
+    await screen.findByTestId("lens-rail", {}, { timeout: 10000 });
+
+    expect(router.state.location.pathname).toBe(to);
   });
 });

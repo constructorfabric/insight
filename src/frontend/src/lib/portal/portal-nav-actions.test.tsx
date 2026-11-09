@@ -50,4 +50,12 @@ describe("one navigation per intent", () => {
 
     expect(portalRouter.pathname, `${from} + ${item}`).toBe(to);
   });
+
+  it("keeps the reader's place when only the page's setup changes", () => {
+    const { result } = renderHook(() => usePortalNavActions());
+
+    act(() => result.current.setSlice("division"));
+
+    expect(portalRouter.navigations.at(-1)).toMatchObject({ resetScroll: false });
+  });
 });
