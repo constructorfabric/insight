@@ -3,8 +3,7 @@ import { useState } from "react";
 import type { DateRange as DayPickerRange } from "react-day-picker";
 
 import { toISODate } from "@/api/period-to-date-range";
-import { Button } from "@gears-frontx/ui-kit";
-import { Calendar } from "@/components/ui/calendar";
+import { Button, Calendar } from "@gears-frontx/ui-kit";
 import {
   Popover,
   PopoverContent,
@@ -96,13 +95,17 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
             </ToggleGroupItem>
           }
         />
-        <PopoverContent align="end" className="w-auto p-0">
+        <PopoverContent align="end" className="w-auto gap-0 p-0">
           <p className="border-b border-border px-4 py-3 text-xs text-muted-foreground">
             The end date is not counted — pick the day after the last one you
             want.
           </p>
           <Calendar
             mode="range"
+            weekStartsOn={1}
+            captionLayout="dropdown"
+            fixedWeeks
+            className="p-3"
             resetOnSelect
             showOutsideDays={false}
             selected={showing}

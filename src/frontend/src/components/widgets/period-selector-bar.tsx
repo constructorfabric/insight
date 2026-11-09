@@ -15,8 +15,8 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  Calendar,
 } from "@gears-frontx/ui-kit";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
   PopoverContent,
@@ -200,7 +200,7 @@ export function PeriodSelectorBar({
           />
           <PopoverContent
             align="end"
-            className="w-auto p-0"
+            className="w-auto gap-0 p-0"
             onKeyDown={keepNavigationKeysInside}
           >
             {tempRange?.from ? (
@@ -219,6 +219,10 @@ export function PeriodSelectorBar({
             ) : null}
             <Calendar
               mode="range"
+              weekStartsOn={1}
+              captionLayout="dropdown"
+              fixedWeeks
+              className="p-3"
               resetOnSelect
               showOutsideDays={false}
               selected={tempRange}
