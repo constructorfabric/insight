@@ -17,6 +17,7 @@ import {
   setMetricsViewPaneShown,
   useMetricsViewPaneShown,
 } from "@/lib/portal/metrics-view-pane";
+import { parseNavPolicy, type InstanceNavPolicy } from "@/lib/portal/nav-policy";
 import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
 import { AppTooltips, openTooltip } from "@/test/tooltip";
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   requestedIds: [] as readonly string[],
   definitionsError: false,
   refetchDefinitions: vi.fn(),
+  policy: null as InstanceNavPolicy | null,
   data: {
     byKey: new Map<string, NormalizedMetricResult>(),
     isPending: false,
@@ -41,6 +43,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "boss@x", personId: mocks.personId }),
 }));
+vi.mock("@/lib/portal/nav-policy", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/portal/nav-policy")>(
+    "@/lib/portal/nav-policy",
+  );
+  return { ...actual, navPolicy: () => mocks.policy ?? actual.EMPTY_NAV_POLICY };
+});
 vi.mock("@/queries/identity-me", () => ({
   useVisibilityPolicy: () => ({ policy: "org_chart", isFlat: false, isPending: false }),
 }));
@@ -146,10 +154,11 @@ beforeEach(() => {
   mocks.layout = "wide";
   mocks.definitionsError = false;
   mocks.refetchDefinitions.mockReset();
+  mocks.policy = null;
   mocks.roster = peopleFromIdentityTree(tree);
   mocks.definitions = [
-    definition("collab.messages", "Messages"),
-    definition("git.commits", "Default branch commits", {
+    definition("collab.messages_sent", "Messages"),
+    definition("git.default_branch_commits", "Default branch commits", {
       description: "Commits that landed on the default branch.",
       explanation: "Counted per author, merges included.",
     }),
@@ -160,9 +169,9 @@ beforeEach(() => {
   mocks.data.isError = false;
   mocks.data.byKey = new Map([
     [
-      "git.commits",
+      "git.default_branch_commits",
       result(
-        "git.commits",
+        "git.default_branch_commits",
         "Default branch commits",
         [
           [pid("boss"), 50],
@@ -174,7 +183,7 @@ beforeEach(() => {
           short_label: "Commits",
           drilldown: { granularity: ["event"] },
           selection: {
-            metric_key: "git.commits",
+            metric_key: "git.default_branch_commits",
             entity: { type: "person", ids: [pid("boss")] },
             period: { from: "2026-07-01", to: "2026-07-31" },
             filters: [],
@@ -183,8 +192,8 @@ beforeEach(() => {
       ),
     ],
     [
-      "collab.messages",
-      result("collab.messages", "Messages", [
+      "collab.messages_sent",
+      result("collab.messages_sent", "Messages", [
         [pid("a"), 4],
         [pid("b"), 6],
       ]),
@@ -269,10 +278,10 @@ describe("MetricsView", () => {
   });
 
   it("keeps a duration's units in each cell", () => {
-    mocks.definitions.push(definition("git.cycle", "Cycle time"));
+    mocks.definitions.push(definition("git.pr_cycle_time_h", "Cycle time"));
     mocks.data.byKey.set(
-      "git.cycle",
-      result("git.cycle", "Cycle time", [[pid("b"), 2.25]], { unit: "h", format: "decimal" }),
+      "git.pr_cycle_time_h",
+      result("git.pr_cycle_time_h", "Cycle time", [[pid("b"), 2.25]], { unit: "h", format: "decimal" }),
     );
     render(<MetricsView />);
 
@@ -315,7 +324,30 @@ describe("MetricsView", () => {
   it("asks for every person-level metric, in family order", () => {
     render(<MetricsView />);
 
-    expect(mocks.requestedKeys).toEqual(["git.commits", "tasks.closed", "collab.messages"]);
+    expect(mocks.requestedKeys).toEqual([
+      "git.default_branch_commits",
+      "tasks.closed",
+      "collab.messages_sent",
+    ]);
+  });
+
+  it("leaves out a metric no person section shows", () => {
+    mocks.definitions.push(definition("git.prs_created", "PRs opened, any branch"));
+
+    render(<MetricsView />);
+
+    expect(mocks.requestedKeys).not.toContain("git.prs_created");
+    expect(
+      screen.queryByRole("columnheader", { name: /PRs opened, any branch/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves out the metrics of a person section this install plans", () => {
+    mocks.policy = parseNavPolicy({ planned: ["zone:person/section:collaboration"] });
+
+    render(<MetricsView />);
+
+    expect(mocks.requestedKeys).toEqual(["git.default_branch_commits", "tasks.closed"]);
   });
 
   it("drops a metric the reader unticks", async () => {
@@ -325,7 +357,7 @@ describe("MetricsView", () => {
     await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
     await user.click(screen.getByRole("checkbox", { name: "Messages" }));
 
-    expect(mocks.requestedKeys).toEqual(["git.commits", "tasks.closed"]);
+    expect(mocks.requestedKeys).toEqual(["git.default_branch_commits", "tasks.closed"]);
     expect(screen.queryByRole("columnheader", { name: /Messages/ })).not.toBeInTheDocument();
   });
 
@@ -341,7 +373,7 @@ describe("MetricsView", () => {
 
     await user.click(screen.getByRole("button", { name: "Select all metrics" }));
 
-    expect(mocks.requestedKeys).toEqual(["git.commits", "tasks.closed", "collab.messages"]);
+    expect(mocks.requestedKeys).toEqual(["git.default_branch_commits", "tasks.closed", "collab.messages_sent"]);
   });
 
   it("scopes the table to the person whose name is clicked", async () => {
@@ -387,13 +419,13 @@ describe("MetricsView", () => {
         expect.objectContaining({
           label: "Default branch commits",
           selection: expect.objectContaining({
-            metric_key: "git.commits",
+            metric_key: "git.default_branch_commits",
             entity: { type: "person", id: pid("b") },
           }),
         }),
       ],
       {
-        activeMetricKey: "git.commits",
+        activeMetricKey: "git.default_branch_commits",
         title: expect.stringMatching(/^Default branch commits · b · 20 · 1 Jul( 2026)? – 31 Jul/),
       },
     );
@@ -545,14 +577,14 @@ describe("MetricsView", () => {
     await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
     await user.click(screen.getByRole("checkbox", { name: "Messages" }));
 
-    expect(portalRouter.search).toMatchObject({ metrics: "git.commits,tasks.closed" });
+    expect(portalRouter.search).toMatchObject({ metrics: "git.default_branch_commits,tasks.closed" });
   });
 
   it("opens on the metrics a link names", () => {
-    act(() => portalRouter.set({ metrics: "git.commits" }));
+    act(() => portalRouter.set({ metrics: "git.default_branch_commits" }));
     render(<MetricsView />);
 
-    expect(mocks.requestedKeys).toEqual(["git.commits"]);
+    expect(mocks.requestedKeys).toEqual(["git.default_branch_commits"]);
   });
 
   it("puts a comparison in the link and opens on one a link names", async () => {
