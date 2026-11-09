@@ -28,7 +28,14 @@ vi.mock("@tanstack/react-router", async () => {
         {children}
       </a>
     ),
-    useMatches: () => matchesFor(currentPath),
+    useRouterState: ({ select }: { select: (state: unknown) => unknown }) =>
+      select({ location: { pathname: currentPath } }),
+    useRouter: () => ({
+      getMatchedRoutes: (path: string) => {
+        const match = matchesFor(path)[0];
+        return [match ? [{ options: { staticData: match.staticData } }] : [], match?.params ?? {}, undefined];
+      },
+    }),
   };
 });
 

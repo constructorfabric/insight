@@ -158,6 +158,12 @@ export function portalRouterMock(): Record<string, unknown> {
           () => portalRouter.pathname,
         ),
       )[0]?.params ?? {},
+    useRouter: () => ({
+      getMatchedRoutes: (path: string) => {
+        const match = matchesFor(path)[0];
+        return [match ? [{ options: { staticData: match.staticData } }] : [], match?.params ?? {}, undefined];
+      },
+    }),
     useMatches: () =>
       matchesFor(
         useSyncExternalStore(
@@ -177,7 +183,7 @@ export function portalRouterMock(): Record<string, unknown> {
         () => portalRouter.search,
         () => portalRouter.search,
       );
-      return select({ location: { pathname: path, search }, matches: [] });
+      return select({ location: { pathname: path, search }, matches: matchesFor(path) });
     },
     // The shell hosts child routes, so a test that renders the shell alone
     // gets the slot rather than a page.
