@@ -15,8 +15,9 @@ use super::dto::{
     PersonNames, ValidatedMetricDrilldown,
 };
 use super::error::config_error;
+use super::ranking::Ranking;
 use super::row_shape::{RowShape, record_parts};
-use super::sort::{PARTS_KEY, PERSON_KEY, RECORDS_THAT_DAY_KEY, is_sortable};
+use super::sort::{PARTS_KEY, PERSON_KEY, POSITION_KEY, RECORDS_THAT_DAY_KEY, is_sortable};
 
 #[derive(Debug, Deserialize)]
 struct EvidenceDimension {
@@ -186,6 +187,14 @@ pub(super) fn presentation_columns(
                     key: "value".to_owned(),
                     label: "Value".to_owned(),
                     r#type: MetricDrilldownColumnType::Number,
+                    sortable: true,
+                });
+            }
+            if Ranking::of(plan, entity).is_some() {
+                columns.push(MetricDrilldownColumn {
+                    key: POSITION_KEY.to_owned(),
+                    label: "Position".to_owned(),
+                    r#type: MetricDrilldownColumnType::String,
                     sortable: true,
                 });
             }
@@ -442,8 +451,8 @@ mod tests {
     use crate::domain::metric_drilldown::cursor::selection_fingerprint;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
     use crate::domain::metric_drilldown::test_support::{
-        TEST_TENANT, commit_input, commit_presentation, input, plan, ratio_over, row,
-        summary_input, validated,
+        TEST_TENANT, commit_input, commit_presentation, distribution_plan, input, plan, ratio_over,
+        row, summary_input, validated,
     };
 
     fn one_person() -> MetricDrilldownEntity {
@@ -905,6 +914,41 @@ mod tests {
         assert!(columns.iter().all(|column| column.sortable));
         assert_eq!(rows[0].values["ref"], "abc123");
         assert_eq!(rows[0].values["numerator"], 1.0);
+    }
+
+    #[test]
+    fn a_median_drilldown_ranks_each_record_by_the_number_the_median_reads() {
+        let median = distribution_plan(|value| ComputationSpec::Median { value });
+
+        let one = presentation_columns(&median, &[], &[], &one_person());
+        let roster = presentation_columns(
+            &median,
+            &[],
+            &[],
+            &MetricDrilldownEntity::Persons {
+                ids: vec!["person".to_owned()],
+            },
+        );
+
+        let position = one.last().unwrap_or_else(|| panic!("columns must exist"));
+        assert_eq!(
+            (
+                position.key.as_str(),
+                position.label.as_str(),
+                position.sortable
+            ),
+            ("position", "Position", true)
+        );
+        assert!(
+            roster.iter().all(|column| column.key != "position"),
+            "a roster mixes people, so no one rank describes it"
+        );
+        assert!(
+            presentation_columns(&commit_plan(), &[], &[], &one_person())
+                .iter()
+                .all(|column| column.key != "position"),
+            "a sum reads every record, so it ranks none"
+        );
     }
 
     #[test]

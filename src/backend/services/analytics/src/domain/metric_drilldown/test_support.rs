@@ -72,6 +72,15 @@ pub(crate) fn collapsing_commit_input(
     }
 }
 
+pub(crate) fn distribution_plan(spec: fn(MetricInput) -> ComputationSpec) -> EvidencePlan {
+    let mut value = commit_input(MetricInputRole::Value, "commit_change_size");
+    value.presentation.show_value = true;
+    plan(
+        spec(input(MetricInputRole::Value, "commit_change_size")),
+        vec![value],
+    )
+}
+
 pub(crate) fn summary_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
     EvidenceInput {
         role,
