@@ -13,6 +13,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 import type { MetricResult } from "@/api/metric-results-client";
 import type { GroupId } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
@@ -217,6 +219,12 @@ describe("MetricGroupsView", () => {
     expect(
       mocks.collectionEntities.every((entity) => (entity.ids?.length ?? 0) === 0),
     ).toBe(true);
+  });
+
+  it("says nothing stands out when no metric is worth a look", () => {
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="attention" />);
+
+    expect(screen.getByText("Nothing stands out this period.")).toBeInTheDocument();
   });
 
   it("asks for the sections over one window pair, not a shifted second request", () => {

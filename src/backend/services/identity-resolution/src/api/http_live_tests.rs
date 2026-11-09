@@ -902,6 +902,66 @@ async fn people_hide_a_manager_outside_the_callers_visible_set() -> TestResult {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found_ids(&body)?, vec![report.to_string()]);
     assert!(body["items"][0]["manager_person_id"].is_null());
+    assert!(body["items"][0]["manager_name"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_show_the_caller_their_own_manager() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    let caller = f
+        .person(&format!("own-manager-caller-{marker}@http-live.test"))
+        .await?;
+    let manager_email = format!("own-manager-manager-{marker}@http-live.test");
+    let manager = f.person(&manager_email).await?;
+    f.project_person_with_attributes(
+        manager,
+        ProjectedPerson {
+            email: Some(&manager_email),
+            username: None,
+            display_name: Some("Own Manager"),
+            first_name: None,
+            last_name: None,
+            attributes: &BTreeMap::new(),
+        },
+    )
+    .await?;
+    f.reports_to(caller, manager).await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![caller.to_string()]);
+    assert_eq!(
+        body["items"][0]["manager_person_id"],
+        json!(manager.to_string())
+    );
+    assert_eq!(body["items"][0]["manager_name"], json!("Own Manager"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_detail_shows_the_caller_their_own_manager() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("detail-own-manager-caller@http-live.test").await?;
+    let manager = f
+        .person("detail-own-manager-manager@http-live.test")
+        .await?;
+    f.reports_to(caller, manager).await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people/{caller}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["manager_person_id"], manager.to_string());
+    assert_eq!(
+        body["manager_name"],
+        json!("detail-own-manager-manager@http-live.test")
+    );
     Ok(())
 }
 
@@ -959,12 +1019,17 @@ async fn tenant_people_by_ids_names_each_and_shows_a_member_only_the_directory()
     assert_eq!(entry["display_name"], json!("Ada Example"));
     assert_eq!(entry["attributes"], json!({}));
     assert_eq!(entry["manager_person_id"], Value::Null);
+    assert_eq!(entry["manager_name"], Value::Null);
 
     grant_admin(&f, caller).await?;
     let (_, body) = get(app(&f, caller), &uri).await?;
     let entry = item_of(&body, named)?;
     assert_eq!(entry["attributes"]["job_title"], json!("Engineer"));
     assert_eq!(entry["manager_person_id"], json!(manager.to_string()));
+    assert_eq!(
+        entry["manager_name"],
+        json!("people-directory-manager@http-live.test")
+    );
     Ok(())
 }
 

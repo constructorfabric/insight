@@ -174,6 +174,7 @@ describe("usePersonList", () => {
           email: "person@example.com",
           attributes: { job_title: "Engineer", status: "active" },
           manager_person_id: null,
+          manager_name: null,
         },
       ],
     });

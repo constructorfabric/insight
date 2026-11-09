@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -156,13 +157,14 @@ export function AttentionList({
   /** Metrics listed before the rest wait behind "+N more". */
   max?: number;
 }) {
+  const { t } = useTranslation();
   const [allThemes, setAllThemes] = useState(false);
   const themes = groupFlagsByTheme(flags);
   const shownThemes = allThemes ? themes : themes.slice(0, max);
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        Needs attention
+        {t("worth_a_look.title")}
       </p>
 
       <Card>
@@ -189,7 +191,7 @@ export function AttentionList({
         </div>
       ) : (
         <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-          Nothing stands out this period.
+          {t("worth_a_look.nothing_stands_out")}
         </div>
       )}
     </section>

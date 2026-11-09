@@ -62,7 +62,7 @@ export function ReportMetricPicker({
 
   if (families.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="p-4 text-sm text-muted-foreground">
         No metrics are available for this scope.
       </p>
     );

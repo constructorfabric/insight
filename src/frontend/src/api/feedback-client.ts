@@ -23,6 +23,7 @@ export interface FeedbackEntry {
   person_id: string;
   display_name: string;
   username: string;
+  email: string | null;
   message: string;
   path: string;
 }

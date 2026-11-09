@@ -136,6 +136,7 @@ export function collectPeopleAttrs(
   keyOf: (personId: string) => string,
 ): Map<string, Record<string, SliceAttr>> {
   const byPerson = new Map<string, Record<string, SliceAttr>>();
+  const onRoster = new Set(roster.map((person) => keyOf(person.person_id)));
 
   for (const person of roster) {
     const attributes: Record<string, SliceAttr> = {};
@@ -148,7 +149,10 @@ export function collectPeopleAttrs(
       };
       attributes[descriptor.key] = { ...descriptor, value };
     }
-    if (person.manager_person_id) {
+    if (
+      person.manager_person_id &&
+      onRoster.has(keyOf(person.manager_person_id))
+    ) {
       attributes.manager = {
         key: "manager",
         label: "Manager",

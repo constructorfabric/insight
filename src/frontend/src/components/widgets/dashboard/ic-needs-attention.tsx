@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { MetricHelpTooltip } from "@/components/widgets/metric-help-tooltip";
@@ -40,6 +41,7 @@ export function IcNeedsAttention({
   onOpenGroup,
   titled = true,
 }: IcNeedsAttentionProps) {
+  const { t } = useTranslation();
   const [showAll, setShowAll] = useState(false);
   const describedBy = useId();
 
@@ -62,7 +64,7 @@ export function IcNeedsAttention({
   return (
     <section>
       {titled ? (
-        <h2 className={cn("mb-3", TEXT_EYEBROW)}>Needs attention</h2>
+        <h2 className={cn("mb-3", TEXT_EYEBROW)}>{t("worth_a_look.title")}</h2>
       ) : null}
       <Card data-size="sm">
         <CardContent className="text-sm">

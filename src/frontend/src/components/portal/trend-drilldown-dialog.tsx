@@ -233,6 +233,7 @@ function Records({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <MetricEvidenceTable
+        numbered
         metricKey={metricKey}
         rows={rows}
         columns={columns}

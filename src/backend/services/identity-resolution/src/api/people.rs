@@ -78,6 +78,7 @@ pub struct PeopleListItemResponse {
     pub email: Option<String>,
     pub attributes: BTreeMap<String, String>,
     pub manager_person_id: Option<Uuid>,
+    pub manager_name: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PeopleListItemResponse {}
 
@@ -86,6 +87,7 @@ impl PeopleListItemResponse {
         Self {
             attributes: BTreeMap::new(),
             manager_person_id: None,
+            manager_name: None,
             ..self
         }
     }
@@ -102,6 +104,7 @@ impl From<PersonListRow> for PeopleListItemResponse {
             email: person.email,
             attributes: person.attributes,
             manager_person_id: person.manager_person_id,
+            manager_name: person.manager_name,
         }
     }
 }

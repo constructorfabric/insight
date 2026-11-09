@@ -74,6 +74,47 @@ describe("screenLabel", () => {
     );
   });
 
+  it.each([
+    ["/portal/custom/:id", "Dashboards › Dashboard"],
+    ["/portal/custom/q3-hiring-plan", "Dashboards › q3-hiring-plan"],
+    ["/portal/custom/metrics/deploy-frequency", "Dashboards › Metrics › deploy-frequency"],
+    ["/portal/custom/metrics/:id", "Dashboards › Metrics › Metric"],
+    [
+      "/portal/custom/edit/dashboards/release-health",
+      "Dashboards › Edit › Dashboards › release-health",
+    ],
+    ["/portal/custom/edit/dashboards/:id", "Dashboards › Edit › Dashboards › Dashboard"],
+    ["/portal/custom/alerts/:id/edit", "Dashboards › Alerts › Alert › Edit"],
+  ])("names the custom page %s as %s", (path, title) => {
+    expect(screenLabel(path), `path: ${path}`).toBe(title);
+  });
+
+  it("gives every custom page its own title", () => {
+    const paths = [
+      "/portal/custom/:id",
+      "/portal/custom/q3-hiring-plan",
+      "/portal/custom/release-health",
+      "/portal/custom/metrics",
+      "/portal/custom/metrics/deploy-frequency",
+      "/portal/custom/metrics/:id",
+      "/portal/custom/new/dashboards",
+      "/portal/custom/new/metrics",
+      "/portal/custom/edit/dashboards/:id",
+      "/portal/custom/edit/dashboards/release-health",
+      "/portal/custom/edit/metrics/deploy-frequency",
+      "/portal/custom/alerts/new",
+      "/portal/custom/alerts/:id",
+      "/portal/custom/alerts/:id/edit",
+    ];
+
+    const titles = paths.map(screenLabel);
+    const shared = paths.filter(
+      (_, i) => titles.indexOf(titles[i]) !== titles.lastIndexOf(titles[i]),
+    );
+
+    expect(shared, "paths that share a title").toEqual([]);
+  });
+
   it("keeps a path it cannot name rather than inventing one", () => {
     expect(screenLabel("/some/new/route")).toBe("/some/new/route");
     expect(screenLabel("/portal/manage/not-a-real-item")).toBe(

@@ -1,6 +1,8 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
+import { resolveText } from "@/i18n/localized-text";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
@@ -166,6 +168,7 @@ export function DomainLensView({
    */
   gridKeys?: readonly string[];
 }) {
+  const { t } = useTranslation();
   const { dateRange, compareTo } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
@@ -196,6 +199,7 @@ export function DomainLensView({
       ),
     [declared, showPlanned, scoped]
   );
+  const title = resolveText(t, config.title);
   // Every request the screen makes carries this, so no section can forget it
   // and quietly answer about the whole tenant instead.
   const scopeFilters = useMemo(
@@ -538,7 +542,7 @@ export function DomainLensView({
       <Pending
         label={
           config.notIngested ??
-          `${config.title} — this data source is not connected yet.`
+          `${title} — this data source is not connected yet.`
         }
       />
     );
@@ -633,7 +637,7 @@ export function DomainLensView({
             onClick={() => openRepository("")}
             className="cursor-pointer text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
-            {declared.title}
+            {title}
           </button>
           <span aria-hidden className="text-muted-foreground">
             ›
@@ -644,7 +648,7 @@ export function DomainLensView({
       {!embedded ? <div className="relative flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
-            {scoped ? (scopedLabel ?? scoped) : config.title}
+            {scoped ? (scopedLabel ?? scoped) : title}
           </h1>
           <p className="text-sm text-muted-foreground">
             {personId
@@ -657,7 +661,7 @@ export function DomainLensView({
           <ExplainWithAi
             className="static"
             snapshot={trendSnapshot(drawable, {
-              title: config.title,
+              title,
               bucket: trendBucket,
               since: dateRange.from,
               until: dateRange.to,

@@ -71,7 +71,10 @@ export function ReportBuilderView() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const people = useMemo(() => scope.roster ?? [], [scope.roster]);
+  const personIds = useMemo(
+    () => reportPersonIds(scope.roster, scope.pivotPersonId),
+    [scope.roster, scope.pivotPersonId]
+  );
   const catalogue = useMemo(
     () =>
       (definitions.data?.metrics ?? []).filter(
@@ -107,13 +110,13 @@ export function ReportBuilderView() {
     () => ({
       subject:
         subject === "people"
-          ? { type: "people", ids: people.map((person) => person.person_id) }
+          ? { type: "people", ids: personIds }
           : { type: "tenant" },
       period: dateRange,
       granularity,
       metric_keys: selectedMetrics,
     }),
-    [dateRange, granularity, people, selectedMetrics, subject]
+    [dateRange, granularity, personIds, selectedMetrics, subject]
   );
   const recipeKey = JSON.stringify(recipe);
   const currentPreview =
@@ -121,7 +124,7 @@ export function ReportBuilderView() {
   const running = previewRequest.isPending || exportRequest.isPending;
   const blocker = reportBlocker(
     subject,
-    people.length,
+    personIds.length,
     selected,
     selectedMetrics
   );
@@ -289,6 +292,16 @@ export function ReportBuilderView() {
       />
     </div>
   );
+}
+
+function reportPersonIds(
+  roster: ReadonlyArray<{ person_id: string }> | null,
+  pivotPersonId: string
+): string[] {
+  if (roster == null) return [];
+  if (roster.length > 0) return roster.map((person) => person.person_id);
+  // INVARIANT: a roster lists the people below the pivot, never the pivot.
+  return pivotPersonId ? [pivotPersonId] : [];
 }
 
 function metricReason(metric: {

@@ -18,6 +18,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 const mocks = vi.hoisted(() => ({
   isFlat: false,
   zone: { activeZone: "overview", activePerson: "boss@x" },
@@ -99,6 +101,7 @@ import {
   usePortalLens,
 } from "@/lib/portal/portal-nav";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { setMetricsViewPaneShown } from "@/lib/portal/metrics-view-pane";
 // The sections nav asks where the person stands so it can mark each section;
 // the standings come from the section screens' own queries, which this test
 // has no reason to run.
@@ -154,6 +157,7 @@ beforeEach(() => {
     portalRouter.reset();
     portalRouter.set({ dir: "dev" });
     portalRouter.set({ lens: "Delivery" });
+    setMetricsViewPaneShown(false);
   });
 });
 
@@ -181,8 +185,14 @@ describe("Home pane", () => {
   it("lists the themes and writes the selection on click", async () => {
     pane();
     const item = renderHook(() => usePortalItem());
-    await userEvent.click(screen.getByText("Attention needed"));
+    await userEvent.click(screen.getByText("Worth a look"));
     expect(item.result.current).toBe("attention");
+  });
+
+  it("marks Worth a look with an eye icon", () => {
+    pane();
+    const item = screen.getByText("Worth a look").closest("button");
+    expect(item?.querySelector(".lucide-eye")).not.toBeNull();
   });
 
   it("links an admin to their own dashboards", () => {
@@ -466,6 +476,34 @@ describe("People pane", () => {
     const button = screen.getByText("Git output").closest("button")!;
     expect(button.querySelector("span[aria-hidden]")).toBeNull();
     expect(button.getAttribute("title")).toBeNull();
+  });
+});
+
+describe("People pane on Metrics view", () => {
+  it("leaves the width to the table on a wide screen", () => {
+    inZone("people");
+    act(() => portalRouter.set({ item: "metrics" }));
+    pane();
+
+    expect(screen.queryByText("Roster · by role")).not.toBeInTheDocument();
+  });
+
+  it("comes back once the reader asks for it", () => {
+    inZone("people");
+    act(() => portalRouter.set({ item: "metrics" }));
+    pane();
+
+    act(() => setMetricsViewPaneShown(true));
+
+    expect(screen.getByText("Roster · by role")).toBeInTheDocument();
+  });
+
+  it("stays on the other team views", () => {
+    inZone("people");
+    act(() => portalRouter.set({ item: "employees" }));
+    pane();
+
+    expect(screen.getByText("Metrics view")).toBeInTheDocument();
   });
 });
 

@@ -10,6 +10,8 @@ import { act, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 import type { AttentionFlag } from "@/lib/insight/attention-flags";
 import { usePortalZone } from "@/lib/portal/portal-nav";
 
@@ -156,6 +158,11 @@ describe("AttentionList", () => {
     const link = screen.getByRole("link");
     expect(link.querySelector(".lucide-arrow-up-right")).not.toBeNull();
     expect(link.querySelector(".lucide-arrow-down-right")).toBeNull();
+  });
+
+  it("titles the list as worth a look", () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    expect(screen.getByText("Worth a look")).toBeInTheDocument();
   });
 
   it("says so when nothing stands out", () => {

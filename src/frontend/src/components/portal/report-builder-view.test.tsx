@@ -246,6 +246,44 @@ describe("ReportBuilderView", () => {
     );
   });
 
+  it.each([
+    ["a viewer with no reports reports on themself", [], personId, [personId]],
+    [
+      "a roster reports on its members, not the pivot",
+      [{ person_id: "p-2" }],
+      personId,
+      ["p-2"],
+    ],
+  ])("%s", async (_rule, roster, pivotPersonId, expectedIds) => {
+    mocks.scope = { roster, pivotPersonId, label: "Jane Doe" };
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    await waitFor(() =>
+      expect(mocks.preview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipe: expect.objectContaining({
+            subject: { type: "people", ids: expectedIds },
+          }),
+        })
+      )
+    );
+  });
+
+  it("blocks a people report while the scope is still loading", async () => {
+    mocks.scope = { roster: null, pivotPersonId: personId, label: "" };
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+
+    expect(screen.getByText("This scope has no people")).toBeTruthy();
+    expect(mocks.preview).not.toHaveBeenCalled();
+  });
+
   it("sends tenant subject without people IDs", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
@@ -277,6 +315,18 @@ describe("ReportBuilderView", () => {
     expect(
       screen.queryByRole("checkbox", { name: "Issues closed" })
     ).toBeNull();
+  });
+
+  it("insets the empty-scope message like the rest of the card", async () => {
+    mocks.definitions = [metric({})];
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(screen.getByRole("button", { name: "Tenant" }));
+
+    expect(
+      screen.getByText("No metrics are available for this scope.")
+    ).toHaveClass("p-4");
   });
 
   it("does not offer a separate report rows selector", async () => {

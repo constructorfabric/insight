@@ -34,9 +34,6 @@ interface EmployeeRow {
 }
 
 function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
-  const byId = new Map(
-    roster.map((person) => [person.person_id.toLowerCase(), person]),
-  );
   return roster
     .map((person) => ({
       personId: person.person_id,
@@ -44,9 +41,7 @@ function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
       jobTitle: person.attributes.job_title ?? "",
       department: person.attributes.department ?? "",
       division: person.attributes.division ?? "",
-      supervisorName: person.manager_person_id
-        ? personName(byId.get(person.manager_person_id.toLowerCase()) ?? {}) ?? ""
-        : "",
+      supervisorName: person.manager_name ?? "",
       status: person.attributes.status ?? "",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
