@@ -21,7 +21,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import type { RailEntry, RailItem } from "@/lib/portal/rail-model";
 import { useRailNav } from "@/lib/portal/use-rail-nav";

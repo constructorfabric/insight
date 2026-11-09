@@ -47,7 +47,7 @@ vi.mock("@/components/app-sidebar-footer", () => ({
   ),
 }));
 
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@gears-frontx/ui-kit";
 import { LensRail } from "./lens-rail";
 
 /** The rail opens on a timer, so a hover only counts once the wait is over. */

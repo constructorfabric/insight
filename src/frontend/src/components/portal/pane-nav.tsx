@@ -8,7 +8,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import {
   PLANNED_GROUP_LABEL,
   partitionByReadiness,

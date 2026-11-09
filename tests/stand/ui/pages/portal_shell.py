@@ -1,7 +1,9 @@
 """The portal shell — the lens rail a signed-in reader lands on.
 
-Rail zones and pane items are the same shadcn `Sidebar` button, separable only
-by container, so the rail is addressed through `[data-testid="lens-rail"]`.
+Rail zones and pane items are the same kit `SidebarMenuButton`, separable only
+by container: the rail through `[data-testid="lens-rail"]`, the pane through its
+"Section navigation" landmark. A pane entry is the control directly inside an
+item of a top-level list; a sub-entry sits in a list nested under one.
 """
 
 from __future__ import annotations
@@ -16,16 +18,11 @@ from ..steps import step
 
 RAIL = '[data-testid="lens-rail"]'
 
-MENU_BUTTON = '[data-slot="sidebar-menu-button"]'
-PANE_BUTTONS = (
-    '[data-slot="sidebar-wrapper"] > [data-slot="sidebar"] [data-slot="sidebar-menu-button"]'
-)
-SAFE_NAV = (
-    ':not([data-testid="org-tree"] *)'
-    ':not([data-slot="sidebar-group"]:has('
-    '[data-slot="sidebar-group-label"]:text-is("WorkChart")) *)'
-    ":not([data-planned])"
-)
+PANE = '[role="navigation"][aria-label="Section navigation"]'
+ENTRY = "ul:not(ul ul) > li > :is(button, a):first-child"
+SUB_ENTRY = "li > :is(button, a):first-child"
+PANE_BUTTONS = f"{PANE} {ENTRY}"
+SAFE_NAV = ":not([data-planned])"
 
 
 @dataclass(frozen=True)
@@ -55,7 +52,7 @@ class LensRail:
         self.rail = page.locator(RAIL)
 
     def zones(self) -> Locator:
-        return self.rail.locator(MENU_BUTTON)
+        return self.rail.locator(ENTRY)
 
 
 class PortalShell:
@@ -65,7 +62,7 @@ class PortalShell:
         self.page = page
         self.rail = LensRail(page)
         self.pane_buttons = self.safe_navigation(page.locator(PANE_BUTTONS))
-        self.main = page.locator('main[data-slot="sidebar-inset"]')
+        self.main = page.locator("main:not(main main)")
         self.page_views = self.main.locator('[data-testid^="page-"]').filter(visible=True)
         self.loading_markers = self.main.locator(
             '[class*="skeleton"], .animate-pulse, [aria-busy="true"]'
@@ -91,10 +88,9 @@ class PortalShell:
     def sub_buttons(self, parent: str) -> Locator:
         entry = self.entry(self.pane_buttons, parent)
         submenu = entry.locator("xpath=ancestor::li[1]").locator(
-            'xpath=./ul[@data-slot="sidebar-menu-sub"] | '
-            './following-sibling::*[1][self::ul and @data-slot="sidebar-menu-sub"]'
+            "xpath=./ul | ./following-sibling::*[1][self::ul]"
         )
-        return self.safe_navigation(submenu.locator('[data-slot="sidebar-menu-sub-button"]'))
+        return self.safe_navigation(submenu.locator(SUB_ENTRY))
 
     def page_view(self, test_id: str) -> Locator:
         return self.page.get_by_test_id(test_id)
@@ -150,7 +146,7 @@ class PortalShell:
     def first_list_href(self, prefix: str) -> str:
         handle = self.page.wait_for_function(
             r"""({prefix}) => {
-                const main = document.querySelector('main[data-slot="sidebar-inset"]');
+                const main = document.querySelector('main:not(main main)');
                 for (const link of main?.querySelectorAll('a[href]') ?? []) {
                     const target = new URL(link.href, location.href);
                     if (link.checkVisibility({visibilityProperty: true}) &&

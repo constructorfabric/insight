@@ -10,7 +10,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
 import { dashboardQuery, pinsQuery } from "@/queries/custom";
 

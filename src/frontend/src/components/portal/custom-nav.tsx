@@ -12,7 +12,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import {
   DASHBOARD_BROWSE_PLANNED,
   STARTER_DASHBOARDS,

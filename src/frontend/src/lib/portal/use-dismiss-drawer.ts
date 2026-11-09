@@ -1,4 +1,4 @@
-import { useSidebar } from "@/components/ui/sidebar";
+import { useSidebar } from "@gears-frontx/ui-kit";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 
 /**

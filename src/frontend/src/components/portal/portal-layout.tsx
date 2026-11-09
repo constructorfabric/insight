@@ -10,7 +10,7 @@ import {
   SidebarInset,
   SidebarProvider,
   useSidebar,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
 import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";

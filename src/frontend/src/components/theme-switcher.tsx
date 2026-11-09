@@ -7,12 +7,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@gears-frontx/ui-kit";
-import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 
 const THEMES: ReadonlyArray<Theme> = ["light", "dark", "system"];
 

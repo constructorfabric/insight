@@ -62,13 +62,6 @@
       "scroll_to_top": "Back to the top of the list",
       "scroll_to_bottom": "Jump to the end of the list"
     },
-    "ui_components": {
-      "sidebar": {
-        "title": "Sidebar",
-        "description": "Displays the mobile sidebar.",
-        "toggle": "Toggle Sidebar"
-      }
-    },
     "period_presets": {
       "7d": "7d",
       "14d": "14d",

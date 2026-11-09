@@ -72,12 +72,13 @@ vi.mock("@/components/ui/avatar", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/sidebar", async () => {
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => {
   const { cloneElement, isValidElement } = await import("react");
   const passthrough = ({ children }: { children?: React.ReactNode }) => (
     <div>{children}</div>
   );
   return {
+    ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
     SidebarMenu: passthrough,
     SidebarMenuItem: passthrough,
     // The real button MERGES into `render`: the label lands inside the anchor.

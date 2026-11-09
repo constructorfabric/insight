@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 
-import { SidebarGroupLabel } from "@/components/ui/sidebar";
+import { SidebarGroupLabel } from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 /** A pane group's heading, set as the design's uppercase eyebrow. */

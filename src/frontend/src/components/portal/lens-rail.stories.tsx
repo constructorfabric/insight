@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { CSSProperties } from "react";
 
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@gears-frontx/ui-kit";
 import { handlers } from "@/mocks/handlers";
 import { expectHorizontallyCentred } from "@/test/storybook/layout";
 

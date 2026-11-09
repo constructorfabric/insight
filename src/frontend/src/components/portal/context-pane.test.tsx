@@ -98,7 +98,7 @@ import {
   usePortalItem,
   usePortalLens,
 } from "@/lib/portal/portal-nav";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@gears-frontx/ui-kit";
 // The sections nav asks where the person stands so it can mark each section;
 // the standings come from the section screens' own queries, which this test
 // has no reason to run.
@@ -173,7 +173,8 @@ describe("ContextPane header", () => {
   ])("titles the %s pane %s", (zone, title) => {
     inZone(zone);
     pane();
-    expect(screen.getByText(title, { selector: '[data-slot="sidebar-header"] *' })).toBeInTheDocument();
+    const sections = screen.getByRole("navigation", { name: "Section navigation" });
+    expect(sections.previousElementSibling).toHaveTextContent(new RegExp(`^${title}$`));
   });
 });
 
@@ -387,7 +388,8 @@ describe("People pane", () => {
     expect(scrollArea).not.toBeNull();
     expect(scrollArea).toHaveClass("min-h-0", "flex-1");
     expect(scrollArea).not.toContainElement(search);
-    expect(scrollArea?.closest('[data-slot="sidebar-group"]')).toHaveClass(
+    const group = scrollArea?.parentElement?.parentElement;
+    expect(group).toHaveClass(
       "min-h-0",
       "flex-1"
     );
@@ -939,16 +941,19 @@ describe("Dashboards pane pins", () => {
     inZone("custom");
   }
 
-  const groupLabels = () =>
-    [...document.querySelectorAll('[data-slot="sidebar-group-label"]')].map(
-      (label) => label.textContent,
-    );
+  const inDocumentOrder = (labels: string[]) =>
+    labels
+      .map((label) => screen.getByText(label))
+      .every(
+        (element, i, all) =>
+          i === 0 ||
+          Boolean(all[i - 1].compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
 
   const pinnedRows = () =>
     within(
       screen
-        .getByText("Pinned")
-        .closest('[data-slot="sidebar-group"]') as HTMLElement,
+        .getByText("Pinned").parentElement as HTMLElement,
     ).getAllByRole("link");
 
   it("lists the pinned dashboards after the catalogues, in pin order, by title", async () => {
@@ -956,7 +961,7 @@ describe("Dashboards pane pins", () => {
     pane();
 
     await screen.findByRole("link", { name: "Hiring pipeline" });
-    expect(groupLabels()).toEqual(["Browse", "Folders", "Catalogue", "Pinned"]);
+    expect(inDocumentOrder(["Browse", "Folders", "Catalogue", "Pinned"])).toBe(true);
     const rows = pinnedRows();
     expect(rows.map((row) => row.textContent)).toEqual([
       "Hiring pipeline",

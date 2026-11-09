@@ -23,7 +23,8 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+  useSidebar,
+} from "@gears-frontx/ui-kit";
 import {
   manageGroupsFor,
   resolveZoneItem,
@@ -64,13 +65,18 @@ export function ContextPane() {
   const rail = railItemFor(nav.activeZone);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dismissDrawer = useDismissDrawer();
+  const { state } = useSidebar();
 
   return (
     <Sidebar
       collapsible={drawer ? "offcanvas" : "none"}
       className={cn(
         "border-e",
-        layout === "narrow" && "data-[side=left]:left-(--rail-width)"
+        // INVARIANT: expanded only. A utility outranks the kit's layered
+        // off-canvas offset, so applied while collapsed it keeps the pane on screen.
+        layout === "narrow" &&
+          state === "expanded" &&
+          "data-[side=left]:left-(--rail-width)"
       )}
     >
       {/* The drawer's rail row already names the pane, so repeating it in a
@@ -82,7 +88,7 @@ export function ContextPane() {
           </span>
         </SidebarHeader>
       )}
-      <SidebarContent>
+      <SidebarContent role="navigation" aria-label="Section navigation">
         {isPhone ? <MobileRailNav /> : null}
         {rail ? <RailPane rail={rail.id} nav={nav} /> : null}
       </SidebarContent>

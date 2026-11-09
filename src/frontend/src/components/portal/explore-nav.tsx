@@ -12,7 +12,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import {
   lensRoadmap,
   visibleDirections,
