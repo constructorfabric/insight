@@ -926,6 +926,50 @@ describe("MetricEvidenceDialog", () => {
     );
   });
 
+  it("puts a record's rank right beside the number it ranks", () => {
+    mocks.query = readyQuery({
+      data: {
+        pages: [
+          {
+            selection: ordered,
+            columns: [
+              { key: "date", label: "Date", type: "date", sortable: true },
+              {
+                key: "position",
+                label: "Position",
+                type: "string",
+                sortable: true,
+              },
+              {
+                key: "repository",
+                label: "Repository",
+                type: "string",
+                sortable: true,
+              },
+              { key: "value", label: "Value", type: "number", sortable: true },
+              { key: "title", label: "Title", type: "string", sortable: true },
+            ],
+            rows: [{ values: { title: "Add parser", value: 128 } }],
+            next_cursor: null,
+          },
+        ],
+      },
+    });
+    render(
+      <MetricEvidenceDialog
+        state={state}
+        onMetricChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(
+      (mocks.tableProps?.columns as Array<{ key: string }>).map(
+        (column) => column.key
+      )
+    ).toEqual(["title", "value", "position", "repository", "date"]);
+  });
+
   describe("searching and ordering", () => {
     const threeRows = readyQuery({
       data: {
