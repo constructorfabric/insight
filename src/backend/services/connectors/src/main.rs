@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod domain;
 mod gear;
 mod infra;
 mod migration;
