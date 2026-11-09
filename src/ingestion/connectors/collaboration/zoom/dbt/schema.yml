@@ -34,10 +34,10 @@ models:
       assignment to a `logical_meeting_id`. Extracted from
       `zoom__collab_meeting_activity` (CR on PR #284) so that the
       downstream staging model can stay `materialized='incremental'`
-      per DESIGN.md §3.7. Bounded rebuild window: bronze read is
+      per DESIGN.md §3.7. Bounded rebuild window: on incremental runs, bronze read is
       filtered to the last 90 days of `_airbyte_extracted_at` —
       anything older keeps the cluster assignment it had at write
-      time. `_version = now()` per write so the
+      time. A full refresh rebuilds from all of bronze. `_version = now()` per write so the
       `ReplacingMergeTree(_version)` always keeps the most recent
       stitching decision per uuid (a late-arriving session can
       re-cluster earlier sessions in the same chain).

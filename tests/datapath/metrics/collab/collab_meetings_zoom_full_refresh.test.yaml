@@ -1,0 +1,23 @@
+spec_version: 1
+description: >
+  A full refresh retains old Zoom sessions and stitches their reconnects into one
+  meeting per person-day. The test sets extraction times relative to one captured
+  instant: old sessions are 120 days old, and the recent control is one day old.
+  Alice and Bob attend both old sessions, separated by two minutes, and the recent
+  meeting on a different day.
+
+bronze:
+  bronze_zoom.users: []
+
+  bronze_zoom.meetings:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: old-a, id: 111, uuid: old-a, start_time: "2026-01-10T10:00:00Z", end_time: "2026-01-10T10:30:00Z", _airbyte_extracted_at: "2026-01-11T00:00:00" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: old-b, id: 111, uuid: old-b, start_time: "2026-01-10T10:32:00Z", end_time: "2026-01-10T11:00:00Z", _airbyte_extracted_at: "2026-01-11T00:00:00" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: recent, id: 222, uuid: recent, start_time: "2026-06-10T10:00:00Z", end_time: "2026-06-10T10:30:00Z" }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: old-alice-a, meeting_uuid: old-a, participant_uuid: alice-a, join_time: "2026-01-10T10:00:00Z", leave_time: "2026-01-10T10:30:00Z", _airbyte_extracted_at: "2026-01-11T00:00:00" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: old-bob-a, meeting_uuid: old-a, participant_uuid: bob-a, join_time: "2026-01-10T10:00:00Z", leave_time: "2026-01-10T10:30:00Z", _airbyte_extracted_at: "2026-01-11T00:00:00" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: old-alice-b, meeting_uuid: old-b, participant_uuid: alice-b, join_time: "2026-01-10T10:32:00Z", leave_time: "2026-01-10T11:00:00Z", _airbyte_extracted_at: "2026-01-11T00:00:00" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: old-bob-b, meeting_uuid: old-b, participant_uuid: bob-b, join_time: "2026-01-10T10:32:00Z", leave_time: "2026-01-10T11:00:00Z", _airbyte_extracted_at: "2026-01-11T00:00:00" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: recent-alice, meeting_uuid: recent, participant_uuid: alice-recent, join_time: "2026-06-10T10:00:00Z", leave_time: "2026-06-10T10:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: recent-bob, meeting_uuid: recent, participant_uuid: bob-recent, join_time: "2026-06-10T10:00:00Z", leave_time: "2026-06-10T10:30:00Z" }

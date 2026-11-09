@@ -12,12 +12,8 @@ import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { MetricResult } from "@/api/metric-results-client";
 import type { MetricGroup } from "@/lib/insight/groups";
 import {
-  coverageDistribution,
-  partCoverage,
   partState,
-  personCoverage,
   reachableMetricKeys,
-  thinlyCovered,
   unreachableParts,
 } from "@/lib/insight/coverage";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
@@ -190,76 +186,6 @@ describe("partState", () => {
   });
 });
 
-describe("personCoverage", () => {
-  const GROUPS = [
-    group("git_output", ["git.commits"]),
-    group("collaboration", ["collab.messages"]),
-    group("ai_adoption", ["ai.accepted"]),
-  ];
-
-  it("levels a person by how many parts read, and keeps each part's reason", () => {
-    const byKey = normalizeMetricResults([
-      metric("git.commits", [[ME, 4]]),
-      metric("collab.messages", [[ME, null]]),
-      metric("ai.accepted", [[ME, null]]),
-    ]);
-    const reachable = reachableMetricKeys([
-      def("git.commits"),
-      def("collab.messages"),
-      def("ai.accepted", { last_observed_date: null }),
-    ]);
-    const cov = personCoverage(GROUPS, byKey, ME, reachable);
-
-    expect(cov.level).toBe(1);
-    expect(cov.states.get("git_output")).toBe("reads");
-    expect(cov.states.get("collaboration")).toBe("nothing_recorded");
-    expect(cov.states.get("ai_adoption")).toBe("no_data_reaches_us");
-  });
-
-  it("gives level zero without inventing a reason for it", () => {
-    const byKey = normalizeMetricResults([metric("git.commits", [[ME, null]])]);
-    const cov = personCoverage(GROUPS, byKey, ME, new Set<string>());
-    expect(cov.level).toBe(0);
-    expect([...cov.states.values()]).toEqual([
-      "no_data_reaches_us",
-      "no_data_reaches_us",
-      "no_data_reaches_us",
-    ]);
-  });
-});
-
-describe("coverageDistribution", () => {
-  const at = (level: number): ReturnType<typeof personCoverage> => ({
-    entityId: `p${level}`,
-    states: new Map(),
-    level,
-  });
-
-  it("reports how many people it counted", () => {
-    // Not decoration. The same distribution is a true statement about the
-    // people counted and a false one about the organisation, and this number
-    // is the only thing separating them.
-    const d = coverageDistribution([at(0), at(2), at(2)], 3);
-    expect(d.counted).toBe(3);
-  });
-
-  it("seeds every level so an empty one reads as zero rather than as a gap", () => {
-    const d = coverageDistribution([at(3), at(3)], 3);
-    expect([...d.byLevel.entries()]).toEqual([
-      [0, 0],
-      [1, 0],
-      [2, 0],
-      [3, 2],
-    ]);
-  });
-
-  it("counts nobody without claiming a shape", () => {
-    const d = coverageDistribution([], 2);
-    expect(d.counted).toBe(0);
-    expect([...d.byLevel.values()]).toEqual([0, 0, 0]);
-  });
-});
-
 describe("unreachableParts", () => {
   const GROUPS = [
     group("git_output", ["git.commits", "git.prs"]),
@@ -284,89 +210,5 @@ describe("unreachableParts", () => {
     // the guarantee: there is nowhere to put one.
     const [only] = unreachableParts(GROUPS, new Set(["git.commits"]));
     expect(Object.keys(only)).toEqual(["id", "title"]);
-  });
-});
-
-describe("thinlyCovered", () => {
-  const at = (level: number): ReturnType<typeof personCoverage> => ({
-    entityId: `p${level}`,
-    states: new Map(),
-    level,
-  });
-
-  it("counts people seen in fewer than half their parts", () => {
-    // With five parts the boundary is unambiguous: two is under half, three is
-    // over, and the midpoint is not a level anyone can be at.
-    expect(thinlyCovered([at(0), at(1), at(2), at(3), at(4), at(5)], 5)).toBe(3);
-  });
-
-  it("puts exactly half on the covered side", () => {
-    // Four parts, two seen: half is not "fewer than half". Stated because the
-    // line this feeds is about whom the product cannot carry, and drawing an
-    // exact half into that group would overstate the problem.
-    expect(thinlyCovered([at(2)], 4)).toBe(0);
-  });
-
-  it("counts nobody when everyone is fully covered", () => {
-    expect(thinlyCovered([at(5), at(5)], 5)).toBe(0);
-  });
-
-  it("counts everybody when nothing reaches us", () => {
-    expect(thinlyCovered([at(0), at(0)], 5)).toBe(2);
-  });
-});
-
-describe("partCoverage", () => {
-  const GROUPS = [
-    group("git_output", ["git.commits"]),
-    group("collaboration", ["collab.messages"]),
-  ];
-  const person = (
-    entityId: string,
-    git: "reads" | "nothing_recorded" | "no_data_reaches_us",
-    collab: "reads" | "nothing_recorded" | "no_data_reaches_us",
-  ): ReturnType<typeof personCoverage> => ({
-    entityId,
-    states: new Map([
-      ["git_output", git],
-      ["collaboration", collab],
-    ] as const),
-    level: [git, collab].filter((s) => s === "reads").length,
-  });
-
-  it("counts, per part, the people it reads for", () => {
-    expect(
-      partCoverage(GROUPS, [
-        person("a", "reads", "reads"),
-        person("b", "nothing_recorded", "reads"),
-      ]),
-    ).toEqual([
-      { id: "git_output", title: "git_output title", seen: 1, unreachable: false },
-      { id: "collaboration", title: "collaboration title", seen: 2, unreachable: false },
-    ]);
-  });
-
-  it("separates a part nobody is measured in from one everybody was idle in", () => {
-    // Both read zero. Only one of them is a missing connector, and drawing
-    // them the same would blame people for a pipe that was never laid.
-    const [git, collab] = partCoverage(GROUPS, [
-      person("a", "no_data_reaches_us", "nothing_recorded"),
-      person("b", "no_data_reaches_us", "nothing_recorded"),
-    ]);
-    expect(git).toMatchObject({ seen: 0, unreachable: true });
-    expect(collab).toMatchObject({ seen: 0, unreachable: false });
-  });
-
-  it("is derived from the same states as the per-person levels", () => {
-    // The guarantee that matters: one computation, two cuts. Summing the
-    // per-part counts must equal summing the per-person levels, always.
-    const people = [
-      person("a", "reads", "reads"),
-      person("b", "reads", "nothing_recorded"),
-      person("c", "no_data_reaches_us", "reads"),
-    ];
-    const byPart = partCoverage(GROUPS, people).reduce((n, p) => n + p.seen, 0);
-    const byPerson = people.reduce((n, p) => n + p.level, 0);
-    expect(byPart).toBe(byPerson);
   });
 });

@@ -21,9 +21,7 @@ def test_navigation_shows_every_expected_zone_and_entry(
         "Home": {
             "At a glance": (),
             "By direction": (),
-            "Trend": (),
             "Attention needed": (),
-            "Data coverage": (),
             "Contribution breakdown": (),
         },
         "Explore": {
@@ -78,9 +76,7 @@ def test_navigation_shows_every_expected_zone_and_entry(
     covered_page_ids = {
         "page-overview-at-a-glance",
         "page-overview-by-direction",
-        "page-overview-trend",
         "page-overview-attention",
-        "page-overview-health",
         "page-overview-contribution",
         "page-custom-dashboards",
         "page-custom-dashboard",

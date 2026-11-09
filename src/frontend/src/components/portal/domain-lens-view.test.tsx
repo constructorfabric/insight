@@ -18,7 +18,6 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GROUPS } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import {
@@ -51,7 +50,6 @@ const mocks = vi.hoisted(() => ({
       views: unknown[];
     }>;
   }>,
-  collectionSet: new Map<string, unknown>(),
   definitions: [] as unknown[],
   dateRange: { from: "2026-07-20", to: "2026-07-26" },
   collections: [] as Array<{
@@ -109,9 +107,6 @@ vi.mock("@/queries/metric-results", () => ({
     mocks.call += 1;
     return r;
   },
-  // Only the coverage section reads the set form; it fetches its own
-  // period-only collection rather than riding the zone grid.
-  useMetricCollectionSet: () => mocks.collectionSet,
 }));
 vi.mock("@/queries/metric-definitions", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -1268,71 +1263,6 @@ describe("direction-cards / attention sections", () => {
     expect(screen.getByTitle("Compared with previous period")).toHaveTextContent("-50%");
   });
 });
-
-describe("coverage section (#2408)", () => {
-  /** One group reading for the named people, the rest silent. */
-  function coverageWorld(seenByGitOutput: string[]) {
-    const ids = seenByGitOutput.map((l) => pid(l));
-    mocks.definitions = GROUPS.flatMap((g) =>
-      g.collection.metrics.map((m) => ({
-        metric_key: m.key,
-        is_enabled: true,
-        schema_status: "ok",
-        schema_error_code: null,
-        // Only git output has ever observed anything for this tenant, so every
-        // other part must read as "no connector" rather than as idle people.
-        last_observed_date: g.id === "git_output" ? "2026-07-26" : null,
-      })),
-    );
-    const gitKey = GROUPS.find((g) => g.id === "git_output")!.collection
-      .metrics[0]!.key;
-    mocks.collectionSet = new Map(
-      GROUPS.map((g) => [
-        g.id,
-        {
-          byKey:
-            g.id === "git_output"
-              ? new Map([
-                  [gitKey, metric(gitKey, ids.map((id) => [id, 3]))],
-                ])
-              : new Map(),
-          isPending: false,
-        },
-      ]),
-    );
-  }
-
-  it("opens a level into exactly the people at it, and why each is thin", async () => {
-    mocks.tree = person("boss", {}, [person("a"), person("b"), person("c")]);
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
-    coverageWorld(["a"]);
-    render(
-      <DomainLensView
-        config={{ title: "T", sections: [{ kind: "coverage-levels" }] }}
-      />,
-    );
-
-    // One person reads in one part; the other two read in none.
-    await userEvent.click(screen.getByRole("button", { name: /1 of 5/ }));
-    expect(screen.getByText("a")).toBeInTheDocument();
-    expect(screen.queryByText("b")).not.toBeInTheDocument();
-
-    // And the reason is the actionable half: nothing feeds those parts for the
-    // tenant, which is a plumbing job — not people who did no work.
-    expect(screen.getAllByText(/not measured for anyone:/).length).toBeGreaterThan(0);
-  });
-
-  it("does not open a level nobody is at", async () => {
-    mocks.tree = person("boss", {}, [person("a")]);
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
-    coverageWorld([]);
-    render(
-      <DomainLensView
-        config={{ title: "T", sections: [{ kind: "coverage-levels" }] }}
-      />,
-    );
-    expect(screen.getByRole("button", { name: /5 of 5/ })).toBeDisabled();
-  });});
 
 /* ── trend ───────────────────────────────────────────────────────────── */
 

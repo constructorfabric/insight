@@ -90,12 +90,12 @@ describe("recordUsageEvent", () => {
   });
 
   it("reports the screen the action happened on", () => {
-    recordPageView("/portal/overview/trend");
+    recordPageView("/portal/overview/by-direction");
     recordUsageEvent("drill", "git.commits");
 
     expect(mocks.logEvent).toHaveBeenCalledWith("drill", {
       target: "git.commits",
-      path: "/portal/overview/trend",
+      path: "/portal/overview/by-direction",
     });
   });
 

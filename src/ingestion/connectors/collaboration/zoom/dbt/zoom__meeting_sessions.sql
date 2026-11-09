@@ -21,12 +21,12 @@
 -- meeting; legitimate recurring meetings reusing the ID end up in
 -- different clusters because their gaps are hours/days, not minutes.
 --
--- Bounded rebuild window: bronze read is filtered to the last
+-- Bounded rebuild window: on incremental runs, bronze read is filtered to the last
 -- `lookback_days` (90) of `_airbyte_extracted_at`. Anything older than
 -- the window keeps the logical_meeting_id assigned at the time it was
 -- written; the bound exceeds any plausible stitch interval (host-drop
 -- gaps are seconds, never days) so we do not lose stitches at the
--- trailing edge.
+-- trailing edge. A full refresh rebuilds from all of bronze.
 --
 -- `_version = now()` on every write means the ReplacingMergeTree always
 -- keeps the most recent stitching decision per `uuid`. This is what lets
@@ -88,7 +88,9 @@ WITH stitched AS (
                 FROM {{ source('bronze_zoom', 'meetings') }}
                 WHERE id IS NOT NULL
                   AND uuid IS NOT NULL AND uuid != ''
+                {% if is_incremental() %}
                   AND _airbyte_extracted_at >= now() - INTERVAL {{ lookback_days }} DAY
+                {% endif %}
                 ORDER BY _airbyte_extracted_at DESC
                 LIMIT 1 BY uuid
             ) AS deduped

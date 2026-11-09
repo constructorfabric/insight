@@ -1,6 +1,5 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
-import { Link } from "@tanstack/react-router";
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { TrendingDown, TrendingUp } from "lucide-react";
@@ -43,9 +42,6 @@ import {
   attentionSummary,
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
-import { GROUPS, visibleGroups } from "@/lib/insight/groups";
-import type { PersonCoverage } from "@/lib/insight/coverage";
-import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import {
   availableSlices,
@@ -531,20 +527,13 @@ export function DomainLensView({
   if (gate) return gate;
 
   // Rule 6: nothing in this family was ever observed → the source isn't wired.
-  //
-  // Exempt: a lens that reads no metric of its own cannot be judged by whether
-  // its metrics were observed, and one whose SUBJECT is coverage must survive
-  // exactly the case this gate fires on. Telling a reader "no source is
-  // ingested" on the screen built to tell them which sources are not ingested
-  // would withhold the answer at the moment it is worth most.
-  const readsGrid = config.sections.some((s) => s.kind !== "coverage-levels");
   const connected = sourceConnected(
     lensKeys,
     grid.byKey,
     memberIds,
     personId ? personalReach : undefined
   );
-  if (readsGrid && !connected) {
+  if (config.sections.length > 0 && !connected) {
     return (
       <Pending
         label={
@@ -965,267 +954,7 @@ function Section({
           personalReach={personalReach}
         />
       );
-    case "coverage-levels":
-      return (
-        <CoverageLevelsSection
-          memberIds={memberIds}
-          nameByEntity={nameByEntity}
-          personIdByEntity={personIdByEntity}
-        />
-      );
   }
-}
-
-/* ── coverage (#2408): three cuts of one model, read top to bottom — the
-      verdict, then which parts are missing, then who is thinly seen. Little
-      prose on purpose: a screen that needs a paragraph to explain itself has
-      already failed the reader who only glanced at it. ──────────────────── */
-
-function CoverageBar({
-  filled,
-  total,
-  warn,
-}: {
-  filled: number;
-  total: number;
-  warn?: boolean;
-}) {
-  return (
-    <div className="h-2.5 min-w-px flex-1 overflow-hidden rounded-full bg-muted">
-      <div
-        className={`h-full rounded-full ${warn ? "bg-warning/80" : "bg-primary/60"}`}
-        style={{ width: `${total > 0 ? (filled / total) * 100 : 0}%` }}
-      />
-    </div>
-  );
-}
-
-function CoverageLevelsSection({
-  memberIds,
-  nameByEntity,
-  personIdByEntity,
-}: {
-  memberIds: readonly string[];
-  nameByEntity: Map<string, string>;
-  personIdByEntity: Map<string, string>;
-}) {
-  const [openLevel, setOpenLevel] = useState<number | null>(null);
-  const showPlanned = usePortalShowPlanned();
-  const { distribution, parts, people, thin, isPending, isError } =
-    useScopeCoverage(memberIds);
-  if (isPending) return <Pending label="Reading coverage…" />;
-  // Before anything else. With a request failed nothing is known to reach the
-  // tenant, so every part would read "no data" and every person
-  // would sit at zero — a fault in our infrastructure printed as a verdict
-  // about named people. Saying we could not check is the only honest output.
-  if (isError) {
-    return (
-      <Pending label="Could not read coverage. The check did not finish, so nothing here is claimed about anyone." />
-    );
-  }
-  const counted = distribution.counted;
-  if (counted === 0) return null;
-
-  // The same sections the coverage hook counted, or the denominator would name
-  // sections this install does not show.
-  const partCount = visibleGroups(showPlanned).length;
-  const levels = [...distribution.byLevel.entries()].sort(
-    (a, b) => b[0] - a[0]
-  );
-  const missing = parts.filter((p) => p.unreachable);
-
-  return (
-    <section className="flex flex-col gap-6">
-      {/* 1 — the verdict, as a number rather than a sentence: it is meant to
-          be seen, not parsed. */}
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className={TEXT_FIGURE}>
-          {/* Same amber as the rows it is the sum of. The link between the
-              number and the block of bars is the one thing a reader has to
-              make unaided, and colour makes it without a caption. */}
-          <span className="text-warning">{thin}</span>
-          <span className="text-muted-foreground">/{counted}</span>
-        </span>
-        <p className="max-w-md text-sm text-muted-foreground">
-          people have data for fewer than half the sections. Everything shown
-          about them comes from those sections only.
-        </p>
-      </div>
-
-      {/* 2 — where it is missing. A part nothing reaches is NOT drawn as a bar
-          at zero, because that reads as people who did nothing, which is the
-          one thing it does not mean. */}
-      <div className="flex flex-col gap-2">
-        <p className={TEXT_EYEBROW}>
-          By section
-        </p>
-        {parts.map((part) => (
-          <div key={part.id} className="flex items-center gap-3 text-sm">
-            <span className="w-36 shrink-0 truncate">{part.title}</span>
-            {part.unreachable ? (
-              <span className="flex-1 text-xs text-warning">
-                {/* No cause named. Absent observations, a disabled metric and
-                    a broken schema all land here, and only the first is a
-                    missing connector — sending someone to plumb a live one is
-                    the wrong direction to be wrong in. */}
-                no data
-              </span>
-            ) : (
-              <CoverageBar filled={part.seen} total={counted} />
-            )}
-            <span className="w-14 shrink-0 text-right text-muted-foreground tabular-nums">
-              {part.unreachable ? "—" : part.seen}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* 3 — who. Colour carries the finding, so the shape reads without the
-          labels: the amber block IS the number at the top. */}
-      <div className="flex flex-col gap-2">
-        <p className={TEXT_EYEBROW}>
-          By person · sections with data
-        </p>
-        {levels.map(([level, n], i) => {
-          const thinHere = level < partCount / 2;
-          // The rule sits where it applies. Without it the reader has to work
-          // out which rows the headline counted, and having to work it out is
-          // the same as not knowing it.
-          const boundary =
-            thinHere && !(levels[i - 1] && levels[i - 1]![0] < partCount / 2);
-          return (
-            <div key={level} className="flex flex-col gap-2">
-              {boundary && (
-                <div className="mt-1 flex items-center gap-3">
-                  <span className="w-36 shrink-0 text-xs text-warning">
-                    fewer than half
-                  </span>
-                  <span className="h-px flex-1 bg-warning/40" />
-                  <span className="w-14 shrink-0 text-right text-xs font-medium text-warning tabular-nums dark:text-warning">
-                    {thin}
-                  </span>
-                </div>
-              )}
-              <button
-                type="button"
-                disabled={n === 0}
-                onClick={() => setOpenLevel(openLevel === level ? null : level)}
-                aria-expanded={openLevel === level}
-                aria-controls={`coverage-level-${level}`}
-                className="-mx-2 flex items-center gap-3 rounded-sm px-2 py-0.5 text-left text-sm enabled:hover:bg-muted/60 disabled:cursor-default"
-              >
-                <span className="w-36 shrink-0 text-muted-foreground tabular-nums">
-                  {level} of {partCount}
-                </span>
-                <CoverageBar filled={n} total={counted} warn={thinHere} />
-                <span className="w-14 shrink-0 text-right tabular-nums">
-                  {n}
-                </span>
-              </button>
-              {openLevel === level && (
-                <CoverageLevelPeople
-                  id={`coverage-level-${level}`}
-                  people={people.filter((p) => p.level === level)}
-                  nameByEntity={nameByEntity}
-                  personIdByEntity={personIdByEntity}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        A section counts when at least one of its metrics has a value for that
-        person in this period. This shows where data exists, not how well anyone
-        worked.
-        {missing.length > 0 && (
-          <>
-            {" "}
-            No one can reach {partCount} of {partCount} here:{" "}
-            {missing.map((m) => m.title).join(", ")}{" "}
-            {missing.length === 1 ? "has" : "have"} no data for anyone.
-          </>
-        )}{" "}
-        Counted over the {counted} {counted === 1 ? "person" : "people"} in this
-        scope.
-      </p>
-    </section>
-  );
-}
-
-/**
- * The people at one coverage level, and what is missing for each.
- *
- * The missing parts are the point, not the names. A level says how much we
- * cannot see; this says which systems to go and look at — and separates the
- * two kinds of absence, because they lead different places. "No connector"
- * is somebody's job to fix. "Nothing recorded" is a person who does that work
- * elsewhere, or does not do it, and no amount of plumbing changes it.
- */
-function CoverageLevelPeople({
-  id,
-  people,
-  nameByEntity,
-  personIdByEntity,
-}: {
-  id: string;
-  people: readonly PersonCoverage[];
-  nameByEntity: Map<string, string>;
-  personIdByEntity: Map<string, string>;
-}) {
-  // Every title, not just the visible ones: this only resolves ids that are
-  // already in a person's coverage states, which the hook gated on its way in.
-  const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
-  const rows = [...people].sort((a, b) =>
-    (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
-      nameByEntity.get(b.entityId) ?? b.entityId
-    )
-  );
-
-  return (
-    <ul id={id} className="mb-2 ml-36 flex flex-col gap-1 border-s ps-3">
-      {rows.map((p) => {
-        const unconnected: string[] = [];
-        const idle: string[] = [];
-        for (const [id, state] of p.states) {
-          const title = titleById.get(id) ?? id;
-          if (state === "no_data_reaches_us") unconnected.push(title);
-          else if (state === "nothing_recorded") idle.push(title);
-        }
-        const personId = personIdByEntity.get(p.entityId);
-        const name = nameByEntity.get(p.entityId) ?? p.entityId;
-        return (
-          <li
-            key={p.entityId}
-            className="flex flex-wrap items-baseline gap-x-2 text-xs"
-          >
-            {personId ? (
-              <Link
-                to="/ic/$person/personal"
-                params={{ person: personId }}
-                className="font-medium hover:underline"
-              >
-                {name}
-              </Link>
-            ) : (
-              <span className="font-medium">{name}</span>
-            )}
-            {unconnected.length > 0 && (
-              <span className="text-warning">
-                not measured for anyone: {unconnected.join(", ")}
-              </span>
-            )}
-            {idle.length > 0 && (
-              <span className="text-muted-foreground">
-                nothing recorded for this person: {idle.join(", ")}
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
 }
 
 /* ── participation (rule 8 variant — "N of M are active") ────────────── */

@@ -7,7 +7,6 @@ import {
   Clock,
   Copy,
   DollarSign,
-  Eye,
   FileSpreadsheet,
   FileText,
   Filter,
@@ -83,10 +82,11 @@ export const ZONES: readonly Zone[] = [
   { id: "manage", label: "Manage", kind: "manage" },
 ];
 
-/** Zones every viewer may open: Home, their own page and Dashboards. */
+/** Zones every viewer may open: Home, their own page, Reports and Dashboards. */
 export const ZONES_FOR_EVERYONE: ReadonlySet<string> = new Set([
   "overview",
   "person",
+  "reports",
   "custom",
 ]);
 
@@ -266,9 +266,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
       items: [
         { id: "at-a-glance", label: "At a glance", icon: LayoutGrid },
         { id: "by-direction", label: "By direction", icon: Layers },
-        { id: "trend", label: "Trend", icon: TrendingUp },
         { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "health", label: "Data coverage", icon: Eye },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },

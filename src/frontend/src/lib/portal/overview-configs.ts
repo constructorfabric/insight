@@ -53,35 +53,10 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     tagline: "where to look next",
     sections: [{ kind: "direction-cards", variant: "full" }],
   },
-  trend: {
-    title: "Overview · Trend",
-    tagline: "org totals over time",
-    sections: [
-      {
-        kind: "trend",
-        metrics: [
-          "git.default_branch_prs_merged",
-          "git.default_branch_code_lines",
-        ],
-        activeContributorsFor: "git.default_branch_prs_merged",
-      },
-    ],
-  },
   attention: {
     title: "Overview · Attention needed",
     tagline: "who to look at",
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
-  },
-  health: {
-    title: "Overview · Data coverage",
-    tagline: "which sections have data, and for how many people",
-    // One model, three cuts: the verdict, the parts nothing reaches, and how
-    // thinly people are seen. The radar that used to live here computed
-    // coverage a second way — a different predicate (`entityObserved`, which
-    // refuses zero-filled sums) over a different key set (each group's card
-    // preview rather than all its metrics) — so the same screen carried two
-    // counts of one thing by two definitions.
-    sections: [{ kind: "coverage-levels" }],
   },
   contribution: {
     title: "Overview · Contribution breakdown",
@@ -111,8 +86,7 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
 export type OwnOverviewItem =
   | { kind: "home" }
   | { kind: "lens"; config: LensConfig }
-  | { kind: "attention"; title: string; tagline: string }
-  | { kind: "coverage"; title: string; tagline: string };
+  | { kind: "attention"; title: string; tagline: string };
 
 export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
   [DEFAULT_OVERVIEW_ITEM]: { kind: "home" },
@@ -124,31 +98,10 @@ export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
       sections: [{ kind: "direction-cards", variant: "full" }],
     },
   },
-  trend: {
-    kind: "lens",
-    config: {
-      title: "Trend",
-      tagline: "your totals over time",
-      sections: [
-        {
-          kind: "trend",
-          metrics: [
-            "git.default_branch_prs_merged",
-            "git.default_branch_code_lines",
-          ],
-        },
-      ],
-    },
-  },
   attention: {
     kind: "attention",
     title: "Attention needed",
     tagline: "what stands out in your work",
-  },
-  health: {
-    kind: "coverage",
-    title: "Data coverage",
-    tagline: "which sections have data about you",
   },
 };
 

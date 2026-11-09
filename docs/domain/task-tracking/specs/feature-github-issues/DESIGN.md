@@ -77,9 +77,8 @@ boarded issues is a measure over a self-selected population.
 ### 1.3 Measures Produced and Withheld
 
 `state` is binary, so there is no `in_progress` lifecycle category. These
-measures are not produced for GitHub: `dev_time_hours`, `pickup_days`,
-`flow_dev_seconds`, `flow_lead_seconds`, `in_progress_seconds`,
-`worklog_seconds`.
+measures are not produced for GitHub: `pickup_days`, `flow_dev_seconds`,
+`flow_lead_seconds`, `in_progress_seconds`, `worklog_seconds`.
 
 Two more are withheld for a different reason. `estimation_error_pct` and
 `estimation_samples` compare an estimate against time actually spent, and GitHub
@@ -87,11 +86,12 @@ has no spent-time field at all — gold's estimation branch already requires
 `time_spent_seconds IS NOT NULL`, so it produces nothing rather than something
 wrong.
 
-> **Do not map `open` to `in_progress`.** Gold would then compute
-> `dev_time_hours` as calendar time from creation to close — a plausible-looking
-> duplicate of `resolution_days`. Map `open` to `new`; `dev_seconds` stays zero
-> and gold's existing `if(dev_seconds > 0, …)` guard omits the measure instead
-> of inventing it.
+> **Do not map `open` to `in_progress`.** Gold would then count the whole
+> calendar time from creation to close as in progress — `flow_dev_seconds`
+> would equal `flow_lead_seconds` and flow efficiency would read a plausible
+> 100%. Map `open` to `new`; `dev_seconds` stays zero and gold's existing
+> `if(dev_seconds > 0, …)` guard omits the flow measures instead of inventing
+> them.
 
 Produced: `tasks_closed`, `bugs_fixed`, `closed_task`, `closed_unknown_type`,
 `resolution_days`, `close_events`, `reopened_within_14d`, `due_date_on_time`, `due_date_with_due`,
@@ -728,7 +728,7 @@ introspection; they are recorded here so phase 2 does not repeat the work.
 ### 11.1 Projects v2 Boards
 
 Boards are the only source of an `in_progress` lifecycle category, which is what
-unlocks `dev_time_hours`, `pickup_days`, the flow measures and a truthful
+unlocks `pickup_days`, the flow measures and a truthful
 `stale_in_progress`.
 
 **Status is per-project, not a shared field.** Every project defines its own
