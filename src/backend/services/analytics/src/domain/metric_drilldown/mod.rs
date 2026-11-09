@@ -6,7 +6,6 @@ mod error;
 mod export;
 mod presentation;
 mod query_limits;
-mod ranking;
 mod row_shape;
 mod sort;
 mod validation;

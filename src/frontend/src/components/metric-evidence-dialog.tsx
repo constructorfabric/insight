@@ -175,7 +175,6 @@ export function MetricEvidenceDialog({
       ["ref", 0],
       ["title", 1],
       ["value", 1.5],
-      ["position", 1.55],
       ["numerator", 1.5],
       ["denominator", 1.6],
       ["repository", 2],

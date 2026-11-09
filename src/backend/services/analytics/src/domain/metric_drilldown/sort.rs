@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::domain::metric_results::compiler::sql_string_literal;
 
 use super::dto::MetricDrilldownColumnType;
-use super::ranking::position_order;
 use super::row_shape::RowShape;
 
 /// `u64::MAX` is 20 digits. A longer run of digits is not a number worth
@@ -30,13 +29,6 @@ impl MetricDrilldownSort {
         Self {
             key: DATE_KEY.to_owned(),
             direction: MetricDrilldownSortDirection::Desc,
-        }
-    }
-
-    pub(super) fn lowest_first() -> Self {
-        Self {
-            key: POSITION_KEY.to_owned(),
-            direction: MetricDrilldownSortDirection::Asc,
         }
     }
 }
@@ -67,7 +59,6 @@ pub(super) const DENOMINATOR_KEY: &str = "denominator";
 pub(super) const RECORDS_THAT_DAY_KEY: &str = "records_that_day";
 pub(super) const PERSON_KEY: &str = "person";
 pub(super) const PARTS_KEY: &str = "parts";
-pub(super) const POSITION_KEY: &str = "position";
 
 /// A presented column as the query reads it, applying the same
 /// details-then-dimension fallback the row projection does — an order or a
@@ -213,10 +204,6 @@ fn record_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<Col
         VALUE_KEY => ColumnSql::native_number(
             "ifNull(toString(evidence.contribution), '')".to_owned(),
             "ifNull(evidence.contribution, 0)".to_owned(),
-        ),
-        POSITION_KEY => ColumnSql::native_number(
-            format!("evidence.details[{}]", sql_string_literal(POSITION_KEY)),
-            position_order(),
         ),
         key => ColumnSql::projected(r#type, detail_text(key)),
     };

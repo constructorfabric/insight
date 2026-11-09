@@ -14,7 +14,6 @@ use super::dto::{
 };
 use super::error::config_error;
 use super::presentation::presentation_columns;
-use super::ranking::Ranking;
 use super::row_shape::{RowShape, record_parts};
 use super::sort::{
     MetricDrilldownSort, MetricDrilldownSortDirection, PARTS_KEY, PERSON_KEY, column_sql,
@@ -75,23 +74,14 @@ fn compile_value_query(
     let person = person_projection(&req.selection.entity, &columns, &mut person_params);
     let mut scope_params = Vec::new();
     let scope = evidence_scope(req, &mut scope_params);
-    let ranking = Ranking::of(&req.plan, &req.selection.entity);
-    let (rows, scope) = match (parts, ranking) {
-        (Some(parts), _) => {
-            params.append(&mut scope_params);
-            params.append(&mut person_params);
-            (folded_record_source(database, table, &scope, parts), None)
-        }
-        (None, Some(ranking)) => {
-            params.append(&mut person_params);
-            params.append(&mut scope_params);
-            (ranking.ranked_source(database, table, &scope), None)
-        }
-        (None, None) => {
-            params.append(&mut person_params);
-            params.append(&mut scope_params);
-            (format!("{database}.{table} AS evidence"), Some(scope))
-        }
+    let (rows, scope) = if let Some(parts) = parts {
+        params.append(&mut scope_params);
+        params.append(&mut person_params);
+        (folded_record_source(database, table, &scope, parts), None)
+    } else {
+        params.append(&mut person_params);
+        params.append(&mut scope_params);
+        (format!("{database}.{table} AS evidence"), Some(scope))
     };
 
     let search = search_predicate(
@@ -765,8 +755,8 @@ mod tests {
         EvidenceGranularity, EvidencePresentation, RatioDenominatorAggregation,
     };
     use crate::domain::metric_drilldown::test_support::{
-        TEST_PERSON, TEST_TENANT, commit_input, commit_presentation, distribution_plan, input,
-        plan, ratio_over, validated,
+        TEST_PERSON, TEST_TENANT, commit_input, commit_presentation, input, plan, ratio_over,
+        validated,
     };
     use uuid::Uuid;
 
@@ -1378,45 +1368,6 @@ mod tests {
             sql.contains(") > 4,"),
             "a single leftover part is named rather than folded: {sql}"
         );
-    }
-
-    #[test]
-    fn a_median_drilldown_ranks_every_record_before_search_or_paging_narrows_them() {
-        let (sql, params) = compile_query(&validated(distribution_plan(|value| {
-            ComputationSpec::Median { value }
-        })))
-        .unwrap_or_else(|error| panic!("query must compile: {error}"));
-
-        let ranked = sql
-            .find("row_number() OVER (ORDER BY evidence.contribution ASC NULLS LAST, evidence.record_id ASC) AS record_position")
-            .unwrap_or_else(|| panic!("records are ranked by the number the median reads: {sql}"));
-        let scoped = sql
-            .find("evidence.metric_date >= toDate(?)")
-            .unwrap_or_else(|| panic!("the ranking reads the selected period: {sql}"));
-        assert!(
-            scoped > ranked,
-            "the ranking sees the whole selection: {sql}"
-        );
-        assert!(
-            sql.contains("' · median'"),
-            "the middle record is marked: {sql}"
-        );
-        assert!(
-            sql.contains("' · median pair'"),
-            "an even count marks its two middles: {sql}"
-        );
-        assert_eq!(sql.matches('?').count(), params.len());
-    }
-
-    #[test]
-    fn a_percentile_drilldown_marks_the_record_the_percentile_reads() {
-        let (sql, _) = compile_query(&validated(distribution_plan(|value| {
-            ComputationSpec::Percentile { value, q: 0.75 }
-        })))
-        .unwrap_or_else(|error| panic!("query must compile: {error}"));
-
-        assert!(sql.contains("' · p75'"), "the p75 record is marked: {sql}");
-        assert!(!sql.contains("' · median'"));
     }
 
     #[test]

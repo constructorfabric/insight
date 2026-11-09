@@ -25,7 +25,7 @@ use super::dto::{
 };
 use super::presentation::presentation_columns;
 use super::row_shape::RowShape;
-use super::sort::{MetricDrilldownSort, POSITION_KEY, column_sql};
+use super::sort::{MetricDrilldownSort, column_sql};
 
 struct CommonRequest {
     metric_key: String,
@@ -333,12 +333,7 @@ fn normalize_sort(
     sort: Option<MetricDrilldownSort>,
 ) -> Result<MetricDrilldownSort, CanonicalError> {
     let Some(sort) = sort else {
-        let ranked = columns.iter().any(|column| column.key == POSITION_KEY);
-        return Ok(if ranked {
-            MetricDrilldownSort::lowest_first()
-        } else {
-            MetricDrilldownSort::newest_first()
-        });
+        return Ok(MetricDrilldownSort::newest_first());
     };
     let key = normalize_key("sort.key", &sort.key)?;
     let sortable = columns
@@ -504,9 +499,7 @@ mod tests {
     use super::*;
     use crate::domain::metric_definitions::ComputationSpec;
     use crate::domain::metric_drilldown::sort::MetricDrilldownSortDirection;
-    use crate::domain::metric_drilldown::test_support::{
-        commit_input, definition, distribution_plan, input, plan,
-    };
+    use crate::domain::metric_drilldown::test_support::{commit_input, definition, input, plan};
 
     fn commit_plan() -> EvidencePlan {
         plan(
@@ -534,27 +527,6 @@ mod tests {
 
         assert_eq!(sort, MetricDrilldownSort::newest_first());
         assert_eq!(sort.direction, MetricDrilldownSortDirection::Desc);
-    }
-
-    #[test]
-    fn a_distribution_drilldown_opens_on_its_ranking() {
-        let columns = presentation_columns(
-            &distribution_plan(|value| ComputationSpec::Median { value }),
-            &[],
-            &[],
-            &one_person(),
-        );
-
-        let sort = normalize_sort(&columns, None)
-            .unwrap_or_else(|error| panic!("the default order must resolve: {error}"));
-
-        assert_eq!(
-            sort,
-            MetricDrilldownSort {
-                key: "position".to_owned(),
-                direction: MetricDrilldownSortDirection::Asc,
-            }
-        );
     }
 
     #[test]
