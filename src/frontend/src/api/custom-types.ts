@@ -383,6 +383,7 @@ export interface DrilldownRequest {
 export interface DrilldownColumn extends MetricEvidenceColumn {
   sortable: boolean;
   percent: boolean;
+  exact: boolean;
 }
 
 export type DrilldownRow = Pick<MetricEvidenceRow, "values">;

@@ -49,6 +49,7 @@ export function identityPerson(
 export function peopleFromIdentityTree(
   root: IdentityPerson,
   managerPersonId: string | null = null,
+  managerName: string | null = null,
 ): PeopleListItem[] {
   return [
     {
@@ -65,9 +66,10 @@ export function peopleFromIdentityTree(
         ...(root.status ? { status: root.status } : {}),
       },
       manager_person_id: managerPersonId,
+      manager_name: managerName,
     },
     ...root.subordinates.flatMap((report) =>
-      peopleFromIdentityTree(report, root.person_id),
+      peopleFromIdentityTree(report, root.person_id, root.display_name || null),
     ),
   ];
 }

@@ -6,11 +6,8 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-import { Button } from "@gears-frontx/ui-kit";
-
-import { formatMetricNumber } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import {
+  Button,
   Table,
   TableBody,
   TableCell,
@@ -18,7 +15,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
+
+import { formatMetricNumber } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { MetricTimeseriesModel } from "@/components/widgets/metric-views/metric-timeseries-model";
 import {
   resolveMetricTimeseriesTableColumns,

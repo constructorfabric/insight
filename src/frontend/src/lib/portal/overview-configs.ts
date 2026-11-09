@@ -27,8 +27,8 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
         // the org's top line was three-quarters code and cost, and the work
         // that never touches a repo went unrepresented.
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
+          "git.pr_size",
           "tasks.closed",
           "collab.messages_sent",
           "ai.cost",
@@ -58,28 +58,6 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     title: { key: "worth_a_look.overview_title" },
     tagline: "who to look at",
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
-  },
-  contribution: {
-    title: "Overview · Contribution breakdown",
-    tagline: "who carries the output — shape, not leaderboard",
-    sections: [
-      // Headline gives the per-capita + delta rollup AND feeds the automatic
-      // by-unit comparison when a slice is active (review decision).
-      { kind: "headline", metrics: ["git.default_branch_commits"] },
-      {
-        kind: "concentration",
-        metrics: ["git.default_branch_commits"],
-        framing: "bus-factor",
-      },
-      {
-        kind: "distribution",
-        metric: "git.default_branch_commits",
-        title: "How many commits people made",
-        caption:
-          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
-        unitLabel: "commits per person",
-      },
-    ],
   },
 };
 

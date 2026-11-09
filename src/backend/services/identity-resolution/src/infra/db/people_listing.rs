@@ -59,6 +59,7 @@ pub struct PersonListRow {
     pub last_name: Option<String>,
     pub attributes: BTreeMap<String, String>,
     pub manager_person_id: Option<Uuid>,
+    pub manager_name: Option<String>,
     pub order_key: String,
 }
 
@@ -91,10 +92,12 @@ pub async fn list_persons(
     rows_from(db.query_all_raw(statement).await?)
 }
 
+#[derive(Debug)]
 struct VisibleScopeSql {
     recursive: &'static str,
     cte: String,
     filter: &'static str,
+    manager_gate: &'static str,
     values: Vec<sea_orm::Value>,
 }
 
@@ -104,6 +107,7 @@ fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleS
             recursive: "",
             cte: String::new(),
             filter: "",
+            manager_gate: "",
             values: Vec::new(),
         };
     };
@@ -115,6 +119,9 @@ fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleS
         recursive: "RECURSIVE ",
         cte: format!(",\n{CURRENT_VISIBLE_SET_CTE}"),
         filter: " AND EXISTS (SELECT 1 FROM visible_set vs WHERE vs.person_id = p.person_id)",
+        manager_gate: " AND (p.person_id = ? OR EXISTS (\
+             SELECT 1 FROM visible_set vs WHERE vs.person_id = p.manager_person_id\
+             ))",
         values: vec![
             viewer(),
             tenant(),
@@ -125,6 +132,7 @@ fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleS
             viewer(),
             tenant(),
             scope.org_source_type.into(),
+            viewer(),
         ],
     }
 }
@@ -133,12 +141,12 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
     let mut values = vec![query.org_chart_source_type.to_owned().into()];
     values.push(tenant_id.as_bytes().to_vec().into());
     values.push(tenant_id.as_bytes().to_vec().into());
-    let protect_manager = query.restrict.visible_to.is_some();
+
     let scope = visible_scope(query.restrict.visible_to, tenant_id);
     let recursive = scope.recursive;
     let visible_cte = scope.cte;
+    let manager_gate = scope.manager_gate;
     let mut filters = String::from(scope.filter);
-    let manager_projection = manager_projection(protect_manager);
     values.extend(scope.values);
 
     append_filters(&mut filters, &mut values, query.terms, query.person_ids);
@@ -201,7 +209,7 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
             WHERE p.insight_tenant_id = ? AND p.valid_to IS NULL
         ){visible_cte}
         SELECT person_id, email, username, display_name, first_name, last_name,
-               attributes, manager_person_id, order_key
+               attributes, manager_person_id, manager_name, order_key
         FROM (
             SELECT p.person_id,
                    p.email,
@@ -210,12 +218,15 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
                    p.first_name,
                    p.last_name,
                    p.attributes,
-                   {manager_projection} AS manager_person_id,
+                   manager.person_id AS manager_person_id,
+                   manager.label AS manager_name,
                    CONCAT(
                        IF(p.label IS NULL, '1', '0'),
                        LEFT(LOWER(COALESCE(p.label, '')), {ORDER_KEY_CHARS})
                    ) AS order_key
             FROM presented_people p
+            LEFT JOIN presented_people manager
+              ON manager.person_id = p.manager_person_id{manager_gate}
             WHERE 1 = 1{filters}
         ) keyed{resume}
         ORDER BY order_key, person_id
@@ -259,31 +270,6 @@ fn append_filters(
     }
 }
 
-fn manager_projection(protect_manager: bool) -> &'static str {
-    if protect_manager {
-        return r"
-                   CASE WHEN EXISTS (
-                       SELECT 1
-                       FROM visible_set vs
-                       WHERE vs.person_id = p.manager_person_id
-                   ) AND EXISTS (
-                       SELECT 1
-                       FROM people manager
-                       WHERE manager.insight_tenant_id = p.insight_tenant_id
-                         AND manager.person_id = p.manager_person_id
-                         AND manager.valid_to IS NULL
-                   ) THEN p.manager_person_id END";
-    }
-    r"
-                   CASE WHEN EXISTS (
-                       SELECT 1
-                       FROM people manager
-                       WHERE manager.insight_tenant_id = p.insight_tenant_id
-                         AND manager.person_id = p.manager_person_id
-                         AND manager.valid_to IS NULL
-                   ) THEN p.manager_person_id END"
-}
-
 fn push_patterns(values: &mut Vec<sea_orm::Value>, term: &str) {
     let pattern = like_pattern(term);
     values.extend([
@@ -318,6 +304,7 @@ fn rows_from(rows: Vec<QueryResult>) -> Result<Vec<PersonListRow>, PeopleListing
                     .try_get::<Option<Vec<u8>>>("", "manager_person_id")?
                     .map(|value| Uuid::from_slice(&value))
                     .transpose()?,
+                manager_name: row.try_get("", "manager_name")?,
                 order_key: row.try_get("", "order_key")?,
             })
         })
@@ -358,7 +345,7 @@ mod tests {
         assert!(sql.contains("ROW_NUMBER() OVER"));
         assert!(sql.contains("AND oc.rn = 1"));
         assert!(sql.contains("AND parent_person_id IS NOT NULL"));
-        assert!(sql.contains("manager.valid_to IS NULL"));
+        assert!(sql.contains("LEFT JOIN presented_people manager"));
         assert!(sql.contains("ORDER BY order_key, person_id"));
         assert!(sql.contains("NULLIF(TRIM(CONCAT_WS(' ',"));
         assert_eq!(sql.matches('?').count(), values.len());
@@ -424,8 +411,29 @@ mod tests {
 
         assert!(sql.contains("WITH RECURSIVE"));
         assert!(sql.contains("FROM visible_set vs"));
-        assert!(sql.contains("manager.valid_to IS NULL"));
+        assert!(sql.contains("LEFT JOIN presented_people manager"));
         assert!(sql.contains("order_key > ?"));
         assert_eq!(sql.matches('?').count(), values.len());
+    }
+
+    #[test]
+    fn the_own_row_exception_is_keyed_to_the_caller() {
+        let viewer = Uuid::from_u128(3);
+        let restrict = Restrict {
+            visible_to: Some(VisibleTo {
+                viewer_person_id: viewer,
+                org_source_type: "directory",
+                policy: VisibilityPolicy::OrgChart,
+            }),
+        };
+
+        let (sql, values) = query(&[], &[Uuid::from_u128(2)], restrict, None);
+
+        let gate = sql.find("p.person_id = ? OR");
+        let bound = gate.map(|at| &values[sql[..at].matches('?').count()]);
+        assert_eq!(
+            bound,
+            Some(&sea_orm::Value::from(viewer.as_bytes().to_vec()))
+        );
     }
 }

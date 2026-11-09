@@ -161,6 +161,11 @@ describe("TrendDrilldownDialog", () => {
     expect(mocks.queryMetricDrilldown).toHaveBeenCalledTimes(1);
   });
 
+  it("numbers its records, as custom tables do", () => {
+    renderDialog();
+    expect(mocks.tableProps?.numbered).toBe(true);
+  });
+
   it("announces the order the server actually served", () => {
     renderDialog();
     expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });

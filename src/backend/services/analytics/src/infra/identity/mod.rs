@@ -9,6 +9,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod people;
+
+pub(crate) use people::RosterPerson;
+
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Request body of the identity service's `POST /v1/visible-persons`

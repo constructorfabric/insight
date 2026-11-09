@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use super::clock::{TimeField, add_window_predicates, bucket_expression, clock_expression};
-use super::field::{FieldType, OrderBy, is_identifier};
+use super::field::{Field, FieldType, OrderBy, is_identifier};
 use super::filter::FilterBind;
 use super::over::Over;
 use super::people::{People, PersonHandle};
@@ -139,6 +139,14 @@ impl MetricQuery {
     /// reports the bucket each row falls in.
     fn groups_its_rows(&self) -> bool {
         !self.group_by.is_empty() || self.fields.iter().any(|field| field.agg.is_some())
+    }
+
+    fn names_marked(&self, marked: fn(&Field) -> bool) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|field| marked(field))
+            .map(|field| field.as_name.clone())
+            .collect()
     }
 
     /// Both directions of the `GROUP BY`: every group names a selected
@@ -418,12 +426,8 @@ impl MetricQuery {
             sql,
             binds,
             column_types,
-            percents: self
-                .fields
-                .iter()
-                .filter(|field| field.percent)
-                .map(|field| field.as_name.clone())
-                .collect(),
+            percents: self.names_marked(|field| field.percent),
+            exacts: self.names_marked(|field| field.exact),
             hidden,
             numbered,
         })

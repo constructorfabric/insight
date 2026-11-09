@@ -12,17 +12,16 @@ import {
 } from "@/api/period-to-date-range";
 import {
   Button,
+  Calendar,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-  Calendar,
-} from "@gears-frontx/ui-kit";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@gears-frontx/ui-kit";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
 function parseIso(iso: string): Date {
@@ -140,6 +139,7 @@ export function PeriodSelectorBar({
   return (
     <div className="flex items-center gap-2">
       <ToggleGroup
+        spacing={0}
         value={groupValue}
         onValueChange={(values) => {
           const next = Array.isArray(values) ? values[0] : values;
@@ -222,6 +222,7 @@ export function PeriodSelectorBar({
               weekStartsOn={1}
               captionLayout="dropdown"
               fixedWeeks
+              endMonth={latestPickableDay()}
               className="p-3"
               resetOnSelect
               showOutsideDays={false}

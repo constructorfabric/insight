@@ -1,15 +1,18 @@
+import { addDays } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useState } from "react";
 import type { DateRange as DayPickerRange } from "react-day-picker";
 
-import { toISODate } from "@/api/period-to-date-range";
-import { Button, Calendar } from "@gears-frontx/ui-kit";
+import { latestPickableDay, toISODate } from "@/api/period-to-date-range";
 import {
+  Button,
+  Calendar,
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@gears-frontx/ui-kit";
 import {
   RANGE_PRESETS,
   rangeLabel,
@@ -34,6 +37,7 @@ export interface RangePickerProps {
  */
 export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
   const [open, setOpen] = useState(false);
+  const latestEnd = addDays(latestPickableDay(), 1);
   const custom = toInterval(selected);
 
   // Keyed on the selection: a `useState` initialiser runs once, so a picker
@@ -49,11 +53,12 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
       : undefined);
 
   const presets = RANGE_PRESETS.filter((preset) =>
-    offered.includes(preset.token),
+    offered.includes(preset.token)
   );
 
   return (
     <ToggleGroup
+      spacing={0}
       value={[custom ? "custom" : selected]}
       onValueChange={(values) => {
         const next = Array.isArray(values) ? values[0] : values;
@@ -84,9 +89,7 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
             <ToggleGroupItem
               value="custom"
               className="gap-1.5"
-              aria-label={
-                custom ? rangeLabel(selected) : "Custom date range"
-              }
+              aria-label={custom ? rangeLabel(selected) : "Custom date range"}
             >
               <CalendarIcon className="size-3.5" />
               <span className="hidden sm:inline">
@@ -105,6 +108,8 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
             weekStartsOn={1}
             captionLayout="dropdown"
             fixedWeeks
+            endMonth={latestEnd}
+            disabled={{ after: latestEnd }}
             className="p-3"
             resetOnSelect
             showOutsideDays={false}
@@ -128,7 +133,7 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
                   toRangeToken({
                     from: toISODate(showing.from),
                     to: toISODate(showing.to),
-                  }),
+                  })
                 );
                 setOpen(false);
               }}
@@ -147,9 +152,9 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
  * clicked twice is an empty window, so it is not one yet.
  */
 function isWholeSpan(
-  range: DayPickerRange | undefined,
+  range: DayPickerRange | undefined
 ): range is { from: Date; to: Date } {
   return Boolean(
-    range?.from && range.to && toISODate(range.from) < toISODate(range.to),
+    range?.from && range.to && toISODate(range.from) < toISODate(range.to)
   );
 }

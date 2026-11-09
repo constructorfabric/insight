@@ -460,8 +460,8 @@ export const GROUPS: readonly MetricGroup[] = [
     collection: GIT_OUTPUT_COLLECTION,
     card: {
       preview: [
-        "git.default_branch_commits",
         "git.default_branch_prs_merged",
+        "git.pr_size",
         "git.default_branch_code_lines",
       ],
     },
@@ -470,7 +470,6 @@ export const GROUPS: readonly MetricGroup[] = [
         id: "output-by-repository",
         view: "timeseries",
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
           "git.default_branch_lines_added",
           "git.default_branch_lines_removed",
@@ -478,7 +477,6 @@ export const GROUPS: readonly MetricGroup[] = [
         defaultPresentation: "table",
         table: {
           columns: [
-            { metric: "git.default_branch_commits" },
             { metric: "git.default_branch_prs_merged", labelSource: "short" },
             GIT_LINES_TABLE_COLUMN,
           ],
@@ -488,7 +486,7 @@ export const GROUPS: readonly MetricGroup[] = [
           limits: {
             repository: {
               count: 10,
-              rankBy: "git.default_branch_commits",
+              rankBy: "git.default_branch_prs_merged",
               includeRemainder: true,
             },
           },

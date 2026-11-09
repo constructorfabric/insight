@@ -1,6 +1,8 @@
+use super::super::super::roster_names::Roster;
 use super::super::search::PersonSearch;
 use super::super::sort::{ActionsSort, Order, PagesSort, PeopleSort};
 use super::*;
+use crate::infra::identity::RosterPerson;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -110,7 +112,13 @@ fn searching(raw: &str) -> Result<PersonSearch, Box<dyn std::error::Error>> {
 
 #[test]
 fn a_search_matches_a_visitor_by_name_or_by_handle() -> R {
-    let sql = people_sql(Order::default(), Some(&searching("ada")?));
+    let sql = people_sql(
+        Order::default(),
+        Some(&PeopleSearch {
+            needle: &searching("ada")?,
+            rostered: &[],
+        }),
+    );
 
     assert!(
         sql.contains("positionCaseInsensitiveUTF8(display_name, ?) > 0"),
@@ -125,7 +133,13 @@ fn a_search_matches_a_visitor_by_name_or_by_handle() -> R {
 
 #[test]
 fn a_search_narrows_the_visitors_before_the_cap_keeps_its_200() -> R {
-    let sql = people_sql(Order::default(), Some(&searching("ada")?));
+    let sql = people_sql(
+        Order::default(),
+        Some(&PeopleSearch {
+            needle: &searching("ada")?,
+            rostered: &[],
+        }),
+    );
 
     let filter = sql.find("positionCaseInsensitiveUTF8").ok_or("no filter")?;
     let cap = sql.find("LIMIT 200").ok_or("no cap")?;
@@ -136,13 +150,19 @@ fn a_search_narrows_the_visitors_before_the_cap_keeps_its_200() -> R {
 #[test]
 fn a_search_is_bound_never_spliced_in() -> R {
     let needle = "ada'); DROP TABLE x; --";
-    let sql = people_sql(Order::default(), Some(&searching(needle)?));
+    let sql = people_sql(
+        Order::default(),
+        Some(&PeopleSearch {
+            needle: &searching(needle)?,
+            rostered: &[],
+        }),
+    );
 
     assert!(!sql.contains(needle), "{sql}");
     assert_eq!(
         sql.matches('?').count(),
-        7,
-        "window, the name lookup's tenant, the needle twice, the join's tenant"
+        8,
+        "window, the name lookup's tenant, the needle twice, the roster's matches, the join's tenant"
     );
     Ok(())
 }
@@ -152,4 +172,58 @@ fn no_search_leaves_the_visitors_unfiltered() {
     let sql = people_sql(Order::default(), None);
 
     assert!(!sql.contains("positionCaseInsensitiveUTF8"), "{sql}");
+}
+
+#[test]
+fn a_search_also_keeps_the_visitors_the_roster_names_by_it() -> R {
+    let sql = people_sql(
+        Order::default(),
+        Some(&PeopleSearch {
+            needle: &searching("Example")?,
+            rostered: &[Uuid::from_u128(1)],
+        }),
+    );
+
+    assert!(sql.contains("OR person_id IN ?"), "{sql}");
+    Ok(())
+}
+
+fn visited(person_id: Uuid, display_name: &str) -> UsagePersonRow {
+    UsagePersonRow {
+        person_id,
+        display_name: display_name.to_owned(),
+        username: display_name.to_owned(),
+        visits: 2,
+        page_views: 3,
+        last_seen: "2026-08-02 10:00:00.000".to_owned(),
+    }
+}
+
+#[test]
+fn a_visitor_on_the_roster_is_served_the_name_people_shows() {
+    let ada = Uuid::from_u128(1);
+    let mut roster = Roster::new();
+    roster.insert(
+        ada,
+        RosterPerson {
+            person_id: ada,
+            display_name: Some("Ada Example".to_owned()),
+            username: None,
+            email: Some("ada@example.com".to_owned()),
+        },
+    );
+
+    let person = named(visited(ada, "ada"), &roster);
+
+    assert_eq!(person.display_name, "Ada Example");
+    assert_eq!(person.email.as_deref(), Some("ada@example.com"));
+    assert_eq!((person.visits, person.page_views), (2, 3));
+}
+
+#[test]
+fn a_visitor_off_the_roster_keeps_the_identity_rows_name() {
+    let person = named(visited(Uuid::from_u128(2), "bob"), &Roster::new());
+
+    assert_eq!(person.display_name, "bob");
+    assert_eq!(person.email, None);
 }

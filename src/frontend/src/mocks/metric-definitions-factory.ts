@@ -76,13 +76,17 @@ function define(
     metric_key: metricKey,
     entity_type: "person",
     label: meta.label,
-    short_label: null,
-    description: family
-      ? `${meta.label} for the selected period, read from ${family.source}.`
-      : `${meta.label} for the selected period.`,
-    explanation: `Counted per person and rolled up to whatever scope is in view. Higher is ${
-      meta.direction === "higher_is_better" ? "better" : "worse"
-    } for ${noun}.`,
+    short_label: meta.short_label ?? null,
+    description:
+      meta.description ??
+      (family
+        ? `${meta.label} for the selected period, read from ${family.source}.`
+        : `${meta.label} for the selected period.`),
+    explanation:
+      meta.explanation ??
+      `Counted per person and rolled up to whatever scope is in view. Higher is ${
+        meta.direction === "higher_is_better" ? "better" : "worse"
+      } for ${noun}.`,
     unit: meta.unit,
     format: meta.format,
     direction: meta.direction,

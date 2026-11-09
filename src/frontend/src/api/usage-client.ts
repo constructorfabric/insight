@@ -24,6 +24,7 @@ export interface UsagePerson {
   person_id: string;
   display_name: string;
   username: string;
+  email: string | null;
   visits: number;
   page_views: number;
   last_seen: string;

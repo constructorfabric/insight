@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 
+import { headlineMetricKeys } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import type { PeopleListItem } from "@/api/identity-client";
 import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
@@ -104,10 +105,8 @@ beforeEach(() => {
   mocks.roster = peopleFromIdentityTree(mocks.tree);
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
-  // git.default_branch_commits is a real headline key (GROUPS card.preview) — the view
-  // only renders columns from that set.
   mocks.grid.byKey = new Map([
-    ["git.default_branch_commits", metric("git.default_branch_commits", [[pid("boss"), 50], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" })],
+    ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", [[pid("boss"), 50], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "PRs merged" })],
     // a ratio metric: must roll up as MEDIAN, not a summed percentage
     ["collab.focus_time_pct", metric("collab.focus_time_pct", [[pid("boss"), 80], [pid("a"), 40], [pid("b"), 50], [pid("c"), 60], [pid("d"), 70]], {
       computation: "avg",
@@ -125,6 +124,10 @@ beforeEach(() => {
 });
 
 describe("TeamStateView", () => {
+  it("seeds its counter with a metric the view draws a column for", () => {
+    expect(headlineMetricKeys()).toContain("git.default_branch_prs_merged");
+  });
+
   it("renders the scope header and every member row", () => {
     render(<TeamStateView />);
     expect(screen.getByText("boss's team")).toBeInTheDocument();
@@ -253,15 +256,15 @@ describe("TeamStateView", () => {
 
   it("includes the manager in needs attention", () => {
     mocks.grid.byKey.set(
-      "git.default_branch_commits",
-      metric("git.default_branch_commits", [[pid("boss"), 0], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" }),
+      "git.default_branch_prs_merged",
+      metric("git.default_branch_prs_merged", [[pid("boss"), 0], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "PRs merged" }),
     );
 
     render(<TeamStateView />);
 
     expect(screen.getByText(/1 of 5 people stands out this period/)).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: /Commits/, expanded: false }),
+      screen.getByRole("button", { name: /PRs merged/, expanded: false }),
     );
     expect(screen.getAllByText("boss")).toHaveLength(2);
   });

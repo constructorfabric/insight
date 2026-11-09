@@ -71,19 +71,17 @@ describe("groups registry", () => {
     };
     expect(timeseries[0]?.groupBy?.limits?.repository).toEqual({
       count: 10,
-      rankBy: "git.default_branch_commits",
+      rankBy: "git.default_branch_prs_merged",
       includeRemainder: true,
     });
     // The request is built from the block's `metrics`, not from its columns, so
     // a column whose metric is missing here renders empty.
     expect(timeseries[0]?.metrics).toEqual([
-      "git.default_branch_commits",
       "git.default_branch_prs_merged",
       "git.default_branch_lines_added",
       "git.default_branch_lines_removed",
     ]);
     expect(timeseries[0]?.table?.columns).toEqual([
-      { metric: "git.default_branch_commits" },
       { metric: "git.default_branch_prs_merged", labelSource: "short" },
       lines,
     ]);
@@ -182,5 +180,26 @@ describe("visibleGroups", () => {
     );
 
     expect(groups).toEqual(GROUPS);
+  });
+});
+
+describe("commit counts lead no group surface", () => {
+  const COMMITS = "git.default_branch_commits";
+
+  it("on any metric group card", () => {
+    for (const group of GROUPS) {
+      expect(group.card.preview[0], group.id).not.toBe(COMMITS);
+    }
+  });
+
+  it("in the ranking of any drilldown table", () => {
+    for (const group of GROUPS) {
+      for (const block of group.drilldown) {
+        if (!("groupBy" in block)) continue;
+        for (const [dimension, limit] of Object.entries(block.groupBy?.limits ?? {})) {
+          expect(limit.rankBy, `${group.id} ${block.id} by ${dimension}`).not.toBe(COMMITS);
+        }
+      }
+    }
   });
 });

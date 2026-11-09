@@ -35,6 +35,9 @@ function peopleItem(person: (typeof PEOPLE)[number]) {
       status: "Active",
     },
     manager_person_id: person.supervisor_person_id,
+    manager_name:
+      PEOPLE.find((p) => p.person_id === person.supervisor_person_id)?.name ??
+      null,
   };
 }
 

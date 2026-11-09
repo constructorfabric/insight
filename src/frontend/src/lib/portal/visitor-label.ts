@@ -1,7 +1,10 @@
+import { personDisplayName } from "@/lib/identities/person-display";
+
 export interface VisitorNaming {
   person_id: string;
   display_name: string;
   username?: string;
+  email?: string | null;
 }
 
 export interface VisitorLabel {
@@ -10,9 +13,8 @@ export interface VisitorLabel {
 }
 
 export function visitorLabel(visitor: VisitorNaming): VisitorLabel {
-  const name = visitor.display_name.trim();
   const handle = visitor.username?.trim() ?? "";
   const detail = handle ? `username: ${handle}` : visitor.person_id;
 
-  return { label: name || handle || visitor.person_id, detail };
+  return { label: personDisplayName(visitor), detail };
 }

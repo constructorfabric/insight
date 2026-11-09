@@ -11,7 +11,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@gears-frontx/ui-kit";
 import {
   Sidebar,
   SidebarContent,

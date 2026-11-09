@@ -25,6 +25,7 @@ function rosterPerson(
     email: null,
     attributes,
     manager_person_id: managerPersonId,
+    manager_name: null,
   };
 }
 
@@ -128,6 +129,7 @@ describe("collectPeopleAttrs", () => {
           { division: "R&D", job_title: "Developer", customTeam: "Core" },
           "PERSON-MANAGER",
         ),
+        rosterPerson("PERSON-MANAGER", {}),
       ],
       (id) => id.toLowerCase(),
     );
@@ -146,6 +148,16 @@ describe("collectPeopleAttrs", () => {
         value: "PERSON-MANAGER",
       },
     });
+  });
+
+  it("forms no manager cohort around a manager missing from the roster", () => {
+    const result = collectPeopleAttrs(
+      [rosterPerson("LEAD", {}, "CHIEF"), rosterPerson("REPORT", {}, "LEAD")],
+      (id) => id.toLowerCase(),
+    );
+
+    expect(result.get("lead")).toEqual({});
+    expect(result.get("report")?.manager?.value).toBe("LEAD");
   });
 });
 
