@@ -151,7 +151,7 @@ export const MEDIAN_METRIC_FIXTURE: MedianMetricResult = {
   description: "Hours from a pull request's first commit to merge",
   explanation:
     "Median hours between a merged PR's first commit and its merge, over the person's PRs in the period.",
-  unit: "hours",
+  unit: "h",
   format: "decimal",
   direction: "lower_is_better",
   computation: "median",

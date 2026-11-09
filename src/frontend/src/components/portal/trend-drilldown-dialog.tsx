@@ -28,10 +28,11 @@ import {
   TableHeader,
   TableRow,
 } from "@gears-frontx/ui-kit";
-import { formatMetricNumber } from "@/lib/format";
+import { formatMetricNumber, formatTimeMetricValue } from "@/lib/format";
 import { nextSort } from "@/lib/metrics/evidence-rows";
 import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";
 import { type BucketBreakdownRow } from "@/lib/portal/trend-drilldown";
+import { useMetricDefinition } from "@/queries/metric-definitions";
 
 const PAGE_LIMIT = 100;
 /** Where scrolling stops growing the table, as in the metric evidence dialog. */
@@ -249,6 +250,7 @@ function Records({
 }
 
 function PeriodTable({ state }: { state: TrendDrilldownState }) {
+  const metric = useMetricDefinition(state.metricKey);
   if (!state.breakdown.length) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -284,7 +286,8 @@ function PeriodTable({ state }: { state: TrendDrilldownState }) {
               {row.date}
             </TableCell>
             <TableCell className="text-right whitespace-nowrap tabular-nums">
-              {formatMetricNumber(row.total, "decimal")}
+              {formatTimeMetricValue(row.total, metric) ??
+                formatMetricNumber(row.total, "decimal")}
             </TableCell>
             <TableCell className="text-right whitespace-nowrap tabular-nums">
               {row.contributors.length}
