@@ -96,10 +96,6 @@ const TASK_DELIVERY_COLLECTION: MetricCollectionConfig = {
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
-      key: "tasks.dev_time",
-      views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
-    },
-    {
       key: "tasks.resolution_time",
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
@@ -460,7 +456,6 @@ export const GROUPS: readonly MetricGroup[] = [
         view: "histogram",
         metrics: ["tasks.pickup_time"],
       },
-      { chart: "histogram", view: "histogram", metrics: ["tasks.dev_time"] },
     ],
   },
   {
