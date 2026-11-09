@@ -10,6 +10,7 @@ import {
   compareGaps,
   formatGap,
   headerUnit,
+  rolesById,
   keysWithData,
   metricGroups,
   metricsRows,
@@ -275,5 +276,21 @@ describe("headerUnit", () => {
     ["no unit", "Commits", "integer", null, null],
   ] as const)("header unit for %s", (_case, label, format, unit, shown) => {
     expect(headerUnit(label, format, unit)).toBe(shown);
+  });
+});
+
+describe("rolesById", () => {
+  it("maps each person in the tree to their job title, skipping blanks", () => {
+    const tree = identityPerson("boss", { job_title: "Head of Engineering" }, [
+      identityPerson("a", { job_title: " " }),
+      identityPerson("b", { job_title: "Software Engineer" }),
+    ]);
+
+    expect(rolesById(tree)).toEqual(
+      new Map([
+        [pid("boss"), "Head of Engineering"],
+        [pid("b"), "Software Engineer"],
+      ]),
+    );
   });
 });

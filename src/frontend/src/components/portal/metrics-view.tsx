@@ -29,6 +29,7 @@ import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
   compareTeams,
+  rolesById,
   keysWithData,
   metricGroups,
   metricsRows,
@@ -274,6 +275,7 @@ function MetricsBody({
     () => new Set(pivot ? [normalizePersonId(pivot.person_id)] : []),
   );
   const teams = compareTeams(pivot);
+  const roles = rolesById(pivot);
   const allManagers = teams.map((team) => team.id);
   const allExpanded = allManagers.every((id) => expanded.has(id));
 
@@ -346,6 +348,7 @@ function MetricsBody({
             keys={columns}
             byKey={byKey}
             helpByKey={helpByKey}
+            roles={roles}
           />
         </div>
       ) : (
@@ -354,6 +357,7 @@ function MetricsBody({
           groups={metricGroups(columns)}
           byKey={byKey}
           helpByKey={helpByKey}
+          roles={roles}
           sort={sort}
           onSort={(key) => setSort((current) => nextSort(current, key))}
           onToggle={toggle}

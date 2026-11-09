@@ -33,6 +33,7 @@ export function MetricsTable({
   groups,
   byKey,
   helpByKey,
+  roles,
   sort,
   onSort,
   onToggle,
@@ -42,6 +43,7 @@ export function MetricsTable({
   groups: readonly MetricGroup[];
   byKey: ReadonlyMap<string, NormalizedMetricResult>;
   helpByKey: ReadonlyMap<string, MetricHelpText>;
+  roles: ReadonlyMap<string, string>;
   sort: MetricsSort | null;
   onSort: (metricKey: string) => void;
   onToggle: (entityId: string) => void;
@@ -160,6 +162,11 @@ export function MetricsTable({
                   >
                     {row.displayName}
                   </button>
+                  {roles.get(row.entityId) ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {roles.get(row.entityId)}
+                    </span>
+                  ) : null}
                   <Link
                     to="/ic/$person/personal"
                     params={{ person: row.entityId }}

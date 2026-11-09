@@ -19,11 +19,13 @@ export function MetricsCompareTable({
   keys,
   byKey,
   helpByKey,
+  roles,
 }: {
   people: readonly MembersGridMember[];
   keys: readonly string[];
   byKey: ReadonlyMap<string, NormalizedMetricResult>;
   helpByKey: ReadonlyMap<string, MetricHelpText>;
+  roles: ReadonlyMap<string, string>;
 }) {
   return (
     <div className="max-h-[75svh] overflow-auto">
@@ -51,6 +53,11 @@ export function MetricsCompareTable({
                   {person.displayName}
                 </Link>
                 <span aria-hidden className={GAP_SLOT} />
+                {roles.get(person.entityId) ? (
+                  <span className="block pe-16 text-xs font-normal text-muted-foreground">
+                    {roles.get(person.entityId)}
+                  </span>
+                ) : null}
               </th>
             ))}
           </tr>

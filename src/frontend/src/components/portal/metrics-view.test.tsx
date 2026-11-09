@@ -281,6 +281,23 @@ describe("MetricsView", () => {
     );
   });
 
+  it("shows each person's role beside their name, in the table and in a comparison", async () => {
+    mocks.roster = peopleFromIdentityTree(
+      identityPerson("boss", {}, [
+        identityPerson("a", {}, [identityPerson("c")]),
+        identityPerson("b", { job_title: "Software Engineer" }),
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    expect(within(screen.getByText("Software Engineer").closest("tr")!).getByRole("button", { name: "b" })).toBeInTheDocument();
+
+    await compare(user, ["a", "b"]);
+
+    expect(screen.getByRole("columnheader", { name: /^b/ })).toHaveTextContent("Software Engineer");
+  });
+
   it("asks for every person-level metric, in family order", () => {
     render(<MetricsView />);
 
