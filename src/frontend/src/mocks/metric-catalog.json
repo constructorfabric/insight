@@ -1085,18 +1085,6 @@
     "computation": "sum"
   },
   {
-    "metric_key": "tasks.dev_time",
-    "label": "Development time",
-    "short_label": "Dev time",
-    "description": "Time an issue spends in active development",
-    "explanation": "Median time closed issues spent in in-progress statuses, from first pickup to close.",
-    "unit": "h",
-    "format": "decimal",
-    "direction": "lower_is_better",
-    "entity_type": "person",
-    "computation": "median"
-  },
-  {
     "metric_key": "tasks.resolution_time",
     "label": "Time to resolution",
     "short_label": "Resolution",
