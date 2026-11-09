@@ -13,6 +13,8 @@ authenticator's own suite the same way, over its own tables.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -404,3 +406,38 @@ def test_the_ledger_merges_rather_than_overwrites(tmp_path: Any) -> None:
     merged = coverage.by_label(coverage.load_ledger(target))
     assert merged["GET /api/analytics/v1/queries"] == {200, 404}
     assert merged["GET /api/identity/v1/subchart"] == {200}
+
+
+@pytest.mark.parametrize("prefix", ["/api/analytics", "/api/connectors"])
+@pytest.mark.parametrize("observed", [False, True])
+def test_each_service_contract_requires_its_own_observations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], prefix: str, observed: bool
+) -> None:
+    analytics = tmp_path / "analytics.json"
+    analytics.write_text(json.dumps(_spec({"/v1/queries": {"get": [200]}})))
+    connectors = tmp_path / "connectors.json"
+    connectors.write_text(json.dumps(_spec({"/v1/connector-health": {"get": [200]}})))
+    catalogue = tmp_path / "catalogue.json"
+    catalogue.write_text("[]")
+    rows = _ledger({("GET", "/api/analytics/v1/queries"): [200]})
+    if observed:
+        rows += _ledger({("GET", f"{prefix}/v1/connector-health"): [200]})
+    ledger = tmp_path / "observed.json"
+    ledger.write_text(json.dumps(rows))
+
+    status = coverage.main(
+        [
+            "--observed",
+            str(ledger),
+            "--catalogue",
+            str(catalogue),
+            "--spec",
+            str(analytics),
+            "--connectors-spec",
+            str(connectors),
+        ]
+    )
+
+    covered = observed and prefix == "/api/connectors"
+    assert status == (0 if covered else 1)
+    assert ("MISSING: GET /v1/connector-health" in capsys.readouterr().out) == (not covered)

@@ -16,10 +16,10 @@ stand) reads that ledger back and answers two questions:
      the admin grant (403). So every operation has an observation, and one whose
      only observed codes are those was swept and never tested. Counting it as
      covered is precisely the mistake this gate exists to prevent.
-  2. Did every status code the analytics CONTRACT declares get observed?
+  2. Did every status code the analytics and connectors CONTRACTS declare get observed?
 
-Only analytics is gated on its spec, though identity emits its own document
-and CI drift-gates it beside analytics. What blocks (2) for identity is the
+Analytics and connectors are gated on their specs, though identity emits its own
+document and CI drift-gates it too. What blocks (2) for identity is the
 other side of the comparison: every status code the
 document declares has to be OBSERVED, and `.standard_errors` stamps the full
 error set onto every operation. Identity stays held to (1) until the suite
@@ -550,7 +550,7 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
     ]
     if spec is not None:
         lines.append(
-            f"Analytics contract: **{spec.coverage_pct}%** of coverable status codes "
+            f"Analytics and connectors contracts: **{spec.coverage_pct}%** of coverable status codes "
             f"({spec.total_covered}/{spec.total_coverable})."
         )
     lines += [
@@ -605,6 +605,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--catalogue", required=True, help="JSON list of catalogued operations")
     parser.add_argument("--spec", help="committed analytics OpenAPI document")
     parser.add_argument("--prefix", default="/api/analytics", help="gateway prefix for --spec")
+    parser.add_argument("--connectors-spec", help="committed connectors OpenAPI document")
     args = parser.parse_args(argv)
 
     ledger_path = Path(args.observed)
@@ -633,9 +634,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     spec_report: SpecReport | None = None
-    if args.spec:
-        spec_ops = spec_operations(json.loads(Path(args.spec).read_text(encoding="utf-8")))
-        validated, unmatched = match_against_spec(rows, args.prefix, spec_ops)
+    spec_ops: dict[str, list[int]] = {}
+    validated: dict[str, set[int]] = {}
+    unmatched: list[dict[str, Any]] = []
+    for spec_path, prefix in (
+        (args.spec, args.prefix),
+        (args.connectors_spec, "/api/connectors"),
+    ):
+        if spec_path is None:
+            continue
+        operations = spec_operations(json.loads(Path(spec_path).read_text(encoding="utf-8")))
+        matched, missed = match_against_spec(rows, prefix, operations)
+        spec_ops.update(operations)
+        validated.update(matched)
+        unmatched.extend(missed)
+    if args.spec or args.connectors_spec:
         spec_report = SpecReport(spec_ops=spec_ops, validated=validated, unmatched=unmatched)
 
     sys.stdout.write(render(catalogue, spec_report))

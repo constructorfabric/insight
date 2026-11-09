@@ -33,11 +33,11 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 from __future__ import annotations
 
 import pytest
-from insight_stand import ApiClient, PersonaSession, analytics_path
+from insight_stand import ApiClient, PersonaSession, connectors_path
 
 from ..schemas import IngestionIntensityResponse, ProblemDocument
 
-INTENSITY = analytics_path("/v1/ingestion/intensity")
+INTENSITY = connectors_path("/v1/ingestion/intensity")
 
 
 @pytest.mark.security

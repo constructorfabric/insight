@@ -1,7 +1,7 @@
 """Every operation the stand serves behind the gateway, named once.
 
 Read from the route tables in
-`src/backend/services/{analytics,identity-resolution}/src/api/`, not from the
+`src/backend/services/{analytics,connectors,identity-resolution}/src/api/`, not from the
 committed OpenAPI documents: the catalogue must list what the gateway ROUTES,
 which includes the `/internal/*` S2S pair that is deliberately outside the
 generated document.
@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from insight_stand import analytics_path, identity_path
+from insight_stand import analytics_path, connectors_path, identity_path
 
 # Concrete stand-ins for path parameters. The 401 sweep runs before any
 # authentication, so the gateway never reaches a handler and these are never
@@ -78,7 +78,7 @@ class Operation:
 
     method: str
     path: str
-    #: `analytics` | `identity` — which service answers, per routes.yaml.
+    #: `analytics` | `connectors` | `identity` — which service answers, per routes.yaml.
     service: str
 
     @property
@@ -136,19 +136,10 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/usage/people"),
     _a("GET", "/v1/usage/pages"),
     _a("GET", "/v1/usage/actions"),
-    # Ingestion intensity (ops). `.authenticated()` at the edge; the admin gate
-    # is inside the handler, so it is invisible here and asserted in
-    # test_ingestion.py.
-    _a("GET", "/v1/ingestion/intensity"),
     # Product feedback. The listing's admin gate is inside the handler, so it is
     # invisible here and asserted in test_feedback.py.
     _a("POST", "/v1/feedback"),
     _a("GET", "/v1/feedback"),
-    # Connector health. Both are `.authenticated()` at the edge with the
-    # operator gate inside the handler, so the refusal is invisible here and
-    # asserted in test_connector_health.py.
-    _a("GET", "/v1/connector-health"),
-    _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )
 
 #: identity-resolution — 32 operations. `/health` and `/healthz` are the host
@@ -195,7 +186,24 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/visible-persons"),
 )
 
-ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_OPERATIONS
+CONNECTORS_OPERATIONS: Final[tuple[Operation, ...]] = tuple(
+    Operation(method="GET", path=connectors_path(suffix), service="connectors")
+    for suffix in (
+        # Connector health. Both are `.authenticated()` at the edge with the
+        # operator gate inside the handler, so the refusal is invisible here and
+        # asserted in test_connector_health.py.
+        "/v1/connector-health",
+        f"/v1/connector-health/{SOME_CONNECTOR}/syncs",
+        # Ingestion intensity (ops). `.authenticated()` at the edge; the admin gate
+        # is inside the handler, so it is invisible here and asserted in
+        # test_ingestion.py.
+        "/v1/ingestion/intensity",
+    )
+)
+
+ALL_OPERATIONS: Final[tuple[Operation, ...]] = (
+    ANALYTICS_OPERATIONS + CONNECTORS_OPERATIONS + IDENTITY_OPERATIONS
+)
 
 #: Suffixes of the identity operations behind `require_admin`, enumerated
 #: exactly — a substring rule would silently classify future routes (and

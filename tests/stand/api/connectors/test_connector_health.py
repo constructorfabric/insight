@@ -27,16 +27,16 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 from __future__ import annotations
 
 import pytest
-from insight_stand import PersonaSession, analytics_path
+from insight_stand import PersonaSession, connectors_path
 
 from ..operations import SOME_CONNECTOR
 from ..schemas import ConnectorHealthResponse, ProblemDocument, SyncHistoryResponse
 
-SUMMARY = analytics_path("/v1/connector-health")
+SUMMARY = connectors_path("/v1/connector-health")
 
 
 def _syncs(connector: str) -> str:
-    return analytics_path(f"/v1/connector-health/{connector}/syncs")
+    return connectors_path(f"/v1/connector-health/{connector}/syncs")
 
 
 @pytest.fixture(scope="module")
@@ -104,9 +104,7 @@ def test_an_unknown_connector_is_an_empty_window_not_an_error(
     connector that simply has not synced yet.
     """
     response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR))
-    assert response.status_code == 200, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 200, f"answered {response.status_code}: {response.text[:300]}"
     window = response.parse(SyncHistoryResponse)
     assert window.connector == SOME_CONNECTOR
     assert window.syncs == []
@@ -124,9 +122,7 @@ def test_a_name_the_route_cannot_parse_is_refused_as_a_bad_request(
     for a missing connector, the other tells them the link is wrong.
     """
     response = admin_operator_session.client.get(_syncs("Not_A_Name"))
-    assert response.status_code == 400, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 400, f"answered {response.status_code}: {response.text[:300]}"
     problem = response.parse(ProblemDocument)
     assert problem.status == 400
 
@@ -153,9 +149,7 @@ def test_half_an_instance_identity_is_refused_rather_than_widened(
     every installation's rows — and the answer would look right.
     """
     response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR), params=scope)
-    assert response.status_code == 400, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 400, f"answered {response.status_code}: {response.text[:300]}"
     problem = response.parse(ProblemDocument)
     assert problem.status == 400
     assert missing in response.text, (
@@ -176,9 +170,7 @@ def test_a_window_narrowed_to_one_installation_says_which(
     """
     scope = {"tenant_id": "example-tenant", "source_id": "example-main"}
     response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR), params=scope)
-    assert response.status_code == 200, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 200, f"answered {response.status_code}: {response.text[:300]}"
     window = response.parse(SyncHistoryResponse)
     assert window.connector == SOME_CONNECTOR
     assert window.tenant_id == scope["tenant_id"]
@@ -192,9 +184,7 @@ def test_an_unscoped_window_names_no_installation(
 ) -> None:
     """Asking about the connector rather than one of its installations."""
     response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR))
-    assert response.status_code == 200, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 200, f"answered {response.status_code}: {response.text[:300]}"
     window = response.parse(SyncHistoryResponse)
     assert window.tenant_id is None
     assert window.source_id is None
@@ -226,9 +216,7 @@ def test_a_realm_admin_without_the_operator_row_is_still_refused(
     realm role would pass every other test here.
     """
     response = realm_admin_session.client.get(SUMMARY)
-    assert response.status_code == 403, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 403, f"answered {response.status_code}: {response.text[:300]}"
 
 
 @pytest.mark.requires_seed("other_tenant_lead")
@@ -239,6 +227,4 @@ def test_a_caller_from_another_tenant_is_refused(
     """The surface is instance-wide, so there is no narrowed view to fall back
     to — a caller outside this install's operator role gets nothing."""
     response = other_tenant_session.client.get(SUMMARY)
-    assert response.status_code == 403, (
-        f"answered {response.status_code}: {response.text[:300]}"
-    )
+    assert response.status_code == 403, f"answered {response.status_code}: {response.text[:300]}"

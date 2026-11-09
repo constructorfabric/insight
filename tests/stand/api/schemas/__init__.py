@@ -7,7 +7,7 @@ Two halves, and a reader should be able to tell which one they are in:
 * `identity_internal.py` — hand-written from the Rust DTO, because the two
   `/internal/persons/*` S2S routes are registered raw and stay out of the
   generated document by design.
-* `analytics.py`, `authenticator.py`, `identity.py`, `previews.py` — GENERATED
+* `analytics.py`, `authenticator.py`, `connectors.py`, `identity.py`, `previews.py` — GENERATED
   from documents
   the services emit themselves (`cargo run -p <service> -- openapi`) and each
   service's test suite drift-gates, so the models describe
@@ -42,7 +42,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .analytics import (
-    ConnectorHealthResponse,
     CustomMetric,
     CustomMetricInput,
     CustomMetricListResponse,
@@ -51,7 +50,6 @@ from .analytics import (
     FeedbackListResponse,
     ImportCustomMetricsRequest,
     ImportCustomMetricsResponse,
-    IngestionIntensityResponse,
     MetricDefinitionListResponse,
     MetricResultsResponse,
     NotReadyReason,
@@ -59,7 +57,6 @@ from .analytics import (
     RunResponse,
     SavedQuery,
     SavedQueryListResponse,
-    SyncHistoryResponse,
     UsageActionsResponse,
     UsageConfigResponse,
     UsagePage,
@@ -86,6 +83,7 @@ from .common import (
     ListResponse,
     ProblemDocument,
 )
+from .connectors import ConnectorHealthResponse, IngestionIntensityResponse, SyncHistoryResponse
 from .identity import (
     AccountBindingResponse,
     AccountSearchResponse,
