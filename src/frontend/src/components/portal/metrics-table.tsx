@@ -54,7 +54,7 @@ export function MetricsTable({
 
   return (
     <div className="max-h-[calc(100svh-13rem)] overflow-auto rounded-lg border bg-card">
-      <table className="border-separate border-spacing-0 text-sm">
+      <table className="w-full border-separate border-spacing-0 text-sm">
         <caption className="sr-only">People × metrics</caption>
         <thead>
           <tr className={GROUP_ROW_HEIGHT}>
