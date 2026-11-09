@@ -1773,6 +1773,7 @@ reconcile_run() {
   # a broken recorder costs the page its freshness and costs reconciliation
   # nothing.
   sweep_run
+  transform_plan_run "${opt_dry_run}"
 
   log_run_summary "${_RECONCILE_CHANGED}" "${_RECONCILE_FAILED}"
   log_close

@@ -75,6 +75,38 @@ destination already needs.
 
 Spec: `docs/components/backend/analytics/specs/connector-health`.
 
+## The transform planner
+
+After connector work and the sync-history sweep, each reconcile pass runs
+`python3 -m transform_plan`. It parses the image's dbt project with a temporary
+profile from `scripts/dbt_profiles.py`, then compares effective
+`meta.transform_version` values with the latest rows in
+`ingestion_history.transform_versions`. The table is append-only, migration-owned,
+and has no TTL: `argMax(transform_version, applied_at)` selects each model's
+applied version. Rows hold the dbt unique ID, resolved database/schema/alias,
+version, optional release, application time and application identity.
+
+An empty table receives one `applied_by=baseline` row per deployed model, with
+no rebuild planned. The release comes from `INSIGHT_VERSION`, set to
+`.Chart.Version` by the reconcile container; an unset variable is recorded as
+NULL. Subsequent passes report version differences in
+either direction, new and removed models, and the changed/new models plus their
+model descendants. Removed models are reported only. Models whose effective
+`full_refresh` is false are listed separately as incremental-only.
+
+The plan's connector locks follow model parents to bronze sources, then use
+the declaring connector directory's descriptor `name`. Other sources, including
+`config`, require no lock. The planner trusts dbt's graph: reads hidden behind
+`adapter.get_relation` are not represented.
+
+The shared Python logger emits one `transform.planned` event with names and
+counts for `baseline`, `changed`, `new`, `removed`, `rebuild`, `incremental_only`
+and `connectors`, correlated by `RECONCILE_RUN_ID`. Dry runs report without
+writing a baseline. Planning reuses the sweep's ClickHouse transport and existing
+`RECONCILE_DEST_CLICKHOUSE_*` credentials and consistency settings. Failures emit
+`transform.failed` and an error from the shell wrapper, and never fail reconcile.
+This planner submits no Workflow, runs no `dbt run`, and writes only a baseline.
+
 ## Environment variables
 
 | Var | Default | Purpose |
