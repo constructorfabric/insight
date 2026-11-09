@@ -11,27 +11,43 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
-import { Route as PortalRouteImport } from './routes/portal'
-import { Route as IcPersonRouteImport } from './routes/ic.$person'
-import { Route as PortalIndexRouteImport } from './routes/portal.index'
-import { Route as PortalCustomRouteImport } from './routes/portal.custom'
-import { Route as IcPersonIndexRouteImport } from './routes/ic.$person.index'
-import { Route as IcPersonPersonalRouteImport } from './routes/ic.$person.personal'
-import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
-import { Route as PortalCustomIndexRouteImport } from './routes/portal.custom.index'
-import { Route as PortalCustomNameRouteImport } from './routes/portal.custom.$name'
-import { Route as PortalCustomAlertsIndexRouteImport } from './routes/portal.custom.alerts.index'
-import { Route as PortalCustomAlertsNewRouteImport } from './routes/portal.custom.alerts.new'
-import { Route as PortalCustomDatasetsIndexRouteImport } from './routes/portal.custom.datasets.index'
-import { Route as PortalCustomDatasetsNameRouteImport } from './routes/portal.custom.datasets.$name'
-import { Route as PortalCustomMetricsIndexRouteImport } from './routes/portal.custom.metrics.index'
-import { Route as PortalCustomMetricsNameRouteImport } from './routes/portal.custom.metrics.$name'
-import { Route as PortalCustomNewKindRouteImport } from './routes/portal.custom.new.$kind'
-import { Route as PortalCustomWidgetsIndexRouteImport } from './routes/portal.custom.widgets.index'
-import { Route as PortalCustomWidgetsNameRouteImport } from './routes/portal.custom.widgets.$name'
-import { Route as PortalCustomAlertsIdIndexRouteImport } from './routes/portal.custom.alerts.$id.index'
-import { Route as PortalCustomAlertsIdEditRouteImport } from './routes/portal.custom.alerts.$id.edit'
-import { Route as PortalCustomEditKindNameRouteImport } from './routes/portal.custom.edit.$kind.$name'
+import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as ShellDashboardsRouteImport } from './routes/_shell.dashboards'
+import { Route as ShellDashboardsIndexRouteImport } from './routes/_shell.dashboards.index'
+import { Route as ShellDashboardsNameRouteImport } from './routes/_shell.dashboards.$name'
+import { Route as ShellExploreIndexRouteImport } from './routes/_shell.explore.index'
+import { Route as ShellHomeIndexRouteImport } from './routes/_shell.home.index'
+import { Route as ShellHomeViewRouteImport } from './routes/_shell.home.$view'
+import { Route as ShellManageIndexRouteImport } from './routes/_shell.manage.index'
+import { Route as ShellManageSurfaceRouteImport } from './routes/_shell.manage.$surface'
+import { Route as ShellPeopleIndexRouteImport } from './routes/_shell.people.index'
+import { Route as ShellPeoplePersonRouteImport } from './routes/_shell.people.$person'
+import { Route as ShellReportsIndexRouteImport } from './routes/_shell.reports.index'
+import { Route as ShellReportsViewRouteImport } from './routes/_shell.reports.$view'
+import { Route as ShellDashboardsAlertsIndexRouteImport } from './routes/_shell.dashboards.alerts.index'
+import { Route as ShellDashboardsAlertsNewRouteImport } from './routes/_shell.dashboards.alerts.new'
+import { Route as ShellDashboardsDatasetsIndexRouteImport } from './routes/_shell.dashboards.datasets.index'
+import { Route as ShellDashboardsDatasetsNameRouteImport } from './routes/_shell.dashboards.datasets.$name'
+import { Route as ShellDashboardsMetricsIndexRouteImport } from './routes/_shell.dashboards.metrics.index'
+import { Route as ShellDashboardsMetricsNameRouteImport } from './routes/_shell.dashboards.metrics.$name'
+import { Route as ShellDashboardsNewKindRouteImport } from './routes/_shell.dashboards.new.$kind'
+import { Route as ShellDashboardsWidgetsIndexRouteImport } from './routes/_shell.dashboards.widgets.index'
+import { Route as ShellDashboardsWidgetsNameRouteImport } from './routes/_shell.dashboards.widgets.$name'
+import { Route as ShellExploreDirIndexRouteImport } from './routes/_shell.explore.$dir.index'
+import { Route as ShellExploreDirLensRouteImport } from './routes/_shell.explore.$dir.$lens'
+import { Route as ShellExploreAiIndexRouteImport } from './routes/_shell.explore.ai.index'
+import { Route as ShellExploreAiViewRouteImport } from './routes/_shell.explore.ai.$view'
+import { Route as ShellManageIdentitiesIndexRouteImport } from './routes/_shell.manage.identities.index'
+import { Route as ShellManageIdentitiesModeRouteImport } from './routes/_shell.manage.identities.$mode'
+import { Route as ShellManageIngestionIndexRouteImport } from './routes/_shell.manage.ingestion.index'
+import { Route as ShellManageIngestionConnectorRouteImport } from './routes/_shell.manage.ingestion.$connector'
+import { Route as ShellPeoplePersonIndexRouteImport } from './routes/_shell.people.$person.index'
+import { Route as ShellPeoplePersonSectionRouteImport } from './routes/_shell.people.$person.$section'
+import { Route as ShellDashboardsAlertsIdIndexRouteImport } from './routes/_shell.dashboards.alerts.$id.index'
+import { Route as ShellDashboardsAlertsIdEditRouteImport } from './routes/_shell.dashboards.alerts.$id.edit'
+import { Route as ShellDashboardsEditKindNameRouteImport } from './routes/_shell.dashboards.edit.$kind.$name'
+import { Route as ShellPeoplePersonTeamIndexRouteImport } from './routes/_shell.people.$person.team.index'
+import { Route as ShellPeoplePersonTeamViewRouteImport } from './routes/_shell.people.$person.team.$view'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -43,272 +59,455 @@ const SplatRoute = SplatRouteImport.update({
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PortalRoute = PortalRouteImport.update({
-  id: '/portal',
-  path: '/portal',
+const ShellRoute = ShellRouteImport.update({
+  id: '/_shell',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IcPersonRoute = IcPersonRouteImport.update({
-  id: '/ic/$person',
-  path: '/ic/$person',
-  getParentRoute: () => rootRouteImport,
+const ShellDashboardsRoute = ShellDashboardsRouteImport.update({
+  id: '/dashboards',
+  path: '/dashboards',
+  getParentRoute: () => ShellRoute,
 } as any)
-const PortalIndexRoute = PortalIndexRouteImport.update({
+const ShellDashboardsIndexRoute = ShellDashboardsIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => PortalRoute,
+  getParentRoute: () => ShellDashboardsRoute,
 } as any)
-const PortalCustomRoute = PortalCustomRouteImport.update({
-  id: '/custom',
-  path: '/custom',
-  getParentRoute: () => PortalRoute,
-} as any)
-const IcPersonIndexRoute = IcPersonIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => IcPersonRoute,
-} as any)
-const IcPersonPersonalRoute = IcPersonPersonalRouteImport.update({
-  id: '/personal',
-  path: '/personal',
-  getParentRoute: () => IcPersonRoute,
-} as any)
-const IcPersonTeamRoute = IcPersonTeamRouteImport.update({
-  id: '/team',
-  path: '/team',
-  getParentRoute: () => IcPersonRoute,
-} as any)
-const PortalCustomIndexRoute = PortalCustomIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => PortalCustomRoute,
-} as any)
-const PortalCustomNameRoute = PortalCustomNameRouteImport.update({
+const ShellDashboardsNameRoute = ShellDashboardsNameRouteImport.update({
   id: '/$name',
   path: '/$name',
-  getParentRoute: () => PortalCustomRoute,
+  getParentRoute: () => ShellDashboardsRoute,
 } as any)
-const PortalCustomAlertsIndexRoute = PortalCustomAlertsIndexRouteImport.update({
-  id: '/alerts/',
-  path: '/alerts/',
-  getParentRoute: () => PortalCustomRoute,
+const ShellExploreIndexRoute = ShellExploreIndexRouteImport.update({
+  id: '/explore/',
+  path: '/explore/',
+  getParentRoute: () => ShellRoute,
 } as any)
-const PortalCustomAlertsNewRoute = PortalCustomAlertsNewRouteImport.update({
-  id: '/alerts/new',
-  path: '/alerts/new',
-  getParentRoute: () => PortalCustomRoute,
+const ShellHomeIndexRoute = ShellHomeIndexRouteImport.update({
+  id: '/home/',
+  path: '/home/',
+  getParentRoute: () => ShellRoute,
 } as any)
-const PortalCustomDatasetsIndexRoute =
-  PortalCustomDatasetsIndexRouteImport.update({
+const ShellHomeViewRoute = ShellHomeViewRouteImport.update({
+  id: '/home/$view',
+  path: '/home/$view',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellManageIndexRoute = ShellManageIndexRouteImport.update({
+  id: '/manage/',
+  path: '/manage/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellManageSurfaceRoute = ShellManageSurfaceRouteImport.update({
+  id: '/manage/$surface',
+  path: '/manage/$surface',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellPeopleIndexRoute = ShellPeopleIndexRouteImport.update({
+  id: '/people/',
+  path: '/people/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellPeoplePersonRoute = ShellPeoplePersonRouteImport.update({
+  id: '/people/$person',
+  path: '/people/$person',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellReportsIndexRoute = ShellReportsIndexRouteImport.update({
+  id: '/reports/',
+  path: '/reports/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellReportsViewRoute = ShellReportsViewRouteImport.update({
+  id: '/reports/$view',
+  path: '/reports/$view',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellDashboardsAlertsIndexRoute =
+  ShellDashboardsAlertsIndexRouteImport.update({
+    id: '/alerts/',
+    path: '/alerts/',
+    getParentRoute: () => ShellDashboardsRoute,
+  } as any)
+const ShellDashboardsAlertsNewRoute =
+  ShellDashboardsAlertsNewRouteImport.update({
+    id: '/alerts/new',
+    path: '/alerts/new',
+    getParentRoute: () => ShellDashboardsRoute,
+  } as any)
+const ShellDashboardsDatasetsIndexRoute =
+  ShellDashboardsDatasetsIndexRouteImport.update({
     id: '/datasets/',
     path: '/datasets/',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
   } as any)
-const PortalCustomDatasetsNameRoute =
-  PortalCustomDatasetsNameRouteImport.update({
+const ShellDashboardsDatasetsNameRoute =
+  ShellDashboardsDatasetsNameRouteImport.update({
     id: '/datasets/$name',
     path: '/datasets/$name',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
   } as any)
-const PortalCustomMetricsIndexRoute =
-  PortalCustomMetricsIndexRouteImport.update({
+const ShellDashboardsMetricsIndexRoute =
+  ShellDashboardsMetricsIndexRouteImport.update({
     id: '/metrics/',
     path: '/metrics/',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
   } as any)
-const PortalCustomMetricsNameRoute = PortalCustomMetricsNameRouteImport.update({
-  id: '/metrics/$name',
-  path: '/metrics/$name',
-  getParentRoute: () => PortalCustomRoute,
-} as any)
-const PortalCustomNewKindRoute = PortalCustomNewKindRouteImport.update({
+const ShellDashboardsMetricsNameRoute =
+  ShellDashboardsMetricsNameRouteImport.update({
+    id: '/metrics/$name',
+    path: '/metrics/$name',
+    getParentRoute: () => ShellDashboardsRoute,
+  } as any)
+const ShellDashboardsNewKindRoute = ShellDashboardsNewKindRouteImport.update({
   id: '/new/$kind',
   path: '/new/$kind',
-  getParentRoute: () => PortalCustomRoute,
+  getParentRoute: () => ShellDashboardsRoute,
 } as any)
-const PortalCustomWidgetsIndexRoute =
-  PortalCustomWidgetsIndexRouteImport.update({
+const ShellDashboardsWidgetsIndexRoute =
+  ShellDashboardsWidgetsIndexRouteImport.update({
     id: '/widgets/',
     path: '/widgets/',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
   } as any)
-const PortalCustomWidgetsNameRoute = PortalCustomWidgetsNameRouteImport.update({
-  id: '/widgets/$name',
-  path: '/widgets/$name',
-  getParentRoute: () => PortalCustomRoute,
+const ShellDashboardsWidgetsNameRoute =
+  ShellDashboardsWidgetsNameRouteImport.update({
+    id: '/widgets/$name',
+    path: '/widgets/$name',
+    getParentRoute: () => ShellDashboardsRoute,
+  } as any)
+const ShellExploreDirIndexRoute = ShellExploreDirIndexRouteImport.update({
+  id: '/explore/$dir/',
+  path: '/explore/$dir/',
+  getParentRoute: () => ShellRoute,
 } as any)
-const PortalCustomAlertsIdIndexRoute =
-  PortalCustomAlertsIdIndexRouteImport.update({
+const ShellExploreDirLensRoute = ShellExploreDirLensRouteImport.update({
+  id: '/explore/$dir/$lens',
+  path: '/explore/$dir/$lens',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellExploreAiIndexRoute = ShellExploreAiIndexRouteImport.update({
+  id: '/explore/ai/',
+  path: '/explore/ai/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellExploreAiViewRoute = ShellExploreAiViewRouteImport.update({
+  id: '/explore/ai/$view',
+  path: '/explore/ai/$view',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellManageIdentitiesIndexRoute =
+  ShellManageIdentitiesIndexRouteImport.update({
+    id: '/manage/identities/',
+    path: '/manage/identities/',
+    getParentRoute: () => ShellRoute,
+  } as any)
+const ShellManageIdentitiesModeRoute =
+  ShellManageIdentitiesModeRouteImport.update({
+    id: '/manage/identities/$mode',
+    path: '/manage/identities/$mode',
+    getParentRoute: () => ShellRoute,
+  } as any)
+const ShellManageIngestionIndexRoute =
+  ShellManageIngestionIndexRouteImport.update({
+    id: '/manage/ingestion/',
+    path: '/manage/ingestion/',
+    getParentRoute: () => ShellRoute,
+  } as any)
+const ShellManageIngestionConnectorRoute =
+  ShellManageIngestionConnectorRouteImport.update({
+    id: '/manage/ingestion/$connector',
+    path: '/manage/ingestion/$connector',
+    getParentRoute: () => ShellRoute,
+  } as any)
+const ShellPeoplePersonIndexRoute = ShellPeoplePersonIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShellPeoplePersonRoute,
+} as any)
+const ShellPeoplePersonSectionRoute =
+  ShellPeoplePersonSectionRouteImport.update({
+    id: '/$section',
+    path: '/$section',
+    getParentRoute: () => ShellPeoplePersonRoute,
+  } as any)
+const ShellDashboardsAlertsIdIndexRoute =
+  ShellDashboardsAlertsIdIndexRouteImport.update({
     id: '/alerts/$id/',
     path: '/alerts/$id/',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
   } as any)
-const PortalCustomAlertsIdEditRoute =
-  PortalCustomAlertsIdEditRouteImport.update({
+const ShellDashboardsAlertsIdEditRoute =
+  ShellDashboardsAlertsIdEditRouteImport.update({
     id: '/alerts/$id/edit',
     path: '/alerts/$id/edit',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
   } as any)
-const PortalCustomEditKindNameRoute =
-  PortalCustomEditKindNameRouteImport.update({
+const ShellDashboardsEditKindNameRoute =
+  ShellDashboardsEditKindNameRouteImport.update({
     id: '/edit/$kind/$name',
     path: '/edit/$kind/$name',
-    getParentRoute: () => PortalCustomRoute,
+    getParentRoute: () => ShellDashboardsRoute,
+  } as any)
+const ShellPeoplePersonTeamIndexRoute =
+  ShellPeoplePersonTeamIndexRouteImport.update({
+    id: '/team/',
+    path: '/team/',
+    getParentRoute: () => ShellPeoplePersonRoute,
+  } as any)
+const ShellPeoplePersonTeamViewRoute =
+  ShellPeoplePersonTeamViewRouteImport.update({
+    id: '/team/$view',
+    path: '/team/$view',
+    getParentRoute: () => ShellPeoplePersonRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/portal': typeof PortalRouteWithChildren
-  '/ic/$person': typeof IcPersonRouteWithChildren
-  '/portal/custom': typeof PortalCustomRouteWithChildren
-  '/portal/': typeof PortalIndexRoute
-  '/ic/$person/personal': typeof IcPersonPersonalRoute
-  '/ic/$person/team': typeof IcPersonTeamRoute
-  '/portal/custom/$name': typeof PortalCustomNameRoute
-  '/ic/$person/': typeof IcPersonIndexRoute
-  '/portal/custom/': typeof PortalCustomIndexRoute
-  '/portal/custom/alerts/new': typeof PortalCustomAlertsNewRoute
-  '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
-  '/portal/custom/metrics/$name': typeof PortalCustomMetricsNameRoute
-  '/portal/custom/new/$kind': typeof PortalCustomNewKindRoute
-  '/portal/custom/widgets/$name': typeof PortalCustomWidgetsNameRoute
-  '/portal/custom/alerts/': typeof PortalCustomAlertsIndexRoute
-  '/portal/custom/datasets/': typeof PortalCustomDatasetsIndexRoute
-  '/portal/custom/metrics/': typeof PortalCustomMetricsIndexRoute
-  '/portal/custom/widgets/': typeof PortalCustomWidgetsIndexRoute
-  '/portal/custom/alerts/$id/edit': typeof PortalCustomAlertsIdEditRoute
-  '/portal/custom/edit/$kind/$name': typeof PortalCustomEditKindNameRoute
-  '/portal/custom/alerts/$id/': typeof PortalCustomAlertsIdIndexRoute
+  '/dashboards': typeof ShellDashboardsRouteWithChildren
+  '/dashboards/$name': typeof ShellDashboardsNameRoute
+  '/home/$view': typeof ShellHomeViewRoute
+  '/manage/$surface': typeof ShellManageSurfaceRoute
+  '/people/$person': typeof ShellPeoplePersonRouteWithChildren
+  '/reports/$view': typeof ShellReportsViewRoute
+  '/dashboards/': typeof ShellDashboardsIndexRoute
+  '/explore/': typeof ShellExploreIndexRoute
+  '/home/': typeof ShellHomeIndexRoute
+  '/manage/': typeof ShellManageIndexRoute
+  '/people/': typeof ShellPeopleIndexRoute
+  '/reports/': typeof ShellReportsIndexRoute
+  '/dashboards/alerts/new': typeof ShellDashboardsAlertsNewRoute
+  '/dashboards/datasets/$name': typeof ShellDashboardsDatasetsNameRoute
+  '/dashboards/metrics/$name': typeof ShellDashboardsMetricsNameRoute
+  '/dashboards/new/$kind': typeof ShellDashboardsNewKindRoute
+  '/dashboards/widgets/$name': typeof ShellDashboardsWidgetsNameRoute
+  '/explore/$dir/$lens': typeof ShellExploreDirLensRoute
+  '/explore/ai/$view': typeof ShellExploreAiViewRoute
+  '/manage/identities/$mode': typeof ShellManageIdentitiesModeRoute
+  '/manage/ingestion/$connector': typeof ShellManageIngestionConnectorRoute
+  '/people/$person/$section': typeof ShellPeoplePersonSectionRoute
+  '/dashboards/alerts/': typeof ShellDashboardsAlertsIndexRoute
+  '/dashboards/datasets/': typeof ShellDashboardsDatasetsIndexRoute
+  '/dashboards/metrics/': typeof ShellDashboardsMetricsIndexRoute
+  '/dashboards/widgets/': typeof ShellDashboardsWidgetsIndexRoute
+  '/explore/$dir/': typeof ShellExploreDirIndexRoute
+  '/explore/ai/': typeof ShellExploreAiIndexRoute
+  '/manage/identities/': typeof ShellManageIdentitiesIndexRoute
+  '/manage/ingestion/': typeof ShellManageIngestionIndexRoute
+  '/people/$person/': typeof ShellPeoplePersonIndexRoute
+  '/dashboards/alerts/$id/edit': typeof ShellDashboardsAlertsIdEditRoute
+  '/dashboards/edit/$kind/$name': typeof ShellDashboardsEditKindNameRoute
+  '/people/$person/team/$view': typeof ShellPeoplePersonTeamViewRoute
+  '/dashboards/alerts/$id/': typeof ShellDashboardsAlertsIdIndexRoute
+  '/people/$person/team/': typeof ShellPeoplePersonTeamIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/portal': typeof PortalIndexRoute
-  '/ic/$person/personal': typeof IcPersonPersonalRoute
-  '/ic/$person/team': typeof IcPersonTeamRoute
-  '/portal/custom/$name': typeof PortalCustomNameRoute
-  '/ic/$person': typeof IcPersonIndexRoute
-  '/portal/custom': typeof PortalCustomIndexRoute
-  '/portal/custom/alerts/new': typeof PortalCustomAlertsNewRoute
-  '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
-  '/portal/custom/metrics/$name': typeof PortalCustomMetricsNameRoute
-  '/portal/custom/new/$kind': typeof PortalCustomNewKindRoute
-  '/portal/custom/widgets/$name': typeof PortalCustomWidgetsNameRoute
-  '/portal/custom/alerts': typeof PortalCustomAlertsIndexRoute
-  '/portal/custom/datasets': typeof PortalCustomDatasetsIndexRoute
-  '/portal/custom/metrics': typeof PortalCustomMetricsIndexRoute
-  '/portal/custom/widgets': typeof PortalCustomWidgetsIndexRoute
-  '/portal/custom/alerts/$id/edit': typeof PortalCustomAlertsIdEditRoute
-  '/portal/custom/edit/$kind/$name': typeof PortalCustomEditKindNameRoute
-  '/portal/custom/alerts/$id': typeof PortalCustomAlertsIdIndexRoute
+  '/dashboards/$name': typeof ShellDashboardsNameRoute
+  '/home/$view': typeof ShellHomeViewRoute
+  '/manage/$surface': typeof ShellManageSurfaceRoute
+  '/reports/$view': typeof ShellReportsViewRoute
+  '/dashboards': typeof ShellDashboardsIndexRoute
+  '/explore': typeof ShellExploreIndexRoute
+  '/home': typeof ShellHomeIndexRoute
+  '/manage': typeof ShellManageIndexRoute
+  '/people': typeof ShellPeopleIndexRoute
+  '/reports': typeof ShellReportsIndexRoute
+  '/dashboards/alerts/new': typeof ShellDashboardsAlertsNewRoute
+  '/dashboards/datasets/$name': typeof ShellDashboardsDatasetsNameRoute
+  '/dashboards/metrics/$name': typeof ShellDashboardsMetricsNameRoute
+  '/dashboards/new/$kind': typeof ShellDashboardsNewKindRoute
+  '/dashboards/widgets/$name': typeof ShellDashboardsWidgetsNameRoute
+  '/explore/$dir/$lens': typeof ShellExploreDirLensRoute
+  '/explore/ai/$view': typeof ShellExploreAiViewRoute
+  '/manage/identities/$mode': typeof ShellManageIdentitiesModeRoute
+  '/manage/ingestion/$connector': typeof ShellManageIngestionConnectorRoute
+  '/people/$person/$section': typeof ShellPeoplePersonSectionRoute
+  '/dashboards/alerts': typeof ShellDashboardsAlertsIndexRoute
+  '/dashboards/datasets': typeof ShellDashboardsDatasetsIndexRoute
+  '/dashboards/metrics': typeof ShellDashboardsMetricsIndexRoute
+  '/dashboards/widgets': typeof ShellDashboardsWidgetsIndexRoute
+  '/explore/$dir': typeof ShellExploreDirIndexRoute
+  '/explore/ai': typeof ShellExploreAiIndexRoute
+  '/manage/identities': typeof ShellManageIdentitiesIndexRoute
+  '/manage/ingestion': typeof ShellManageIngestionIndexRoute
+  '/people/$person': typeof ShellPeoplePersonIndexRoute
+  '/dashboards/alerts/$id/edit': typeof ShellDashboardsAlertsIdEditRoute
+  '/dashboards/edit/$kind/$name': typeof ShellDashboardsEditKindNameRoute
+  '/people/$person/team/$view': typeof ShellPeoplePersonTeamViewRoute
+  '/dashboards/alerts/$id': typeof ShellDashboardsAlertsIdIndexRoute
+  '/people/$person/team': typeof ShellPeoplePersonTeamIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/portal': typeof PortalRouteWithChildren
-  '/ic/$person': typeof IcPersonRouteWithChildren
-  '/portal/custom': typeof PortalCustomRouteWithChildren
-  '/portal/': typeof PortalIndexRoute
-  '/ic/$person/personal': typeof IcPersonPersonalRoute
-  '/ic/$person/team': typeof IcPersonTeamRoute
-  '/portal/custom/$name': typeof PortalCustomNameRoute
-  '/ic/$person/': typeof IcPersonIndexRoute
-  '/portal/custom/': typeof PortalCustomIndexRoute
-  '/portal/custom/alerts/new': typeof PortalCustomAlertsNewRoute
-  '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
-  '/portal/custom/metrics/$name': typeof PortalCustomMetricsNameRoute
-  '/portal/custom/new/$kind': typeof PortalCustomNewKindRoute
-  '/portal/custom/widgets/$name': typeof PortalCustomWidgetsNameRoute
-  '/portal/custom/alerts/': typeof PortalCustomAlertsIndexRoute
-  '/portal/custom/datasets/': typeof PortalCustomDatasetsIndexRoute
-  '/portal/custom/metrics/': typeof PortalCustomMetricsIndexRoute
-  '/portal/custom/widgets/': typeof PortalCustomWidgetsIndexRoute
-  '/portal/custom/alerts/$id/edit': typeof PortalCustomAlertsIdEditRoute
-  '/portal/custom/edit/$kind/$name': typeof PortalCustomEditKindNameRoute
-  '/portal/custom/alerts/$id/': typeof PortalCustomAlertsIdIndexRoute
+  '/_shell': typeof ShellRouteWithChildren
+  '/_shell/dashboards': typeof ShellDashboardsRouteWithChildren
+  '/_shell/dashboards/$name': typeof ShellDashboardsNameRoute
+  '/_shell/home/$view': typeof ShellHomeViewRoute
+  '/_shell/manage/$surface': typeof ShellManageSurfaceRoute
+  '/_shell/people/$person': typeof ShellPeoplePersonRouteWithChildren
+  '/_shell/reports/$view': typeof ShellReportsViewRoute
+  '/_shell/dashboards/': typeof ShellDashboardsIndexRoute
+  '/_shell/explore/': typeof ShellExploreIndexRoute
+  '/_shell/home/': typeof ShellHomeIndexRoute
+  '/_shell/manage/': typeof ShellManageIndexRoute
+  '/_shell/people/': typeof ShellPeopleIndexRoute
+  '/_shell/reports/': typeof ShellReportsIndexRoute
+  '/_shell/dashboards/alerts/new': typeof ShellDashboardsAlertsNewRoute
+  '/_shell/dashboards/datasets/$name': typeof ShellDashboardsDatasetsNameRoute
+  '/_shell/dashboards/metrics/$name': typeof ShellDashboardsMetricsNameRoute
+  '/_shell/dashboards/new/$kind': typeof ShellDashboardsNewKindRoute
+  '/_shell/dashboards/widgets/$name': typeof ShellDashboardsWidgetsNameRoute
+  '/_shell/explore/$dir/$lens': typeof ShellExploreDirLensRoute
+  '/_shell/explore/ai/$view': typeof ShellExploreAiViewRoute
+  '/_shell/manage/identities/$mode': typeof ShellManageIdentitiesModeRoute
+  '/_shell/manage/ingestion/$connector': typeof ShellManageIngestionConnectorRoute
+  '/_shell/people/$person/$section': typeof ShellPeoplePersonSectionRoute
+  '/_shell/dashboards/alerts/': typeof ShellDashboardsAlertsIndexRoute
+  '/_shell/dashboards/datasets/': typeof ShellDashboardsDatasetsIndexRoute
+  '/_shell/dashboards/metrics/': typeof ShellDashboardsMetricsIndexRoute
+  '/_shell/dashboards/widgets/': typeof ShellDashboardsWidgetsIndexRoute
+  '/_shell/explore/$dir/': typeof ShellExploreDirIndexRoute
+  '/_shell/explore/ai/': typeof ShellExploreAiIndexRoute
+  '/_shell/manage/identities/': typeof ShellManageIdentitiesIndexRoute
+  '/_shell/manage/ingestion/': typeof ShellManageIngestionIndexRoute
+  '/_shell/people/$person/': typeof ShellPeoplePersonIndexRoute
+  '/_shell/dashboards/alerts/$id/edit': typeof ShellDashboardsAlertsIdEditRoute
+  '/_shell/dashboards/edit/$kind/$name': typeof ShellDashboardsEditKindNameRoute
+  '/_shell/people/$person/team/$view': typeof ShellPeoplePersonTeamViewRoute
+  '/_shell/dashboards/alerts/$id/': typeof ShellDashboardsAlertsIdIndexRoute
+  '/_shell/people/$person/team/': typeof ShellPeoplePersonTeamIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/$'
-    | '/portal'
-    | '/ic/$person'
-    | '/portal/custom'
-    | '/portal/'
-    | '/ic/$person/personal'
-    | '/ic/$person/team'
-    | '/portal/custom/$name'
-    | '/ic/$person/'
-    | '/portal/custom/'
-    | '/portal/custom/alerts/new'
-    | '/portal/custom/datasets/$name'
-    | '/portal/custom/metrics/$name'
-    | '/portal/custom/new/$kind'
-    | '/portal/custom/widgets/$name'
-    | '/portal/custom/alerts/'
-    | '/portal/custom/datasets/'
-    | '/portal/custom/metrics/'
-    | '/portal/custom/widgets/'
-    | '/portal/custom/alerts/$id/edit'
-    | '/portal/custom/edit/$kind/$name'
-    | '/portal/custom/alerts/$id/'
+    | '/dashboards'
+    | '/dashboards/$name'
+    | '/home/$view'
+    | '/manage/$surface'
+    | '/people/$person'
+    | '/reports/$view'
+    | '/dashboards/'
+    | '/explore/'
+    | '/home/'
+    | '/manage/'
+    | '/people/'
+    | '/reports/'
+    | '/dashboards/alerts/new'
+    | '/dashboards/datasets/$name'
+    | '/dashboards/metrics/$name'
+    | '/dashboards/new/$kind'
+    | '/dashboards/widgets/$name'
+    | '/explore/$dir/$lens'
+    | '/explore/ai/$view'
+    | '/manage/identities/$mode'
+    | '/manage/ingestion/$connector'
+    | '/people/$person/$section'
+    | '/dashboards/alerts/'
+    | '/dashboards/datasets/'
+    | '/dashboards/metrics/'
+    | '/dashboards/widgets/'
+    | '/explore/$dir/'
+    | '/explore/ai/'
+    | '/manage/identities/'
+    | '/manage/ingestion/'
+    | '/people/$person/'
+    | '/dashboards/alerts/$id/edit'
+    | '/dashboards/edit/$kind/$name'
+    | '/people/$person/team/$view'
+    | '/dashboards/alerts/$id/'
+    | '/people/$person/team/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/$'
-    | '/portal'
-    | '/ic/$person/personal'
-    | '/ic/$person/team'
-    | '/portal/custom/$name'
-    | '/ic/$person'
-    | '/portal/custom'
-    | '/portal/custom/alerts/new'
-    | '/portal/custom/datasets/$name'
-    | '/portal/custom/metrics/$name'
-    | '/portal/custom/new/$kind'
-    | '/portal/custom/widgets/$name'
-    | '/portal/custom/alerts'
-    | '/portal/custom/datasets'
-    | '/portal/custom/metrics'
-    | '/portal/custom/widgets'
-    | '/portal/custom/alerts/$id/edit'
-    | '/portal/custom/edit/$kind/$name'
-    | '/portal/custom/alerts/$id'
+    | '/dashboards/$name'
+    | '/home/$view'
+    | '/manage/$surface'
+    | '/reports/$view'
+    | '/dashboards'
+    | '/explore'
+    | '/home'
+    | '/manage'
+    | '/people'
+    | '/reports'
+    | '/dashboards/alerts/new'
+    | '/dashboards/datasets/$name'
+    | '/dashboards/metrics/$name'
+    | '/dashboards/new/$kind'
+    | '/dashboards/widgets/$name'
+    | '/explore/$dir/$lens'
+    | '/explore/ai/$view'
+    | '/manage/identities/$mode'
+    | '/manage/ingestion/$connector'
+    | '/people/$person/$section'
+    | '/dashboards/alerts'
+    | '/dashboards/datasets'
+    | '/dashboards/metrics'
+    | '/dashboards/widgets'
+    | '/explore/$dir'
+    | '/explore/ai'
+    | '/manage/identities'
+    | '/manage/ingestion'
+    | '/people/$person'
+    | '/dashboards/alerts/$id/edit'
+    | '/dashboards/edit/$kind/$name'
+    | '/people/$person/team/$view'
+    | '/dashboards/alerts/$id'
+    | '/people/$person/team'
   id:
     | '__root__'
     | '/'
     | '/$'
-    | '/portal'
-    | '/ic/$person'
-    | '/portal/custom'
-    | '/portal/'
-    | '/ic/$person/personal'
-    | '/ic/$person/team'
-    | '/portal/custom/$name'
-    | '/ic/$person/'
-    | '/portal/custom/'
-    | '/portal/custom/alerts/new'
-    | '/portal/custom/datasets/$name'
-    | '/portal/custom/metrics/$name'
-    | '/portal/custom/new/$kind'
-    | '/portal/custom/widgets/$name'
-    | '/portal/custom/alerts/'
-    | '/portal/custom/datasets/'
-    | '/portal/custom/metrics/'
-    | '/portal/custom/widgets/'
-    | '/portal/custom/alerts/$id/edit'
-    | '/portal/custom/edit/$kind/$name'
-    | '/portal/custom/alerts/$id/'
+    | '/_shell'
+    | '/_shell/dashboards'
+    | '/_shell/dashboards/$name'
+    | '/_shell/home/$view'
+    | '/_shell/manage/$surface'
+    | '/_shell/people/$person'
+    | '/_shell/reports/$view'
+    | '/_shell/dashboards/'
+    | '/_shell/explore/'
+    | '/_shell/home/'
+    | '/_shell/manage/'
+    | '/_shell/people/'
+    | '/_shell/reports/'
+    | '/_shell/dashboards/alerts/new'
+    | '/_shell/dashboards/datasets/$name'
+    | '/_shell/dashboards/metrics/$name'
+    | '/_shell/dashboards/new/$kind'
+    | '/_shell/dashboards/widgets/$name'
+    | '/_shell/explore/$dir/$lens'
+    | '/_shell/explore/ai/$view'
+    | '/_shell/manage/identities/$mode'
+    | '/_shell/manage/ingestion/$connector'
+    | '/_shell/people/$person/$section'
+    | '/_shell/dashboards/alerts/'
+    | '/_shell/dashboards/datasets/'
+    | '/_shell/dashboards/metrics/'
+    | '/_shell/dashboards/widgets/'
+    | '/_shell/explore/$dir/'
+    | '/_shell/explore/ai/'
+    | '/_shell/manage/identities/'
+    | '/_shell/manage/ingestion/'
+    | '/_shell/people/$person/'
+    | '/_shell/dashboards/alerts/$id/edit'
+    | '/_shell/dashboards/edit/$kind/$name'
+    | '/_shell/people/$person/team/$view'
+    | '/_shell/dashboards/alerts/$id/'
+    | '/_shell/people/$person/team/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
-  PortalRoute: typeof PortalRouteWithChildren
-  IcPersonRoute: typeof IcPersonRouteWithChildren
+  ShellRoute: typeof ShellRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -327,228 +526,371 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/portal': {
-      id: '/portal'
-      path: '/portal'
-      fullPath: '/portal'
-      preLoaderRoute: typeof PortalRouteImport
+    '/_shell': {
+      id: '/_shell'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof ShellRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/ic/$person': {
-      id: '/ic/$person'
-      path: '/ic/$person'
-      fullPath: '/ic/$person'
-      preLoaderRoute: typeof IcPersonRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_shell/dashboards': {
+      id: '/_shell/dashboards'
+      path: '/dashboards'
+      fullPath: '/dashboards'
+      preLoaderRoute: typeof ShellDashboardsRouteImport
+      parentRoute: typeof ShellRoute
     }
-    '/portal/': {
-      id: '/portal/'
+    '/_shell/dashboards/': {
+      id: '/_shell/dashboards/'
       path: '/'
-      fullPath: '/portal/'
-      preLoaderRoute: typeof PortalIndexRouteImport
-      parentRoute: typeof PortalRoute
+      fullPath: '/dashboards/'
+      preLoaderRoute: typeof ShellDashboardsIndexRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom': {
-      id: '/portal/custom'
-      path: '/custom'
-      fullPath: '/portal/custom'
-      preLoaderRoute: typeof PortalCustomRouteImport
-      parentRoute: typeof PortalRoute
-    }
-    '/ic/$person/': {
-      id: '/ic/$person/'
-      path: '/'
-      fullPath: '/ic/$person/'
-      preLoaderRoute: typeof IcPersonIndexRouteImport
-      parentRoute: typeof IcPersonRoute
-    }
-    '/ic/$person/personal': {
-      id: '/ic/$person/personal'
-      path: '/personal'
-      fullPath: '/ic/$person/personal'
-      preLoaderRoute: typeof IcPersonPersonalRouteImport
-      parentRoute: typeof IcPersonRoute
-    }
-    '/ic/$person/team': {
-      id: '/ic/$person/team'
-      path: '/team'
-      fullPath: '/ic/$person/team'
-      preLoaderRoute: typeof IcPersonTeamRouteImport
-      parentRoute: typeof IcPersonRoute
-    }
-    '/portal/custom/': {
-      id: '/portal/custom/'
-      path: '/'
-      fullPath: '/portal/custom/'
-      preLoaderRoute: typeof PortalCustomIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
-    }
-    '/portal/custom/$name': {
-      id: '/portal/custom/$name'
+    '/_shell/dashboards/$name': {
+      id: '/_shell/dashboards/$name'
       path: '/$name'
-      fullPath: '/portal/custom/$name'
-      preLoaderRoute: typeof PortalCustomNameRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/$name'
+      preLoaderRoute: typeof ShellDashboardsNameRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/alerts/': {
-      id: '/portal/custom/alerts/'
+    '/_shell/explore/': {
+      id: '/_shell/explore/'
+      path: '/explore'
+      fullPath: '/explore/'
+      preLoaderRoute: typeof ShellExploreIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/home/': {
+      id: '/_shell/home/'
+      path: '/home'
+      fullPath: '/home/'
+      preLoaderRoute: typeof ShellHomeIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/home/$view': {
+      id: '/_shell/home/$view'
+      path: '/home/$view'
+      fullPath: '/home/$view'
+      preLoaderRoute: typeof ShellHomeViewRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/manage/': {
+      id: '/_shell/manage/'
+      path: '/manage'
+      fullPath: '/manage/'
+      preLoaderRoute: typeof ShellManageIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/manage/$surface': {
+      id: '/_shell/manage/$surface'
+      path: '/manage/$surface'
+      fullPath: '/manage/$surface'
+      preLoaderRoute: typeof ShellManageSurfaceRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/people/': {
+      id: '/_shell/people/'
+      path: '/people'
+      fullPath: '/people/'
+      preLoaderRoute: typeof ShellPeopleIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/people/$person': {
+      id: '/_shell/people/$person'
+      path: '/people/$person'
+      fullPath: '/people/$person'
+      preLoaderRoute: typeof ShellPeoplePersonRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/reports/': {
+      id: '/_shell/reports/'
+      path: '/reports'
+      fullPath: '/reports/'
+      preLoaderRoute: typeof ShellReportsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/reports/$view': {
+      id: '/_shell/reports/$view'
+      path: '/reports/$view'
+      fullPath: '/reports/$view'
+      preLoaderRoute: typeof ShellReportsViewRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/dashboards/alerts/': {
+      id: '/_shell/dashboards/alerts/'
       path: '/alerts'
-      fullPath: '/portal/custom/alerts/'
-      preLoaderRoute: typeof PortalCustomAlertsIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/alerts/'
+      preLoaderRoute: typeof ShellDashboardsAlertsIndexRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/alerts/new': {
-      id: '/portal/custom/alerts/new'
+    '/_shell/dashboards/alerts/new': {
+      id: '/_shell/dashboards/alerts/new'
       path: '/alerts/new'
-      fullPath: '/portal/custom/alerts/new'
-      preLoaderRoute: typeof PortalCustomAlertsNewRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/alerts/new'
+      preLoaderRoute: typeof ShellDashboardsAlertsNewRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/datasets/': {
-      id: '/portal/custom/datasets/'
+    '/_shell/dashboards/datasets/': {
+      id: '/_shell/dashboards/datasets/'
       path: '/datasets'
-      fullPath: '/portal/custom/datasets/'
-      preLoaderRoute: typeof PortalCustomDatasetsIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/datasets/'
+      preLoaderRoute: typeof ShellDashboardsDatasetsIndexRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/datasets/$name': {
-      id: '/portal/custom/datasets/$name'
+    '/_shell/dashboards/datasets/$name': {
+      id: '/_shell/dashboards/datasets/$name'
       path: '/datasets/$name'
-      fullPath: '/portal/custom/datasets/$name'
-      preLoaderRoute: typeof PortalCustomDatasetsNameRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/datasets/$name'
+      preLoaderRoute: typeof ShellDashboardsDatasetsNameRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/metrics/': {
-      id: '/portal/custom/metrics/'
+    '/_shell/dashboards/metrics/': {
+      id: '/_shell/dashboards/metrics/'
       path: '/metrics'
-      fullPath: '/portal/custom/metrics/'
-      preLoaderRoute: typeof PortalCustomMetricsIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/metrics/'
+      preLoaderRoute: typeof ShellDashboardsMetricsIndexRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/metrics/$name': {
-      id: '/portal/custom/metrics/$name'
+    '/_shell/dashboards/metrics/$name': {
+      id: '/_shell/dashboards/metrics/$name'
       path: '/metrics/$name'
-      fullPath: '/portal/custom/metrics/$name'
-      preLoaderRoute: typeof PortalCustomMetricsNameRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/metrics/$name'
+      preLoaderRoute: typeof ShellDashboardsMetricsNameRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/new/$kind': {
-      id: '/portal/custom/new/$kind'
+    '/_shell/dashboards/new/$kind': {
+      id: '/_shell/dashboards/new/$kind'
       path: '/new/$kind'
-      fullPath: '/portal/custom/new/$kind'
-      preLoaderRoute: typeof PortalCustomNewKindRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/new/$kind'
+      preLoaderRoute: typeof ShellDashboardsNewKindRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/widgets/': {
-      id: '/portal/custom/widgets/'
+    '/_shell/dashboards/widgets/': {
+      id: '/_shell/dashboards/widgets/'
       path: '/widgets'
-      fullPath: '/portal/custom/widgets/'
-      preLoaderRoute: typeof PortalCustomWidgetsIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/widgets/'
+      preLoaderRoute: typeof ShellDashboardsWidgetsIndexRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/widgets/$name': {
-      id: '/portal/custom/widgets/$name'
+    '/_shell/dashboards/widgets/$name': {
+      id: '/_shell/dashboards/widgets/$name'
       path: '/widgets/$name'
-      fullPath: '/portal/custom/widgets/$name'
-      preLoaderRoute: typeof PortalCustomWidgetsNameRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/widgets/$name'
+      preLoaderRoute: typeof ShellDashboardsWidgetsNameRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/alerts/$id/': {
-      id: '/portal/custom/alerts/$id/'
+    '/_shell/explore/$dir/': {
+      id: '/_shell/explore/$dir/'
+      path: '/explore/$dir'
+      fullPath: '/explore/$dir/'
+      preLoaderRoute: typeof ShellExploreDirIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/explore/$dir/$lens': {
+      id: '/_shell/explore/$dir/$lens'
+      path: '/explore/$dir/$lens'
+      fullPath: '/explore/$dir/$lens'
+      preLoaderRoute: typeof ShellExploreDirLensRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/explore/ai/': {
+      id: '/_shell/explore/ai/'
+      path: '/explore/ai'
+      fullPath: '/explore/ai/'
+      preLoaderRoute: typeof ShellExploreAiIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/explore/ai/$view': {
+      id: '/_shell/explore/ai/$view'
+      path: '/explore/ai/$view'
+      fullPath: '/explore/ai/$view'
+      preLoaderRoute: typeof ShellExploreAiViewRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/manage/identities/': {
+      id: '/_shell/manage/identities/'
+      path: '/manage/identities'
+      fullPath: '/manage/identities/'
+      preLoaderRoute: typeof ShellManageIdentitiesIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/manage/identities/$mode': {
+      id: '/_shell/manage/identities/$mode'
+      path: '/manage/identities/$mode'
+      fullPath: '/manage/identities/$mode'
+      preLoaderRoute: typeof ShellManageIdentitiesModeRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/manage/ingestion/': {
+      id: '/_shell/manage/ingestion/'
+      path: '/manage/ingestion'
+      fullPath: '/manage/ingestion/'
+      preLoaderRoute: typeof ShellManageIngestionIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/manage/ingestion/$connector': {
+      id: '/_shell/manage/ingestion/$connector'
+      path: '/manage/ingestion/$connector'
+      fullPath: '/manage/ingestion/$connector'
+      preLoaderRoute: typeof ShellManageIngestionConnectorRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/people/$person/': {
+      id: '/_shell/people/$person/'
+      path: '/'
+      fullPath: '/people/$person/'
+      preLoaderRoute: typeof ShellPeoplePersonIndexRouteImport
+      parentRoute: typeof ShellPeoplePersonRoute
+    }
+    '/_shell/people/$person/$section': {
+      id: '/_shell/people/$person/$section'
+      path: '/$section'
+      fullPath: '/people/$person/$section'
+      preLoaderRoute: typeof ShellPeoplePersonSectionRouteImport
+      parentRoute: typeof ShellPeoplePersonRoute
+    }
+    '/_shell/dashboards/alerts/$id/': {
+      id: '/_shell/dashboards/alerts/$id/'
       path: '/alerts/$id'
-      fullPath: '/portal/custom/alerts/$id/'
-      preLoaderRoute: typeof PortalCustomAlertsIdIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/alerts/$id/'
+      preLoaderRoute: typeof ShellDashboardsAlertsIdIndexRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/alerts/$id/edit': {
-      id: '/portal/custom/alerts/$id/edit'
+    '/_shell/dashboards/alerts/$id/edit': {
+      id: '/_shell/dashboards/alerts/$id/edit'
       path: '/alerts/$id/edit'
-      fullPath: '/portal/custom/alerts/$id/edit'
-      preLoaderRoute: typeof PortalCustomAlertsIdEditRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/alerts/$id/edit'
+      preLoaderRoute: typeof ShellDashboardsAlertsIdEditRouteImport
+      parentRoute: typeof ShellDashboardsRoute
     }
-    '/portal/custom/edit/$kind/$name': {
-      id: '/portal/custom/edit/$kind/$name'
+    '/_shell/dashboards/edit/$kind/$name': {
+      id: '/_shell/dashboards/edit/$kind/$name'
       path: '/edit/$kind/$name'
-      fullPath: '/portal/custom/edit/$kind/$name'
-      preLoaderRoute: typeof PortalCustomEditKindNameRouteImport
-      parentRoute: typeof PortalCustomRoute
+      fullPath: '/dashboards/edit/$kind/$name'
+      preLoaderRoute: typeof ShellDashboardsEditKindNameRouteImport
+      parentRoute: typeof ShellDashboardsRoute
+    }
+    '/_shell/people/$person/team/': {
+      id: '/_shell/people/$person/team/'
+      path: '/team'
+      fullPath: '/people/$person/team/'
+      preLoaderRoute: typeof ShellPeoplePersonTeamIndexRouteImport
+      parentRoute: typeof ShellPeoplePersonRoute
+    }
+    '/_shell/people/$person/team/$view': {
+      id: '/_shell/people/$person/team/$view'
+      path: '/team/$view'
+      fullPath: '/people/$person/team/$view'
+      preLoaderRoute: typeof ShellPeoplePersonTeamViewRouteImport
+      parentRoute: typeof ShellPeoplePersonRoute
     }
   }
 }
 
-interface PortalCustomRouteChildren {
-  PortalCustomNameRoute: typeof PortalCustomNameRoute
-  PortalCustomIndexRoute: typeof PortalCustomIndexRoute
-  PortalCustomAlertsNewRoute: typeof PortalCustomAlertsNewRoute
-  PortalCustomDatasetsNameRoute: typeof PortalCustomDatasetsNameRoute
-  PortalCustomMetricsNameRoute: typeof PortalCustomMetricsNameRoute
-  PortalCustomNewKindRoute: typeof PortalCustomNewKindRoute
-  PortalCustomWidgetsNameRoute: typeof PortalCustomWidgetsNameRoute
-  PortalCustomAlertsIndexRoute: typeof PortalCustomAlertsIndexRoute
-  PortalCustomDatasetsIndexRoute: typeof PortalCustomDatasetsIndexRoute
-  PortalCustomMetricsIndexRoute: typeof PortalCustomMetricsIndexRoute
-  PortalCustomWidgetsIndexRoute: typeof PortalCustomWidgetsIndexRoute
-  PortalCustomAlertsIdEditRoute: typeof PortalCustomAlertsIdEditRoute
-  PortalCustomEditKindNameRoute: typeof PortalCustomEditKindNameRoute
-  PortalCustomAlertsIdIndexRoute: typeof PortalCustomAlertsIdIndexRoute
+interface ShellDashboardsRouteChildren {
+  ShellDashboardsNameRoute: typeof ShellDashboardsNameRoute
+  ShellDashboardsIndexRoute: typeof ShellDashboardsIndexRoute
+  ShellDashboardsAlertsNewRoute: typeof ShellDashboardsAlertsNewRoute
+  ShellDashboardsDatasetsNameRoute: typeof ShellDashboardsDatasetsNameRoute
+  ShellDashboardsMetricsNameRoute: typeof ShellDashboardsMetricsNameRoute
+  ShellDashboardsNewKindRoute: typeof ShellDashboardsNewKindRoute
+  ShellDashboardsWidgetsNameRoute: typeof ShellDashboardsWidgetsNameRoute
+  ShellDashboardsAlertsIndexRoute: typeof ShellDashboardsAlertsIndexRoute
+  ShellDashboardsDatasetsIndexRoute: typeof ShellDashboardsDatasetsIndexRoute
+  ShellDashboardsMetricsIndexRoute: typeof ShellDashboardsMetricsIndexRoute
+  ShellDashboardsWidgetsIndexRoute: typeof ShellDashboardsWidgetsIndexRoute
+  ShellDashboardsAlertsIdEditRoute: typeof ShellDashboardsAlertsIdEditRoute
+  ShellDashboardsEditKindNameRoute: typeof ShellDashboardsEditKindNameRoute
+  ShellDashboardsAlertsIdIndexRoute: typeof ShellDashboardsAlertsIdIndexRoute
 }
 
-const PortalCustomRouteChildren: PortalCustomRouteChildren = {
-  PortalCustomNameRoute: PortalCustomNameRoute,
-  PortalCustomIndexRoute: PortalCustomIndexRoute,
-  PortalCustomAlertsNewRoute: PortalCustomAlertsNewRoute,
-  PortalCustomDatasetsNameRoute: PortalCustomDatasetsNameRoute,
-  PortalCustomMetricsNameRoute: PortalCustomMetricsNameRoute,
-  PortalCustomNewKindRoute: PortalCustomNewKindRoute,
-  PortalCustomWidgetsNameRoute: PortalCustomWidgetsNameRoute,
-  PortalCustomAlertsIndexRoute: PortalCustomAlertsIndexRoute,
-  PortalCustomDatasetsIndexRoute: PortalCustomDatasetsIndexRoute,
-  PortalCustomMetricsIndexRoute: PortalCustomMetricsIndexRoute,
-  PortalCustomWidgetsIndexRoute: PortalCustomWidgetsIndexRoute,
-  PortalCustomAlertsIdEditRoute: PortalCustomAlertsIdEditRoute,
-  PortalCustomEditKindNameRoute: PortalCustomEditKindNameRoute,
-  PortalCustomAlertsIdIndexRoute: PortalCustomAlertsIdIndexRoute,
+const ShellDashboardsRouteChildren: ShellDashboardsRouteChildren = {
+  ShellDashboardsNameRoute: ShellDashboardsNameRoute,
+  ShellDashboardsIndexRoute: ShellDashboardsIndexRoute,
+  ShellDashboardsAlertsNewRoute: ShellDashboardsAlertsNewRoute,
+  ShellDashboardsDatasetsNameRoute: ShellDashboardsDatasetsNameRoute,
+  ShellDashboardsMetricsNameRoute: ShellDashboardsMetricsNameRoute,
+  ShellDashboardsNewKindRoute: ShellDashboardsNewKindRoute,
+  ShellDashboardsWidgetsNameRoute: ShellDashboardsWidgetsNameRoute,
+  ShellDashboardsAlertsIndexRoute: ShellDashboardsAlertsIndexRoute,
+  ShellDashboardsDatasetsIndexRoute: ShellDashboardsDatasetsIndexRoute,
+  ShellDashboardsMetricsIndexRoute: ShellDashboardsMetricsIndexRoute,
+  ShellDashboardsWidgetsIndexRoute: ShellDashboardsWidgetsIndexRoute,
+  ShellDashboardsAlertsIdEditRoute: ShellDashboardsAlertsIdEditRoute,
+  ShellDashboardsEditKindNameRoute: ShellDashboardsEditKindNameRoute,
+  ShellDashboardsAlertsIdIndexRoute: ShellDashboardsAlertsIdIndexRoute,
 }
 
-const PortalCustomRouteWithChildren = PortalCustomRoute._addFileChildren(
-  PortalCustomRouteChildren,
+const ShellDashboardsRouteWithChildren = ShellDashboardsRoute._addFileChildren(
+  ShellDashboardsRouteChildren,
 )
 
-interface PortalRouteChildren {
-  PortalCustomRoute: typeof PortalCustomRouteWithChildren
-  PortalIndexRoute: typeof PortalIndexRoute
+interface ShellPeoplePersonRouteChildren {
+  ShellPeoplePersonSectionRoute: typeof ShellPeoplePersonSectionRoute
+  ShellPeoplePersonIndexRoute: typeof ShellPeoplePersonIndexRoute
+  ShellPeoplePersonTeamViewRoute: typeof ShellPeoplePersonTeamViewRoute
+  ShellPeoplePersonTeamIndexRoute: typeof ShellPeoplePersonTeamIndexRoute
 }
 
-const PortalRouteChildren: PortalRouteChildren = {
-  PortalCustomRoute: PortalCustomRouteWithChildren,
-  PortalIndexRoute: PortalIndexRoute,
+const ShellPeoplePersonRouteChildren: ShellPeoplePersonRouteChildren = {
+  ShellPeoplePersonSectionRoute: ShellPeoplePersonSectionRoute,
+  ShellPeoplePersonIndexRoute: ShellPeoplePersonIndexRoute,
+  ShellPeoplePersonTeamViewRoute: ShellPeoplePersonTeamViewRoute,
+  ShellPeoplePersonTeamIndexRoute: ShellPeoplePersonTeamIndexRoute,
 }
 
-const PortalRouteWithChildren =
-  PortalRoute._addFileChildren(PortalRouteChildren)
+const ShellPeoplePersonRouteWithChildren =
+  ShellPeoplePersonRoute._addFileChildren(ShellPeoplePersonRouteChildren)
 
-interface IcPersonRouteChildren {
-  IcPersonPersonalRoute: typeof IcPersonPersonalRoute
-  IcPersonTeamRoute: typeof IcPersonTeamRoute
-  IcPersonIndexRoute: typeof IcPersonIndexRoute
+interface ShellRouteChildren {
+  ShellDashboardsRoute: typeof ShellDashboardsRouteWithChildren
+  ShellHomeViewRoute: typeof ShellHomeViewRoute
+  ShellManageSurfaceRoute: typeof ShellManageSurfaceRoute
+  ShellPeoplePersonRoute: typeof ShellPeoplePersonRouteWithChildren
+  ShellReportsViewRoute: typeof ShellReportsViewRoute
+  ShellExploreIndexRoute: typeof ShellExploreIndexRoute
+  ShellHomeIndexRoute: typeof ShellHomeIndexRoute
+  ShellManageIndexRoute: typeof ShellManageIndexRoute
+  ShellPeopleIndexRoute: typeof ShellPeopleIndexRoute
+  ShellReportsIndexRoute: typeof ShellReportsIndexRoute
+  ShellExploreDirLensRoute: typeof ShellExploreDirLensRoute
+  ShellExploreAiViewRoute: typeof ShellExploreAiViewRoute
+  ShellManageIdentitiesModeRoute: typeof ShellManageIdentitiesModeRoute
+  ShellManageIngestionConnectorRoute: typeof ShellManageIngestionConnectorRoute
+  ShellExploreDirIndexRoute: typeof ShellExploreDirIndexRoute
+  ShellExploreAiIndexRoute: typeof ShellExploreAiIndexRoute
+  ShellManageIdentitiesIndexRoute: typeof ShellManageIdentitiesIndexRoute
+  ShellManageIngestionIndexRoute: typeof ShellManageIngestionIndexRoute
 }
 
-const IcPersonRouteChildren: IcPersonRouteChildren = {
-  IcPersonPersonalRoute: IcPersonPersonalRoute,
-  IcPersonTeamRoute: IcPersonTeamRoute,
-  IcPersonIndexRoute: IcPersonIndexRoute,
+const ShellRouteChildren: ShellRouteChildren = {
+  ShellDashboardsRoute: ShellDashboardsRouteWithChildren,
+  ShellHomeViewRoute: ShellHomeViewRoute,
+  ShellManageSurfaceRoute: ShellManageSurfaceRoute,
+  ShellPeoplePersonRoute: ShellPeoplePersonRouteWithChildren,
+  ShellReportsViewRoute: ShellReportsViewRoute,
+  ShellExploreIndexRoute: ShellExploreIndexRoute,
+  ShellHomeIndexRoute: ShellHomeIndexRoute,
+  ShellManageIndexRoute: ShellManageIndexRoute,
+  ShellPeopleIndexRoute: ShellPeopleIndexRoute,
+  ShellReportsIndexRoute: ShellReportsIndexRoute,
+  ShellExploreDirLensRoute: ShellExploreDirLensRoute,
+  ShellExploreAiViewRoute: ShellExploreAiViewRoute,
+  ShellManageIdentitiesModeRoute: ShellManageIdentitiesModeRoute,
+  ShellManageIngestionConnectorRoute: ShellManageIngestionConnectorRoute,
+  ShellExploreDirIndexRoute: ShellExploreDirIndexRoute,
+  ShellExploreAiIndexRoute: ShellExploreAiIndexRoute,
+  ShellManageIdentitiesIndexRoute: ShellManageIdentitiesIndexRoute,
+  ShellManageIngestionIndexRoute: ShellManageIngestionIndexRoute,
 }
 
-const IcPersonRouteWithChildren = IcPersonRoute._addFileChildren(
-  IcPersonRouteChildren,
-)
+const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
-  PortalRoute: PortalRouteWithChildren,
-  IcPersonRoute: IcPersonRouteWithChildren,
+  ShellRoute: ShellRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -75,7 +75,7 @@ function FiledIn({ folders }: { folders: readonly Folder[] }) {
     <span className="min-w-0 truncate not-first:before:me-1.5 not-first:before:content-['·']">
       in{" "}
       <Link
-        to="/portal/custom"
+        to="/dashboards"
         search={{ folder: first.id }}
         className="underline-offset-4 hover:text-foreground hover:underline"
       >

@@ -113,7 +113,7 @@ export function CreateDashboardDialog({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const inDashboards = useRouterState({
-    select: (state) => state.location.pathname.startsWith("/portal/custom"),
+    select: (state) => state.location.pathname.startsWith("/dashboards"),
   });
   const assistantAvailable = useAssistantAvailable();
   const create = useMutation({
@@ -151,7 +151,7 @@ export function CreateDashboardDialog({
   function handToAssistant() {
     close();
     askAssistant(assistantPrompt(title));
-    if (!inDashboards) void navigate({ to: "/portal/custom" });
+    if (!inDashboards) void navigate({ to: "/dashboards" });
   }
 
   async function submit() {
@@ -174,7 +174,7 @@ export function CreateDashboardDialog({
           title: refusal(made.shareFailure.refused, "Created, but couldn't share it."),
         });
       }
-      void navigate({ to: "/portal/custom/$name", params: { name: made.id } });
+      void navigate({ to: "/dashboards/$name", params: { name: made.id } });
     } catch (failure) {
       setError(refusal(failure, "Couldn't create the dashboard."));
     }

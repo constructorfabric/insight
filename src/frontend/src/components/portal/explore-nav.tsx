@@ -28,13 +28,10 @@ import {
   type PaneGroup,
 } from "@/lib/portal/nav-model";
 import {
-  usePortalDir,
-  usePortalItem,
-  usePortalLens,
   usePortalNavActions,
 } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 import { cn } from "@/lib/utils";
 
@@ -133,10 +130,8 @@ function DirectionsGroup() {
 }
 
 function DirectionItem({ direction }: { direction: Direction }) {
-  const { setDir, openDirection } = usePortalNavActions();
-  const { activeZone } = useActiveZone();
-  const activeDir = usePortalDir();
-  const activeLens = usePortalLens();
+  const { openDirection } = usePortalNavActions();
+  const { zone: activeZone, dir: activeDir, lens: activeLens } = useNavLocation();
   const showPlanned = usePortalShowPlanned();
   const expanded = activeZone === "directions" && activeDir === direction.id;
   const lenses = visibleLenses(direction, showPlanned);
@@ -149,7 +144,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
       expanded={expanded}
       onToggle={() =>
         expanded
-          ? setDir("")
+          ? openDirection("")
           : openDirection(direction.id, lenses[0] ?? direction.lenses[0]!)
       }
       rows={lenses.map((lens) => ({
@@ -164,10 +159,10 @@ function DirectionItem({ direction }: { direction: Direction }) {
 }
 
 function AiCostGroup() {
-  const { activeZone } = useActiveZone();
+  const { zone: activeZone, item: picked } = useNavLocation();
   const { openItem } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
-  const resolved = resolveZoneItem("aicost", usePortalItem());
+  const resolved = resolveZoneItem("aicost", picked);
   const active = activeZone === "aicost" ? resolved : null;
 
   return (

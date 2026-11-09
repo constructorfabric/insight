@@ -20,9 +20,9 @@ import {
   zoneIsPlanned,
 } from "@/lib/portal/nav-model";
 import { personSectionPlanned } from "@/lib/portal/nav-policy";
-import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
+import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 import type { ZoneNav } from "@/lib/portal/use-zone-nav";
 import {
@@ -47,10 +47,10 @@ function PeopleViews({ nav }: { nav: ZoneNav }) {
   const { zones, activeZone, me, selectZone } = nav;
   const { setItem } = usePortalNavActions();
   const dismiss = useDismissDrawer();
-  const { activePerson } = useActiveZone();
+  const { person: activePerson, item: picked } = useNavLocation();
   const { isFlat } = useVisibilityPolicy();
   const showPlanned = usePortalShowPlanned();
-  const item = resolveZoneItem("people", usePortalItem());
+  const item = resolveZoneItem("people", picked);
   const personZone = zones.find((zone) => zone.id === "person");
   const peopleZone = zones.find((zone) => zone.id === "people");
   const teamViews = peopleZone
@@ -135,8 +135,7 @@ function WorkChart() {
 function PersonSectionsNav() {
   const { setItem } = usePortalNavActions();
   const dismiss = useDismissDrawer();
-  const active = usePortalItem();
-  const { activePerson } = useActiveZone();
+  const { item: active, person: activePerson } = useNavLocation();
   // Costs no request: these are the section screens' own queries, so
   // react-query serves them from cache.
   const standings = usePersonSectionStandings(activePerson);

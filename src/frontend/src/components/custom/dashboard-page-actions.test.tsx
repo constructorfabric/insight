@@ -53,7 +53,7 @@ const OWNER = "01900000-0000-7000-8000-00000000000a";
 beforeEach(() => {
   vi.resetAllMocks();
   act(() => setPortalShowPlanned(false));
-  portalRouter.reset(`/portal/custom/${ID}`);
+  portalRouter.reset(`/dashboards/${ID}`);
   vi.mocked(customClient.fetchPins).mockResolvedValue([]);
   vi.mocked(customClient.pinDashboard).mockResolvedValue(undefined);
   vi.mocked(customClient.unpinDashboard).mockResolvedValue(undefined);
@@ -105,7 +105,7 @@ describe("<DashboardPageActions>", () => {
 
     expect(screen.getByRole("button", { name: "Edit delivery" })).toHaveAttribute(
       "href",
-      `/portal/custom/edit/dashboards/${ID}`
+      `/dashboards/edit/dashboards/${ID}`
     );
   });
 
@@ -236,7 +236,7 @@ describe("<DashboardPageActions>", () => {
     await user.click(within(dialog).getByRole("button", { name: "Duplicate" }));
 
     await waitFor(() =>
-      expect(portalRouter.pathname).toBe("/portal/custom/dash-2")
+      expect(portalRouter.pathname).toBe("/dashboards/dash-2")
     );
   });
 
@@ -248,7 +248,7 @@ describe("<DashboardPageActions>", () => {
       within(dialog).getByRole("button", { name: "Delete dashboard" })
     );
 
-    await waitFor(() => expect(portalRouter.pathname).toBe("/portal/custom"));
+    await waitFor(() => expect(portalRouter.pathname).toBe("/dashboards"));
   });
 
   it.each([

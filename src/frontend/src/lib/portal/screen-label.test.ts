@@ -75,36 +75,36 @@ describe("screenLabel", () => {
   });
 
   it.each([
-    ["/portal/custom/:id", "Dashboards › Dashboard"],
-    ["/portal/custom/q3-hiring-plan", "Dashboards › q3-hiring-plan"],
-    ["/portal/custom/metrics/deploy-frequency", "Dashboards › Metrics › deploy-frequency"],
-    ["/portal/custom/metrics/:id", "Dashboards › Metrics › Metric"],
+    ["/dashboards/:id", "Dashboards › Dashboard"],
+    ["/dashboards/q3-hiring-plan", "Dashboards › q3-hiring-plan"],
+    ["/dashboards/metrics/deploy-frequency", "Dashboards › Metrics › deploy-frequency"],
+    ["/dashboards/metrics/:id", "Dashboards › Metrics › Metric"],
     [
-      "/portal/custom/edit/dashboards/release-health",
+      "/dashboards/edit/dashboards/release-health",
       "Dashboards › Edit › Dashboards › release-health",
     ],
-    ["/portal/custom/edit/dashboards/:id", "Dashboards › Edit › Dashboards › Dashboard"],
-    ["/portal/custom/alerts/:id/edit", "Dashboards › Alerts › Alert › Edit"],
+    ["/dashboards/edit/dashboards/:id", "Dashboards › Edit › Dashboards › Dashboard"],
+    ["/dashboards/alerts/:id/edit", "Dashboards › Alerts › Alert › Edit"],
   ])("names the custom page %s as %s", (path, title) => {
     expect(screenLabel(path), `path: ${path}`).toBe(title);
   });
 
   it("gives every custom page its own title", () => {
     const paths = [
-      "/portal/custom/:id",
-      "/portal/custom/q3-hiring-plan",
-      "/portal/custom/release-health",
-      "/portal/custom/metrics",
-      "/portal/custom/metrics/deploy-frequency",
-      "/portal/custom/metrics/:id",
-      "/portal/custom/new/dashboards",
-      "/portal/custom/new/metrics",
-      "/portal/custom/edit/dashboards/:id",
-      "/portal/custom/edit/dashboards/release-health",
-      "/portal/custom/edit/metrics/deploy-frequency",
-      "/portal/custom/alerts/new",
-      "/portal/custom/alerts/:id",
-      "/portal/custom/alerts/:id/edit",
+      "/dashboards/:id",
+      "/dashboards/q3-hiring-plan",
+      "/dashboards/release-health",
+      "/dashboards/metrics",
+      "/dashboards/metrics/deploy-frequency",
+      "/dashboards/metrics/:id",
+      "/dashboards/new/dashboards",
+      "/dashboards/new/metrics",
+      "/dashboards/edit/dashboards/:id",
+      "/dashboards/edit/dashboards/release-health",
+      "/dashboards/edit/metrics/deploy-frequency",
+      "/dashboards/alerts/new",
+      "/dashboards/alerts/:id",
+      "/dashboards/alerts/:id/edit",
     ];
 
     const titles = paths.map(screenLabel);

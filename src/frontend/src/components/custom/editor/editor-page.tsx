@@ -14,10 +14,10 @@ import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const CATALOGUE: Record<EditableKind, string> = {
-  datasets: "/portal/custom/datasets",
-  metrics: "/portal/custom/metrics",
-  widgets: "/portal/custom/widgets",
-  dashboards: "/portal/custom",
+  datasets: "/dashboards/datasets",
+  metrics: "/dashboards/metrics",
+  widgets: "/dashboards/widgets",
+  dashboards: "/dashboards",
 };
 
 const BACK_LINK = cn(
@@ -26,10 +26,10 @@ const BACK_LINK = cn(
 );
 
 const PAGE: Record<EditableKind, string> = {
-  datasets: "/portal/custom/datasets/$name",
-  metrics: "/portal/custom/metrics/$name",
-  widgets: "/portal/custom/widgets/$name",
-  dashboards: "/portal/custom/$name",
+  datasets: "/dashboards/datasets/$name",
+  metrics: "/dashboards/metrics/$name",
+  widgets: "/dashboards/widgets/$name",
+  dashboards: "/dashboards/$name",
 };
 
 export function EditorPage({

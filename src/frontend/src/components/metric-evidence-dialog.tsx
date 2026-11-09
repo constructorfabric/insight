@@ -357,7 +357,7 @@ export function MetricEvidenceDialog({
                     person's — the one exit out of the drill. */}
                 {drilled?.personId ? (
                   <Link
-                    to="/ic/$person/personal"
+                    to="/people/$person"
                     params={{ person: drilled.personId }}
                     onClick={closeDialog}
                     className="flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"

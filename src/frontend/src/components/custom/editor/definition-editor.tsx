@@ -107,7 +107,7 @@ export function DefinitionEditor({
             <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
               A {noun} called <code>{given}</code> already exists.{" "}
               <Link
-                to="/portal/custom/edit/$kind/$name"
+                to="/dashboards/edit/$kind/$name"
                 params={{ kind, name: given }}
                 className="underline decoration-dotted underline-offset-4"
               >

@@ -22,7 +22,7 @@ export function BrowseChips({
         return (
           <Link
             key={row.owned ?? "all"}
-            to="/portal/custom"
+            to="/dashboards"
             search={{ owned: row.owned, tag }}
             aria-current={current ? "page" : undefined}
             className={cn(

@@ -42,8 +42,8 @@ function componentOf(route: unknown): () => React.ReactNode {
 }
 
 describe.each([
-  ["/ic/$person/personal", PersonalRoute],
-  ["/ic/$person/team", TeamRoute],
+  ["/people/$person", PersonalRoute],
+  ["/people/$person/team", TeamRoute],
 ])("%s", (_path, route) => {
   it("paints the zone the shell's outlet asks it for", () => {
     const Zone = componentOf(route);

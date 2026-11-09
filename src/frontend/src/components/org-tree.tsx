@@ -76,12 +76,12 @@ function PersonNode({
   const link =
     hasReports && leadsToTeam ? (
       <Link
-        to="/ic/$person/team"
+        to="/people/$person/team"
         params={{ person: node.person_id }}
         onClick={() => setScope({ root: node.person_id })}
       />
     ) : (
-      <Link to="/ic/$person/personal" params={{ person: node.person_id }} />
+      <Link to="/people/$person" params={{ person: node.person_id }} />
     );
   return (
     <>
@@ -196,7 +196,7 @@ function RosterList({
             }
             render={
               <Link
-                to="/ic/$person/personal"
+                to="/people/$person"
                 params={{ person: person.person_id }}
               />
             }

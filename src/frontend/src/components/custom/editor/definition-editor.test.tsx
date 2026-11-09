@@ -222,7 +222,7 @@ describe("<DefinitionEditor> holding one document", () => {
     );
     expect(screen.getByRole("link", { name: "Open it" })).toHaveAttribute(
       "href",
-      "/portal/custom/edit/datasets/commits"
+      "/dashboards/edit/datasets/commits"
     );
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 

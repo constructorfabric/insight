@@ -107,7 +107,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  portalRouter.reset("/portal/custom/alerts/new");
+  portalRouter.reset("/dashboards/alerts/new");
   vi.mocked(alertsClient.fetchAlertDestinations).mockResolvedValue([
     { name: "ops", provider: "zulip" },
   ]);
@@ -198,7 +198,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       })
     );
     expect(portalRouter.navigations).toContainEqual({
-      to: "/portal/custom/alerts/$id",
+      to: "/dashboards/alerts/$id",
       params: { id: "a1" },
     });
   });
@@ -1112,7 +1112,7 @@ describe("the JSON view", { timeout: 20_000 }, () => {
 });
 
 describe("EditAlertPage", () => {
-  beforeEach(() => portalRouter.reset("/portal/custom/alerts/a1/edit"));
+  beforeEach(() => portalRouter.reset("/dashboards/alerts/a1/edit"));
 
   it("still shows the rule's condition when its metric cannot be read", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
@@ -1167,7 +1167,7 @@ describe("EditAlertPage", () => {
     );
     await waitFor(() =>
       expect(portalRouter.navigations).toContainEqual({
-        to: "/portal/custom/alerts/$id",
+        to: "/dashboards/alerts/$id",
         params: { id: "a1" },
       })
     );

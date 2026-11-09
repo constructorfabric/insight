@@ -105,6 +105,11 @@ export function setPortalShowPlanned(show: boolean): void {
   emit();
 }
 
+/** The same preference, read once — for a route deciding where to send the reader. */
+export function getPortalShowPlanned(): boolean {
+  return state.showPlanned;
+}
+
 /** Whether this reader wants planned sections listed. */
 export function usePortalShowPlanned(): boolean {
   return useSyncExternalStore(

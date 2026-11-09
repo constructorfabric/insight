@@ -528,7 +528,7 @@ function MemberRow({
         <div className="flex min-h-12 flex-col justify-center gap-0.5">
           <div className="flex items-center gap-1.5">
             <Link
-              to="/ic/$person/personal"
+              to="/people/$person"
               params={{ person: member.entityId }}
               className="min-w-0 truncate text-sm leading-tight font-medium hover:underline"
             >

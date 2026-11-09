@@ -272,7 +272,7 @@ function WrittenLink({ item }: { item: Written }) {
     case "metric":
       return (
         <Link
-          to="/portal/custom/metrics/$name"
+          to="/dashboards/metrics/$name"
           params={{ name: item.id }}
           className={LINK_CLASS}
         >
@@ -282,7 +282,7 @@ function WrittenLink({ item }: { item: Written }) {
     case "widget":
       return (
         <Link
-          to="/portal/custom/widgets/$name"
+          to="/dashboards/widgets/$name"
           params={{ name: item.id }}
           className={LINK_CLASS}
         >
@@ -292,7 +292,7 @@ function WrittenLink({ item }: { item: Written }) {
     case "dashboard":
       return (
         <Link
-          to="/portal/custom/$name"
+          to="/dashboards/$name"
           params={{ name: item.id }}
           className={LINK_CLASS}
         >

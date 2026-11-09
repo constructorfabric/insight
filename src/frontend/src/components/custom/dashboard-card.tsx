@@ -25,7 +25,7 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
       <CardContent className="flex flex-1 gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
-            to="/portal/custom/$name"
+            to="/dashboards/$name"
             params={{ name: id }}
             className="flex min-w-0 items-start gap-3 transition-opacity hover:opacity-80"
           >
@@ -58,7 +58,7 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
             access={access}
           />
           <Link
-            to="/portal/custom/$name"
+            to="/dashboards/$name"
             params={{ name: id }}
             aria-label={`Open ${name}`}
             className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"

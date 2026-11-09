@@ -33,7 +33,7 @@ function emit(): void {
 
 export const portalRouter = {
   search: {} as PortalSearch,
-  pathname: "/portal",
+  pathname: "/home",
   /** Every `navigate()` a component issued, newest last. */
   navigations: [] as Array<Record<string, unknown>>,
 
@@ -53,13 +53,58 @@ export const portalRouter = {
     emit();
   },
 
-  reset(pathname = "/portal"): void {
+  reset(pathname = "/home"): void {
     this.search = {};
     this.pathname = pathname;
     this.navigations = [];
     emit();
   },
 };
+
+interface MockMatch {
+  staticData: { zone?: string; item?: string };
+  params: Record<string, string>;
+}
+
+/**
+ * The matched route a path lands on, as the route files declare it: the zone
+ * in static data, the rest in params. Kept beside the real route tree so a
+ * component test can say "the reader is on /explore/dev/flow" without mounting it.
+ */
+export function matchesFor(pathname: string): MockMatch[] {
+  const [, first, second, third, fourth] = pathname.split("/").map(decodeURIComponent);
+  const at = (zone: string, params: Record<string, string | undefined>, item?: string) => [
+    {
+      staticData: item ? { zone, item } : { zone },
+      params: Object.fromEntries(
+        Object.entries(params).filter((entry): entry is [string, string] => Boolean(entry[1])),
+      ),
+    },
+  ];
+
+  switch (first) {
+    case "home":
+      return at("overview", { view: second });
+    case "explore":
+      return second === "ai"
+        ? at("aicost", { view: third })
+        : at("directions", { dir: second, lens: third });
+    case "people":
+      if (!second) return [];
+      if (third === "team") return at("people", { person: second, view: fourth });
+      return at("person", { person: second, section: third });
+    case "reports":
+      return at("reports", { view: second });
+    case "manage":
+      if (second === "identities") return at("manage", { mode: third }, "identities");
+      if (second === "ingestion") return at("manage", { connector: third }, "ingestion");
+      return at("manage", { surface: second });
+    case "dashboards":
+      return at("custom", {});
+    default:
+      return [];
+  }
+}
 
 function subscribe(cb: () => void): () => void {
   listeners.add(cb);
@@ -104,6 +149,14 @@ export function portalRouterMock(): Record<string, unknown> {
         subscribe,
         () => portalRouter.search,
         () => portalRouter.search,
+      ),
+    useMatches: () =>
+      matchesFor(
+        useSyncExternalStore(
+          subscribe,
+          () => portalRouter.pathname,
+          () => portalRouter.pathname,
+        ),
       ),
     useRouterState: ({ select }: { select: (s: unknown) => unknown }) => {
       const path = useSyncExternalStore(

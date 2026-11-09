@@ -12,7 +12,15 @@ import { AiAssistantBody } from "@/screens/ai-assistant";
 import { PreviewsBody } from "@/screens/previews";
 import { WhatsNewBody } from "@/screens/whats-new";
 
-export function ManageView({ item }: { item: string | null }) {
+export function ManageView({
+  item,
+  mode,
+  connector,
+}: {
+  item: string | null;
+  mode?: string;
+  connector?: string;
+}) {
   if (item === "connector-health")
     return (
       <AdminGate>
@@ -22,7 +30,7 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "identities")
     return (
       <AdminGate>
-        <IdentitiesView />
+        <IdentitiesView mode={mode} />
       </AdminGate>
     );
   if (item === "platform-usage")
@@ -34,7 +42,7 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "ingestion")
     return (
       <AdminGate>
-        <IngestionView />
+        <IngestionView connector={connector} />
       </AdminGate>
     );
   if (item === "ai-assistant") return <AiAssistantBody />;

@@ -46,7 +46,7 @@ export function MetricsCompareTable({
                 className="sticky top-0 z-10 border-b bg-card px-3 py-2 text-end font-medium"
               >
                 <Link
-                  to="/ic/$person/personal"
+                  to="/people/$person"
                   params={{ person: person.entityId }}
                   className="hover:underline"
                 >

@@ -138,7 +138,7 @@ export function WidgetSummary({
         <Row label="Metric">
           {linkMetric ? (
             <Link
-              to="/portal/custom/metrics/$name"
+              to="/dashboards/metrics/$name"
               params={{ name: widget.metric }}
               className="underline decoration-dotted underline-offset-4"
             >

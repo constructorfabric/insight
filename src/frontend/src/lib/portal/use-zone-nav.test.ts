@@ -107,7 +107,7 @@ describe("useZoneNav", () => {
 
     expect(mocks.navigate).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "/ic/$person/personal",
+        to: "/people/$person",
         params: { person: "me-1" },
       })
     );

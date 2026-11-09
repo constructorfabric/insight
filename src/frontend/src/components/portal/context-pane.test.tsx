@@ -606,7 +606,7 @@ describe("Dashboards pane", () => {
     inZone("custom");
     pane();
     const all = screen.getByRole("link", { name: /All dashboards/ });
-    expect(all).toHaveAttribute("href", "/portal/custom");
+    expect(all).toHaveAttribute("href", "/dashboards");
     expect(await screen.findByText("14")).toBeInTheDocument();
   });
 
@@ -615,19 +615,19 @@ describe("Dashboards pane", () => {
     pane();
     expect(screen.getByRole("link", { name: "Metrics" })).toHaveAttribute(
       "href",
-      "/portal/custom/metrics",
+      "/dashboards/metrics",
     );
     expect(screen.getByRole("link", { name: "Widgets" })).toHaveAttribute(
       "href",
-      "/portal/custom/widgets",
+      "/dashboards/widgets",
     );
     expect(screen.getByRole("link", { name: "Datasets" })).toHaveAttribute(
       "href",
-      "/portal/custom/datasets",
+      "/dashboards/datasets",
     );
     expect(screen.getByRole("link", { name: "Alerts" })).toHaveAttribute(
       "href",
-      "/portal/custom/alerts",
+      "/dashboards/alerts",
     );
   });
 
@@ -636,18 +636,18 @@ describe("Dashboards pane", () => {
     pane();
     expect(screen.getByRole("link", { name: "My dashboards" })).toHaveAttribute(
       "href",
-      "/portal/custom?owned=me",
+      "/dashboards?owned=me",
     );
     expect(screen.getByRole("link", { name: "Shared with me" })).toHaveAttribute(
       "href",
-      "/portal/custom?owned=shared",
+      "/dashboards?owned=shared",
     );
   });
 
   it("keeps the picked tags when narrowing by ownership", () => {
     inZone("custom");
     act(() => {
-      portalRouter.go("/portal/custom");
+      portalRouter.go("/dashboards");
       portalRouter.set({ tag: ["Ops"] });
     });
     pane();
@@ -728,7 +728,7 @@ describe("Dashboards pane folders", () => {
   const onTheList = (folder?: string) => {
     inZone("custom");
     act(() => {
-      portalRouter.go("/portal/custom");
+      portalRouter.go("/dashboards");
       if (folder) portalRouter.set({ folder });
     });
   };
@@ -738,10 +738,10 @@ describe("Dashboards pane folders", () => {
     pane();
 
     const platform = await screen.findByRole("link", { name: /Platform/ });
-    expect(platform).toHaveAttribute("href", "/portal/custom?folder=f1");
+    expect(platform).toHaveAttribute("href", "/dashboards?folder=f1");
     expect(platform.closest("li")).toHaveTextContent("3");
     const unfiled = screen.getByRole("link", { name: /Unfiled/ });
-    expect(unfiled).toHaveAttribute("href", "/portal/custom?folder=unfiled");
+    expect(unfiled).toHaveAttribute("href", "/dashboards?folder=unfiled");
     expect(unfiled.closest("li")).toHaveTextContent("11");
   });
 
@@ -759,7 +759,7 @@ describe("Dashboards pane folders", () => {
   it("keeps the picked tags when switching folder", async () => {
     inZone("custom");
     act(() => {
-      portalRouter.go("/portal/custom");
+      portalRouter.go("/dashboards");
       portalRouter.set({ folder: "f1", tag: ["Ops"] });
     });
     pane();
@@ -985,8 +985,8 @@ describe("Dashboards pane pins", () => {
       "Delivery",
     ]);
     expect(rows.map((row) => row.getAttribute("href"))).toEqual([
-      "/portal/custom/hiring",
-      "/portal/custom/delivery",
+      "/dashboards/hiring",
+      "/dashboards/delivery",
     ]);
   });
 
@@ -1019,14 +1019,14 @@ describe("Dashboards pane pins", () => {
       "Untitled board",
     ]);
     expect(pinnedRows().map((row) => row.getAttribute("href"))).toEqual([
-      "/portal/custom/d-loading",
-      "/portal/custom/d-untitled",
+      "/dashboards/d-loading",
+      "/dashboards/d-untitled",
     ]);
   });
 
   it("marks the pinned dashboard on screen", async () => {
     pinned(["hiring", "delivery"]);
-    act(() => portalRouter.go("/portal/custom/delivery"));
+    act(() => portalRouter.go("/dashboards/delivery"));
     pane();
 
     expect(

@@ -49,21 +49,21 @@ describe("screenPath", () => {
   });
 
   it.each([
-    ["/portal/custom", "/portal/custom"],
-    ["/portal/custom/", "/portal/custom/"],
-    ["/portal/custom/q3-hiring-plan", "/portal/custom/:id"],
-    ["/portal/custom/Board%20for%20Jane", "/portal/custom/:id"],
-    ["/portal/custom/metrics", "/portal/custom/metrics"],
-    ["/portal/custom/widgets", "/portal/custom/widgets"],
-    ["/portal/custom/datasets", "/portal/custom/datasets"],
-    ["/portal/custom/alerts", "/portal/custom/alerts"],
-    ["/portal/custom/destinations", "/portal/custom/destinations"],
-    ["/portal/custom/new/dashboards", "/portal/custom/new/dashboards"],
-    ["/portal/custom/edit/metrics/m", "/portal/custom/edit/metrics/m"],
-    ["/portal/custom/edit/dashboards/q3-plan", "/portal/custom/edit/dashboards/:id"],
+    ["/dashboards", "/dashboards"],
+    ["/dashboards/", "/dashboards/"],
+    ["/dashboards/q3-hiring-plan", "/dashboards/:id"],
+    ["/dashboards/Board%20for%20Jane", "/dashboards/:id"],
+    ["/dashboards/metrics", "/dashboards/metrics"],
+    ["/dashboards/widgets", "/dashboards/widgets"],
+    ["/dashboards/datasets", "/dashboards/datasets"],
+    ["/dashboards/alerts", "/dashboards/alerts"],
+    ["/dashboards/destinations", "/dashboards/destinations"],
+    ["/dashboards/new/dashboards", "/dashboards/new/dashboards"],
+    ["/dashboards/edit/metrics/m", "/dashboards/edit/metrics/m"],
+    ["/dashboards/edit/dashboards/q3-plan", "/dashboards/edit/dashboards/:id"],
     [
-      "/portal/custom/alerts/cccccccc-0000-0000-0000-000000000001",
-      "/portal/custom/alerts/:id",
+      "/dashboards/alerts/cccccccc-0000-0000-0000-000000000001",
+      "/dashboards/alerts/:id",
     ],
   ])("names a custom page %s as %s", (path, shown) => {
     expect(screenPath(path), `path: ${path}`).toBe(shown);

@@ -120,14 +120,14 @@ describe("<CustomChat>", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Commits per day" })
-    ).toHaveAttribute("href", "/portal/custom/metrics/m-1");
+    ).toHaveAttribute("href", "/dashboards/metrics/m-1");
     expect(screen.getByRole("link", { name: "Commits graph" })).toHaveAttribute(
       "href",
-      "/portal/custom/widgets/w-1"
+      "/dashboards/widgets/w-1"
     );
     expect(screen.getByRole("link", { name: "Engineering" })).toHaveAttribute(
       "href",
-      "/portal/custom/d-1"
+      "/dashboards/d-1"
     );
   });
 

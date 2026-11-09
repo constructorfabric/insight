@@ -1,5 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
-
 import { useViewer } from "@/auth";
 import { zoneHidden } from "@/lib/portal/nav-policy";
 import {
@@ -8,8 +6,9 @@ import {
   zoneIsPlanned,
   type Zone,
 } from "@/lib/portal/nav-model";
+import { useGo } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
 
@@ -23,13 +22,11 @@ export interface ZoneNav {
 /**
  * The zone list the viewer may see plus the selection behaviour, shared by the
  * desktop icon rail and the mobile drawer so both offer exactly the same zones
- * and route the same way. Two zones are route-driven (Person / People): they
- * navigate and clear the pinned zone, which is what lets a person-name click
- * inside a roster drill straight into Person; the rest pin the zone.
+ * and route the same way. Person and People open the viewer's own pages.
  */
 export function useZoneNav(): ZoneNav {
-  const navigate = useNavigate();
-  const { activeZone, activePerson } = useActiveZone();
+  const go = useGo();
+  const { zone: activeZone, person: activePerson } = useNavLocation();
   const { personId: viewerPersonId } = useViewer();
   const me = viewerPersonId ?? activePerson;
   const { canSeeOthers, isPending: reachPending } = useViewerReach();
@@ -52,45 +49,25 @@ export function useZoneNav(): ZoneNav {
   });
 
   function selectZone(zone: Zone, item?: string) {
-    // ONE navigation per click. Three separate writes (clear item, clear zone,
-    // change path) meant three history entries, so Back walked through
-    // half-states nobody chose.
-    const entity = zone.kind === "person" || zone.kind === "people";
-    if (entity && !me) return;
-    // Custom is route-driven like the entity zones, but needs no person.
-    if (zone.kind === "custom") {
-      void navigate({
-        to: "/portal/custom",
-        search: (prev: Record<string, unknown>) => ({
-          ...prev,
-          item: undefined,
-          acct: undefined,
-          zone: undefined,
-        }),
-      });
-      return;
+    switch (zone.id) {
+      case "person":
+        if (me) go({ zone: "person", person: me, section: item });
+        return;
+      case "people":
+        if (me) go({ zone: "people", person: me, item });
+        return;
+      case "directions":
+        go({ zone: "directions" });
+        return;
+      case "custom":
+        go({ zone: "custom" });
+        return;
+      case "overview":
+      case "aicost":
+      case "reports":
+      case "manage":
+        go({ zone: zone.id, item });
     }
-    void navigate({
-      ...(entity
-        ? {
-            to:
-              zone.kind === "person"
-                ? "/ic/$person/personal"
-                : "/ic/$person/team",
-            params: { person: me },
-          }
-        : { to: "/portal" }),
-      // `item` is per-zone: carrying it over renders a fallback view while the
-      // pane highlights nothing. The path carries the zone for entity zones, so
-      // a lingering `?zone=` there would only contradict it.
-      search: (prev: Record<string, unknown>) => ({
-        ...prev,
-        ...(item !== undefined || activeZone !== zone.id
-          ? { item, acct: undefined }
-          : {}),
-        zone: entity ? undefined : zone.id,
-      }),
-    });
   }
 
   return { zones, activeZone, me, selectZone };

@@ -12,9 +12,9 @@ import { cn } from "@/lib/utils";
 
 /** Where a holder of each kind is looked at. */
 const PAGE: Record<Holder["kind"], string> = {
-  metrics: "/portal/custom/metrics/$name",
-  widgets: "/portal/custom/widgets/$name",
-  dashboards: "/portal/custom/$name",
+  metrics: "/dashboards/metrics/$name",
+  widgets: "/dashboards/widgets/$name",
+  dashboards: "/dashboards/$name",
 };
 
 /**
