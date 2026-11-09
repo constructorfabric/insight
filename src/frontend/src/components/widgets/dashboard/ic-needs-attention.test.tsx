@@ -2,6 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
 import type { AttentionItem } from "@/lib/insight/attention";
 import { AppTooltips } from "@/test/tooltip";
@@ -32,6 +34,13 @@ describe("IcNeedsAttention", () => {
       <IcNeedsAttention items={[]} onOpenGroup={vi.fn()} />
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("titles the list as worth a look", () => {
+    render(<IcNeedsAttention items={[item()]} onOpenGroup={vi.fn()} />);
+    expect(
+      screen.getByRole("heading", { name: "Worth a look" })
+    ).toBeInTheDocument();
   });
 
   it("renders items in the order it is given", () => {

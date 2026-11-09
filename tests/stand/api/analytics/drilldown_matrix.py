@@ -245,7 +245,6 @@ MATRIX: Sequence[Expectation] = (
     Expectation("tasks.closed_fixed", "task", Tier.EXACT_COUNT),
     Expectation("tasks.closed_duplicate", "task", Tier.EXACT_COUNT),
     Expectation("tasks.closed_wontfix", "task", Tier.EXACT_COUNT),
-    Expectation("tasks.dev_time", "task", Tier.EXACT_MEDIAN),
     Expectation("tasks.due_date_compliance", "task", Tier.EXACT_RATIO, scale=100.0),
     Expectation(
         "tasks.estimation_accuracy",
@@ -290,7 +289,7 @@ EXPORT_SHAPES: Sequence[str] = (
     "git.prs_created",
     "git.pr_cycle_time_h",
     "tasks.closed",
-    "tasks.dev_time",
+    "tasks.resolution_time",
     "git.merge_rate",
     "collab.messages_sent",
     "wiki.pages_created",

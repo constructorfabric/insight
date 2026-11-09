@@ -15,7 +15,7 @@ SELECT
     CAST(NULL AS Nullable(String)) AS subject_key,
     dimensions
 FROM {{ ref('task_metric_evidence') }}
-WHERE measure_key NOT IN ('dev_time_hours', 'resolution_days', 'pickup_days')
+WHERE measure_key NOT IN ('resolution_days', 'pickup_days')
 GROUP BY tenant_id, source_key, entity_type, entity_id, account_source_type, account_source_id, account_id,
          metric_date, measure_key, dimensions
 
@@ -36,4 +36,4 @@ SELECT
     subject_key,
     dimensions
 FROM {{ ref('task_metric_evidence') }}
-WHERE measure_key IN ('dev_time_hours', 'resolution_days', 'pickup_days')
+WHERE measure_key IN ('resolution_days', 'pickup_days')

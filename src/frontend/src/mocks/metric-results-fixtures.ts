@@ -314,17 +314,6 @@ export const COLLAB_METRIC_FIXTURES: MetricResult[] = [
  */
 export const TASK_METRIC_FIXTURES: MetricResult[] = [
   {
-    metric_key: "tasks.dev_time",
-    label: "Dev Time",
-    unit: "h",
-    format: "decimal",
-    direction: "lower_is_better",
-    computation: "median",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 14.2 }] },
-    ],
-  },
-  {
     metric_key: "tasks.resolution_time",
     label: "Resolution Time",
     unit: "d",

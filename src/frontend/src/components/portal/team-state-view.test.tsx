@@ -16,6 +16,8 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 import { headlineMetricKeys } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import type { PeopleListItem } from "@/api/identity-client";

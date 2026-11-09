@@ -1,3 +1,4 @@
+import type { DisplayText } from "@/i18n/localized-text";
 import { evidenceCarriers } from "@/lib/metrics/evidence-via";
 import {
   directionHidden,
@@ -128,7 +129,7 @@ export type SectionSpec =
   | { kind: "direction-cards"; variant: "compact" | "full" };
 
 export interface LensConfig {
-  title: string;
+  title: DisplayText;
   /** Subtitle tail after "N people · " (defaults to "trend & balance"). */
   tagline?: string;
   sections: readonly SectionSpec[];
@@ -676,11 +677,7 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "stat-tiles",
         title: "Typical task times (median)",
-        metrics: [
-          "tasks.resolution_time",
-          "tasks.pickup_time",
-          "tasks.dev_time",
-        ],
+        metrics: ["tasks.resolution_time", "tasks.pickup_time"],
       },
       { kind: "trend", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {

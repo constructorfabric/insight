@@ -83,7 +83,6 @@
     },
     "team_sections_meta": {
       "team_summary": "Team summary",
-      "attention": "Attention needed",
       "members": "Members"
     },
     "copy": "Copy",
@@ -559,5 +558,10 @@
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
+  },
+  "worth_a_look": {
+    "title": "Worth a look",
+    "overview_title": "Overview · Worth a look",
+    "nothing_stands_out": "Nothing stands out this period."
   }
 }

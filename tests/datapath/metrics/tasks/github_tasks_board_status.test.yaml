@@ -1,6 +1,6 @@
 spec_version: 1
 description: >
-  Task Delivery - dev time, pickup time and flow efficiency for GITHUB, driven
+  Task Delivery - pickup time, resolution time and flow efficiency for GITHUB, driven
   by a Projects V2 board column.
 
   An issue's own lifecycle has no middle: GitHub says open or closed and

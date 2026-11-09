@@ -1,3 +1,4 @@
+import type { DisplayText } from "@/i18n/localized-text";
 import { headlineMetricKeys } from "@/lib/insight/groups";
 import { sectionMetricKeys, type LensConfig } from "@/lib/portal/lens-configs";
 import { defaultZoneItem } from "@/lib/portal/nav-model";
@@ -54,7 +55,7 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [{ kind: "direction-cards", variant: "full" }],
   },
   attention: {
-    title: "Overview · Attention needed",
+    title: { key: "worth_a_look.overview_title" },
     tagline: "who to look at",
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
   },
@@ -86,7 +87,7 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
 export type OwnOverviewItem =
   | { kind: "home" }
   | { kind: "lens"; config: LensConfig }
-  | { kind: "attention"; title: string; tagline: string };
+  | { kind: "attention"; title: DisplayText; tagline: string };
 
 export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
   [DEFAULT_OVERVIEW_ITEM]: { kind: "home" },
@@ -100,7 +101,7 @@ export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
   },
   attention: {
     kind: "attention",
-    title: "Attention needed",
+    title: { key: "worth_a_look.title" },
     tagline: "what stands out in your work",
   },
 };

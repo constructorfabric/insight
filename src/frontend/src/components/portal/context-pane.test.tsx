@@ -18,6 +18,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 const mocks = vi.hoisted(() => ({
   isFlat: false,
   zone: { activeZone: "overview", activePerson: "boss@x" },
@@ -181,8 +183,14 @@ describe("Home pane", () => {
   it("lists the themes and writes the selection on click", async () => {
     pane();
     const item = renderHook(() => usePortalItem());
-    await userEvent.click(screen.getByText("Attention needed"));
+    await userEvent.click(screen.getByText("Worth a look"));
     expect(item.result.current).toBe("attention");
+  });
+
+  it("marks Worth a look with an eye icon", () => {
+    pane();
+    const item = screen.getByText("Worth a look").closest("button");
+    expect(item?.querySelector(".lucide-eye")).not.toBeNull();
   });
 
   it("links an admin to their own dashboards", () => {
