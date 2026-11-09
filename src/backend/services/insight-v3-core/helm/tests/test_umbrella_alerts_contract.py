@@ -33,7 +33,7 @@ WEBHOOK = "https://discord.example.test/api/webhooks/1/x"
 # Minimum viable umbrella install with insight-v3-core deployed.
 BASE = {
     "global.insightV3Core.deploy": "true",
-    "global.tenantDefaultId": TENANT,
+    "authenticator.oidc.defaultTenantId": TENANT,
     "identityResolution.deploy": "true",
     "clickhouse.host": "ch",
     "clickhouse.username": "u",
@@ -43,7 +43,6 @@ BASE = {
     "mariadb.database": "insight",
     "redis.host": "redis",
     "redpanda.brokers": "rp:9092",
-    "ingestion.reconcile.tenantId": "default",
     "authenticator.oidc.issuerUrl": "https://idp",
     "authenticator.oidc.clientId": "c",
     "authenticator.oidc.clientSecret": "s",

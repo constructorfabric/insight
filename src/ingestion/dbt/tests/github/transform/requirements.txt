@@ -1,0 +1,5 @@
+# Pinned to what the suite is verified against; dbt-core / dbt-clickhouse come
+# from scripts/bootstrap-db/pins.env so the adapter stays in one place.
+pytest==9.1.1
+clickhouse-connect==1.8.0
+pyyaml==6.0.3

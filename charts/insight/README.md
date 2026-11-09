@@ -112,6 +112,7 @@ Before going to prod:
     - **Dry-run note**: `helm install --dry-run` (default, client-side) skips the `lookup` function, so the BYO preview will incorrectly show the chart emitting `insight-db-creds`. Use `helm install --dry-run=server` (Helm ≥3.13) for an accurate BYO sanity-check — it exercises `lookup` against the real cluster.
   - Rendering under a GitOps controller (`helm template`): set `deploymentMode: gitops` and `autoGenerate: false`, and supply the config Secrets out-of-band — the validator refuses `gitops` + `autoGenerate: true`.
 - [ ] Configure OIDC under `authenticator.oidc.*`: `issuerUrl`, `clientId`, `redirectUri`, and the client secret via a Secret (never inline in a committed values file).
+- [ ] Set `authenticator.oidc.defaultTenantId` — the install's one tenant, a lowercase UUID equal to the tenant your IdP asserts; the only tenant key the chart reads. Upgrading an install that already holds data: [`deploy/TENANT_IDENTITY_UPGRADE.md`](../../deploy/TENANT_IDENTITY_UPGRADE.md).
 - [ ] Provide `insight-authenticator-signing-keys` (ES256 `current.pem`) — not auto-generated.
 - [ ] With `global.insightV3Core.deploy` on, on every install path — GitOps or imperative — provide `insight-v3-core-token` with a `token` key of at least 32 bytes (`openssl rand -hex 32`). The v3 Deployment reads it by `secretKeyRef` (`insightV3Core.ingest.tokenSecret` / `.tokenKey`); without the Secret the pod does not start. Rotation: [raw-data ingest guide](../../deploy/RAW_DATA_INGEST.md).
 - [ ] Attach routes to the shared Gateway: `gateway.route`, `frontend.route` (TLS terminates at the Gateway listener)
@@ -303,11 +304,11 @@ See comments in [`values.yaml`](./values.yaml) — every block is documented inl
 Key groups:
 
 - `credentials.deploymentMode` / `credentials.autoGenerate` — who owns the generated Secrets (`helm` with lookup-based reuse, or `gitops` with out-of-band Secrets)
-- `global.*` — cluster-wide defaults (pull secrets, storage class, `tenantDefaultId`, `observability.logs.{level,format}`, `observability.otlp.endpoint`)
+- `global.*` — cluster-wide defaults (pull secrets, storage class, `observability.logs.{level,format}`, `observability.otlp.endpoint`)
 - `<dep>.host` / `<dep>.port` / `<dep>.passwordSecret` (Redpanda: `<dep>.brokers`) — external-infra wiring for ClickHouse, MariaDB, Redis, Redpanda
 - `gateway` / `authenticator` / `analytics` — **mandatory** app services (no deploy flag; the gateway is the single entrance and the product is one unit)
 - `global.insightV3Core.deploy` + `insightV3Core.*` — insight-v3-core, off by default (it needs `insightV3Core.ingest.tokenSecret` to exist first); the same flag drops the gateway's v3 routes and the `insight_v3_ro` ClickHouse role, which reads every table so that an install without the assistant does not carry it. Turning the flag off on a running install strips that role's grants; the role and its user are left standing, since the deploy did not create the identity
-- `authenticator.oidc.*` — OIDC upstream and login-resolution mode (`resolveBy: external_id | email`)
+- `authenticator.oidc.*` — OIDC upstream, login-resolution mode (`resolveBy: external_id | email`) and `defaultTenantId`, the install's tenant
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)

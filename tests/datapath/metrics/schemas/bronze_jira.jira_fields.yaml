@@ -8,6 +8,7 @@ schemas:
     additionalProperties: false
     properties:
       unique_key: { type: string }
+      tenant_id: { type: string }
       source_id: { type: string }
       tenant_id: { type: string }
       field_id: { type: string }

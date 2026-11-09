@@ -1,8 +1,8 @@
 """Every closed-issue evidence row names its issue.
 
-An issue's newest history row can come from a producer that cannot resolve the
-readable key — here the availability row a census detection adds — and the key
-the issue is served under must still be the one its other rows carry.
+An issue the census observes under a second key is two availability entities, one
+of which knows no readable key; the key the issue is served under must still be
+the one its other rows carry.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ CAROL = "carol@example.com"
 
 
 def test_every_closure_in_the_evidence_names_its_issue(spec: SpecRun) -> None:
-    """Both closures are listed, each with its key, the unstamped issue included."""
+    """Both closures are listed, each with its key, the issue the census holds twice included."""
     r = spec.call(
         {
             "url": "/v1/metric-drilldown",

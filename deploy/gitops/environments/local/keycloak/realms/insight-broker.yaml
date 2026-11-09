@@ -22,7 +22,7 @@ clientScopes:
   # The claim allow-list: tokens carry exactly email, single-string tenant_id,
   # and idp_sub (plus protocol-level sub). tenant_id is ALWAYS the pinned
   # per-registration tenant: every IdP's hardcoded-attribute-idp-mapper stamps
-  # INSIGHT_TENANT_ID (global.tenantDefaultId); a customer with several IdPs
+  # INSIGHT_TENANT_ID (authenticator.oidc.defaultTenantId); a customer with several IdPs
   # pins the same tenant on each. What an IdP asserts about tenancy is never
   # consulted. idp_sub carries the upstream directory id (e.g. Entra oid) for
   # the login-bootstrap person lookup, stamped per IdP by an importer mapper.

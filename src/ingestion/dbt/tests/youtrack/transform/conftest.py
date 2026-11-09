@@ -56,6 +56,17 @@ class Warehouse:
     def build(self, selector: str = "tag:youtrack", full_refresh: bool = False) -> None:
         self.dbt("run", "--select", selector, *(["--full-refresh"] if full_refresh else []))
 
+    def failing_tests(self, names: Sequence[str]) -> set[str]:
+        result = dbtRunner().invoke(
+            ["test", "--project-dir", str(DBT), "--profiles-dir", str(self.profile), "--quiet", "--select", *names]
+        )
+        assert result.result is not None, f"dbt test did not run: {result.exception}"
+        return {
+            outcome.node.name
+            for outcome in result.result.results
+            if outcome.node.resource_type == "test" and outcome.status in {"fail", "error"}
+        }
+
     def insert(self, table: str, row: Mapping[str, object], observed: str = "2026-01-10T00:00:00") -> None:
         assert table in self.tables
         values = {

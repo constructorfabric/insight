@@ -24,7 +24,7 @@ secrets-store.yaml
 #
 #   inventory.yaml         — wizard writes from inventory.yaml.template
 #   values.yaml            — wizard writes from values.yaml.template, then
-#                            injects .global.tenantDefaultId
+#                            injects .authenticator.oidc.defaultTenantId
 #   pub-cert.pem           — `make fetch-cert` writes from the cluster
 #   *-sealedsecret.yaml    — `make seal` writes via kubeseal
 environments/local/inventory.yaml

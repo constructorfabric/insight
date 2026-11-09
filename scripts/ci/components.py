@@ -243,6 +243,11 @@ COMPONENTS = [
         "lang": "python",
         "root": "src/ingestion/scripts",
         "cov_package": "load_field_value_map",
+        # The tenant migration's integration suite runs against a real
+        # ClickHouse (TENANT_MIGRATION_TEST_CH_URL) and skips without one.
+        "live_ch": True,
+        # The ClickHouse is a container, and the small runner has no Docker.
+        "runner": "large",
         "paths": ["src/ingestion/scripts"],
     },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),

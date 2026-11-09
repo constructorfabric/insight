@@ -2,7 +2,7 @@
 
 SELECT candidate.*
 FROM (
-    SELECT concat(tenant_id, '-', insight_source_id, '-', issue_id, '-', toString(observed_at)) AS unique_key,
+    SELECT concat(ifNull(tenant_id, ''), '-', insight_source_id, '-', issue_id, '-', toString(observed_at)) AS unique_key,
         *, toUInt64(toUnixTimestamp64Milli(observed_at)) AS _version
     FROM {{ ref('youtrack__issues') }}
 ) AS candidate

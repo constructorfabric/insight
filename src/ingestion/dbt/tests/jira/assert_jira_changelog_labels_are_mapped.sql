@@ -19,6 +19,7 @@
 
 WITH items AS (
     SELECT
+        COALESCE(h.tenant_id, '')                         AS tenant_id,
         h.source_id                                       AS insight_source_id,
         h.created                                         AS created,
         arrayJoin(JSONExtractArrayRaw(COALESCE(h.items, '[]')))  AS item
@@ -26,6 +27,7 @@ WITH items AS (
 )
 
 SELECT
+    tenant_id,
     insight_source_id,
     JSONExtractString(item, 'field')                      AS field_label,
     JSONExtractString(item, 'fieldtype')                  AS field_type,
@@ -37,4 +39,4 @@ FROM items
 WHERE JSONExtractString(item, 'fieldId') = ''
   AND {{ jira_changelog_item_field_id('item') }} = ''
   AND JSONExtractString(item, 'field') NOT IN {{ jira_changelog_ignored_events() }}
-GROUP BY insight_source_id, field_label, field_type
+GROUP BY tenant_id, insight_source_id, field_label, field_type

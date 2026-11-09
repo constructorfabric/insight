@@ -26,6 +26,7 @@
 
 WITH kinds AS (
     SELECT
+        tenant_id,
         insight_source_id,
         field_id,
         field_kind
@@ -36,12 +37,13 @@ WITH kinds AS (
 
 tied_instants AS (
     SELECT
+        tenant_id,
         insight_source_id,
         assumeNotNull(jira_id)                            AS issue_id,
         created_at                                        AS event_at
     FROM {{ ref('jira__changelog_items') }}
     WHERE jira_id IS NOT NULL
-    GROUP BY insight_source_id, issue_id, event_at
+    GROUP BY tenant_id, insight_source_id, issue_id, event_at
     HAVING min(toUInt64OrZero(changelog_id)) != max(toUInt64OrZero(changelog_id))
 ),
 
@@ -49,6 +51,7 @@ tied_instants AS (
 -- their sides resolved by the field's kind.
 tied_items AS (
     SELECT
+        ci.tenant_id                                      AS tenant_id,
         ci.insight_source_id                              AS insight_source_id,
         assumeNotNull(ci.jira_id)                         AS issue_id,
         ci.created_at                                     AS event_at,
@@ -60,11 +63,12 @@ tied_items AS (
                             'ci.value_to', 'ci.value_to_string') }}    AS sides
     FROM {{ ref('jira__changelog_items') }} AS ci
     INNER JOIN kinds AS k
-        ON k.insight_source_id = ci.insight_source_id
+        ON k.tenant_id = ci.tenant_id
+       AND k.insight_source_id = ci.insight_source_id
        AND k.field_id = ci.field_id
     WHERE ci.jira_id IS NOT NULL
-      AND (ci.insight_source_id, assumeNotNull(ci.jira_id), ci.created_at)
-          IN (SELECT insight_source_id, issue_id, event_at FROM tied_instants)
+      AND (ci.tenant_id, ci.insight_source_id, assumeNotNull(ci.jira_id), ci.created_at)
+          IN (SELECT tenant_id, insight_source_id, issue_id, event_at FROM tied_instants)
       AND {{ jira_item_is_live('k.field_kind', 'ci.value_from', 'ci.value_from_string',
                                'ci.value_to', 'ci.value_to_string') }}
 ),
@@ -73,6 +77,7 @@ tied_items AS (
 -- (`jira_entry_item_ends`), so the chains below link the events it emits.
 tied_entry_items AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         event_at,
@@ -82,11 +87,12 @@ tied_entry_items AS (
         any(self_describing)                              AS self_describing,
         {{ jira_entry_items_ordered('groupArray((sides.1, sides.2, sides.3, sides.4))') }} AS items
     FROM tied_items
-    GROUP BY insight_source_id, issue_id, event_at, field_id, event_ord, changelog_id
+    GROUP BY tenant_id, insight_source_id, issue_id, event_at, field_id, event_ord, changelog_id
 ),
 
 tied_entry_events AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         event_at,
@@ -101,6 +107,7 @@ tied_entry_events AS (
 
 tied_fields AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         event_at,
@@ -110,13 +117,14 @@ tied_fields AS (
                   groupUniqArray((event_ord, changelog_id, items[ends.1].1, items[ends.2].3))) AS evs,
         uniqExact(changelog_id)                           AS distinct_changelog_ids
     FROM tied_entry_events
-    GROUP BY insight_source_id, issue_id, event_at, field_id
+    GROUP BY tenant_id, insight_source_id, issue_id, event_at, field_id
 ),
 
 -- Element-wise items carry one element, not the field's value, so they link
 -- nothing; their entries still take part in the instant's order.
 tied_field_links AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         event_at,
@@ -132,16 +140,18 @@ tied_field_links AS (
 
 tied_links AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         arraySort(arrayDistinct(arrayFlatten(groupArray(entries))))  AS entries,
         arrayDistinct(arrayFlatten(groupArray(links)))    AS links
     FROM tied_field_links
-    GROUP BY insight_source_id, issue_id, event_at
+    GROUP BY tenant_id, insight_source_id, issue_id, event_at
 ),
 
 tied_orders AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         entries,
@@ -154,6 +164,7 @@ tied_orders AS (
 
 entry_ranks AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         position.1                                        AS changelog_id,
@@ -162,6 +173,7 @@ entry_ranks AS (
         -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
         -- its elements beside it re-evaluates it per reference.
         SELECT
+            tenant_id,
             insight_source_id,
             issue_id,
             arrayJoin(arrayMap(k -> ((entries[entry_order[k]]).2, toUInt32(k - 1)),
@@ -171,7 +183,8 @@ entry_ranks AS (
 )
 
 SELECT
-    CAST(concat(insight_source_id, '-', issue_id, '-', changelog_id) AS String) AS unique_key,
+    CAST(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-', issue_id, '-', changelog_id) AS String) AS unique_key,
+    tenant_id,
     insight_source_id,
     issue_id,
     changelog_id,

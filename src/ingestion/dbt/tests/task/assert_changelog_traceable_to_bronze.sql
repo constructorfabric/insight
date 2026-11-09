@@ -18,6 +18,7 @@
 -- Jira-only for now; other sources get their own staging table checks.
 
 SELECT
+    fh.tenant_id,
     fh.insight_source_id,
     fh.id_readable,
     fh.event_id,
@@ -26,10 +27,11 @@ FROM silver.class_task_field_history fh FINAL
 -- INVARIANT: `matched` marks a joined row under either join_use_nulls setting;
 -- an unmatched String key reads as '' when the setting is 0, never as NULL.
 LEFT JOIN (
-    SELECT insight_source_id, jira_id, changelog_id, field_id, 1 AS matched
+    SELECT tenant_id, insight_source_id, jira_id, changelog_id, field_id, 1 AS matched
     FROM staging.jira_changelog_items
 ) ci
-    ON fh.insight_source_id = ci.insight_source_id
+    ON fh.tenant_id         = ci.tenant_id
+   AND fh.insight_source_id = ci.insight_source_id
    AND fh.issue_id          = ci.jira_id
    AND fh.event_id          = ci.changelog_id
    AND fh.field_id          = ci.field_id

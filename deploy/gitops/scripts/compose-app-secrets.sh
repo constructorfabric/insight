@@ -28,11 +28,10 @@
 #   .identityResolution.databaseName (defaults to "identity")
 #   .insightV3Core.existingSecret (optional; when set, compose that Secret and
 #                                  require insight-v3-core-token to exist)
-#   .global.tenantDefaultId      (optional; empty disables the resolver
-#                                 on both identity-resolution and
-#                                 analytics. Single source of truth for
-#                                 the single-tenant UUID — matches the
-#                                 chart's `global.tenantDefaultId` knob.)
+#   .authenticator.oidc.defaultTenantId (required; the install's one tenant,
+#                                 a lowercase UUID — the chart's single tenant
+#                                 source. The keys that used to copy it are
+#                                 refused.)
 #   .identityUrl                 (optional; the identity URL ANALYTICS calls.
 #                                 Empty = the default
 #                                 `http://<release>-identity-resolution:8082`.
@@ -88,7 +87,17 @@ CH_CLUSTER_NAME=$(yq -r '.clickhouse.clusterName // ""'    "$VALUES")
 CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
-TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
+TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
+for removed in .global.tenantDefaultId .ingestion.reconcile.tenantId .identityResolution.seed.tenantDefaultId; do
+  if [ -n "$(yq -r "${removed} // \"\"" "$VALUES")" ]; then
+    echo "ERROR: ${removed#.} is removed in $VALUES — the tenant is set once, in authenticator.oidc.defaultTenantId, as a lowercase UUID" >&2
+    exit 1
+  fi
+done
+if ! [[ "$TENANT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  echo "ERROR: authenticator.oidc.defaultTenantId in $VALUES must be the install's tenant as a lowercase UUID (got '$TENANT_ID')" >&2
+  exit 1
+fi
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
 CORE_DB=$(yq -r '.insightV3Core.databaseName // "insight_v3"' "$VALUES")
@@ -151,10 +160,8 @@ AUTH_REDIRECT_URI=$(render_tpl "$(yq -r '.authenticator.oidc.redirectUri // ""' 
 # only issues a refresh token WITH offline_access (e.g. Entra) adds it here.
 AUTH_SCOPES=$(yq -r '(.authenticator.oidc.scopes // ["openid","email","profile"]) | join(" ")' "$VALUES")
 # Tenant sourcing: the id_token claim naming the single tenant (`tenant_id` on
-# Keycloak, `tid` on Entra) and the fallback for a claim-less IdP
-# (e.g. Okta). Empty fallback = fail closed downstream.
-AUTH_TENANT_CLAIM=$(     yq -r '.authenticator.oidc.tenantClaim     // "tenant_id"' "$VALUES")
-AUTH_DEFAULT_TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
+# Keycloak, `tid` on Entra); a claim-less IdP (e.g. Okta) falls back to TENANT_ID.
+AUTH_TENANT_CLAIM=$(yq -r '.authenticator.oidc.tenantClaim // "tenant_id"' "$VALUES")
 # Which question the login bootstrap asks to find the person: `external_id`
 # (default) resolves by the IdP's own stable user id under source_type;
 # `email` resolves by the token's `email` claim against the ROSTER's addresses
@@ -385,7 +392,7 @@ stringData:
   APP__gears__authenticator__config__idp__client_id: "${AUTH_CLIENT_ID}"
   APP__gears__authenticator__config__idp__client_secret: "${AUTH_CLIENT_SECRET}"
   APP__gears__authenticator__config__idp__tenant_claim: "${AUTH_TENANT_CLAIM}"
-  APP__gears__authenticator__config__idp__default_tenant_id: "${AUTH_DEFAULT_TENANT_ID}"
+  APP__gears__authenticator__config__idp__default_tenant_id: "${TENANT_ID}"
   APP__gears__authenticator__config__idp__source_type: "${AUTH_SOURCE_TYPE}"
   APP__gears__authenticator__config__idp__external_id_claim: "${AUTH_EXTERNAL_ID_CLAIM}"
   APP__gears__authenticator__config__idp__provision_on_login: "${AUTH_PROVISION_ON_LOGIN}"
@@ -438,9 +445,7 @@ stringData:
 EOF
   # First-admin bootstrap inputs (migrate hook Job): mirror the
   # chart-side block in charts/insight/templates/secrets.yaml.
-  if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
-    echo "  APP__gears__identity_resolution__config__tenant_default_id: \"${TENANT_DEFAULT}\""
-  fi
+  echo "  APP__gears__identity_resolution__config__tenant_default_id: \"${TENANT_ID}\""
   if [ -n "$IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN" ] && [ "$IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN" != "null" ]; then
     echo "  APP__gears__identity_resolution__config__bootstrap_admin_person_id: \"${IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN}\""
   fi

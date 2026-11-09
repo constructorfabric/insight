@@ -122,7 +122,7 @@ def parse_tenant_id(env: Mapping[str, str]) -> str:
                 f"{TENANT_ENV} is not set. Every seeded row is scoped to a tenant, and "
                 "rows written under the wrong one are invisible to every login on the "
                 "stand. Set it to the tenant the stand authenticates against "
-                "(the chart's global.tenantDefaultId).",
+                "(the chart's authenticator.oidc.defaultTenantId).",
             )
         )
     try:

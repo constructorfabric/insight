@@ -51,8 +51,6 @@ UMBRELLA_BASE = [
     "--set",
     "redpanda.brokers=rp:9092",
     "--set",
-    "ingestion.reconcile.tenantId=default",
-    "--set",
     "authenticator.oidc.issuerUrl=https://idp",
     "--set",
     "authenticator.oidc.clientId=c",

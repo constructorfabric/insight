@@ -35,7 +35,7 @@ opentelemetry:
 # (injected via envFrom; they override the mounted config ConfigMap):
 #   APP__gears__identity_resolution__config__database_url
 #   APP__gears__identity_resolution__config__clickhouse_url|_database|_user|_password
-#   APP__gears__identity_resolution__config__tenant_default_id       (optional)
+#   APP__gears__identity_resolution__config__tenant_default_id       (required by the seed)
 #   APP__gears__identity_resolution__config__bootstrap_admin_person_id (optional)
 #
 # The two optional fields drive the first-admin bootstrap in the migrate
@@ -102,13 +102,6 @@ rosterSourceType: ""
 #   kubectl create job --from=cronjob/<fullname>-seed seed-manual-<who>
 seed:
   enabled: true
-  # Explicit tenant for the seed run (UUID). Optional: when set it is
-  # injected as an env var that OVERRIDES any tenant_default_id the
-  # existingSecret carries (k8s `env` beats `envFrom`) — the single source
-  # for the CronJob. Leave empty when the Secret already carries the tenant
-  # (the umbrella wires it from global.tenantDefaultId and validates at
-  # render). Without a tenant from either source every run exits 1.
-  tenantDefaultId: ""
   # A freshness backstop, not the publish path (every seed run and operator
   # correction publishes on its own): it bounds how long a publish lost to a
   # dead pod can stay unpublished.

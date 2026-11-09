@@ -14,7 +14,7 @@
 ) }}
 
 -- Bodies of long-text fields, addressed by a hash of their content within one
--- source. The journal stores the hash in `value_ids` and a short prefix in
+-- tenant's source. The journal stores the hash in `value_ids` and a short prefix in
 -- `value_displays`; the full body lives here and reaches
 -- `silver.class_task_field_text`. See
 -- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md` §8.
@@ -45,7 +45,7 @@
 -- asymmetry, not an oversight.
 
 WITH long_text_fields AS (
-    SELECT insight_source_id, field_id
+    SELECT tenant_id, insight_source_id, field_id
     FROM {{ ref('jira__task_field_kind') }}
     WHERE field_kind = 'long_text'
 ),
@@ -53,15 +53,16 @@ WITH long_text_fields AS (
 -- Current bodies, from the issue JSON.
 issue_winner AS (
     -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
-    -- within a source, (source_id, jira_id): unmerged parts hold several rows
-    -- per issue, and `unique_key` exists for the merge alone.
-    SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    -- within a tenant's source, (tenant_id, source_id, jira_id): unmerged parts
+    -- hold several rows per issue, and `unique_key` exists for the merge alone.
+    SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY source_id, jira_id
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 from_snapshot AS (
     SELECT
+        i.tenant_id                                       AS tenant_id,
         CAST(i.source_id AS String)                       AS insight_source_id,
         kv.2                                              AS content,
         CAST('adf_json' AS String)                        AS content_form
@@ -69,7 +70,8 @@ from_snapshot AS (
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = CAST(i.source_id AS String)
+        ON f.tenant_id = i.tenant_id
+       AND f.insight_source_id = CAST(i.source_id AS String)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 ),
@@ -77,20 +79,23 @@ from_snapshot AS (
 -- Historical bodies, from both sides of every changelog item.
 from_changelog AS (
     SELECT
+        tenant_id,
         insight_source_id,
         content,
         CAST('rendered_text' AS String)                   AS content_form
     FROM (
-        SELECT ci.insight_source_id AS insight_source_id, ci.value_from_string AS content
+        SELECT ci.tenant_id AS tenant_id, ci.insight_source_id AS insight_source_id, ci.value_from_string AS content
         FROM {{ ref('jira__changelog_items') }} AS ci
         INNER JOIN long_text_fields AS f
-            ON f.insight_source_id = ci.insight_source_id
+            ON f.tenant_id = ci.tenant_id
+           AND f.insight_source_id = ci.insight_source_id
            AND f.field_id = ci.field_id
         UNION ALL
-        SELECT ci.insight_source_id AS insight_source_id, ci.value_to_string AS content
+        SELECT ci.tenant_id AS tenant_id, ci.insight_source_id AS insight_source_id, ci.value_to_string AS content
         FROM {{ ref('jira__changelog_items') }} AS ci
         INNER JOIN long_text_fields AS f
-            ON f.insight_source_id = ci.insight_source_id
+            ON f.tenant_id = ci.tenant_id
+           AND f.insight_source_id = ci.insight_source_id
            AND f.field_id = ci.field_id
     )
     WHERE content IS NOT NULL AND content != ''
@@ -100,10 +105,10 @@ all_text AS (
     -- Non-Nullable on purpose: the changelog columns are Nullable, and a
     -- Nullable content makes `text_id` Nullable too — which cannot be a sorting
     -- key. Both arms already exclude NULL, so the cast asserts what is true.
-    SELECT insight_source_id, CAST(assumeNotNull(content) AS String) AS content, content_form
+    SELECT tenant_id, insight_source_id, CAST(assumeNotNull(content) AS String) AS content, content_form
     FROM from_snapshot
     UNION ALL
-    SELECT insight_source_id, CAST(assumeNotNull(content) AS String) AS content, content_form
+    SELECT tenant_id, insight_source_id, CAST(assumeNotNull(content) AS String) AS content, content_form
     FROM from_changelog
 )
 
@@ -114,7 +119,8 @@ all_text AS (
 -- named `content` shadows the input column, so any expression wrapping it here
 -- parses as nesting one aggregate inside another.
 SELECT
-    concat(insight_source_id, '-jira-', text_id)          AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id, '-jira-', text_id) AS unique_key,
+    ifNull(tenant_id, '')                                 AS tenant_id,
     insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     text_id,
@@ -123,10 +129,11 @@ SELECT
     toUInt64(toUnixTimestamp64Milli(now64(3)))            AS _version
 FROM (
     SELECT
+        tenant_id,
         insight_source_id,
         {{ task_text_id('content') }} AS text_id,
         content_form,
         content
     FROM all_text
 )
-GROUP BY insight_source_id, text_id
+GROUP BY tenant_id, insight_source_id, text_id

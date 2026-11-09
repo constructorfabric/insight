@@ -93,7 +93,12 @@ name: github
 #   unresolved. MAJOR: the model is a table, but its rows keep their
 #   `_version`, so the class admits the rewritten rows only through the scoped
 #   `dbt --full-refresh` a major bump dispatches.
-version: "9.0.0"
+# 10.0.0: `github__task_field_history` and `github__task_links` carry
+#   `tenant_id` after `unique_key` and lead their key with the tenant. MAJOR:
+#   both models are tables, but the silver classes keep the rows written under
+#   the old keys, and only the scoped `dbt --full-refresh` a major bump
+#   dispatches replaces them.
+version: "10.0.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

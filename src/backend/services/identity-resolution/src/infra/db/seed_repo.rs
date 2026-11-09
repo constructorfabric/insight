@@ -83,20 +83,6 @@ impl SeedStore for MariaDbSeedStore<'_> {
     }
 }
 
-/// How the `persons` log is populated relative to one tenant — input to the
-/// CLI runner's wrong-tenant guard (see `seed_runner`): rows under OTHER
-/// tenants with none under the configured one means the operator is about to
-/// mint a parallel person universe (the HOTFIX(#1550) failure mode — the
-/// unfiltered reader re-files every row under the configured tenant), not seed a fresh
-/// install.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TenantPresence {
-    /// Whether `persons` holds any row under the given tenant.
-    pub has_own: bool,
-    /// Whether `persons` holds any row under any other tenant.
-    pub has_other: bool,
-}
-
 /// Distinct tenants present in the `persons` log, capped at `cap` rows —
 /// the seed runner's tenant inference only needs "zero, one, or more", so a
 /// tiny cap keeps this a loose index scan on `idx_tenant_person`.
@@ -119,40 +105,6 @@ pub async fn distinct_tenants(db: &DatabaseConnection, cap: u64) -> anyhow::Resu
             Ok(Uuid::from_slice(&id)?)
         })
         .collect()
-}
-
-/// Whether `persons` holds rows under the given tenant / under any other
-/// tenant. `EXISTS` probes (short-circuit on `idx_tenant_person`) rather than
-/// a whole-table aggregate — the guard only needs zero-vs-non-zero, and this
-/// runs ahead of every seed.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
-pub async fn tenant_presence(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-) -> anyhow::Result<TenantPresence> {
-    const SQL: &str = r"
-        SELECT
-            EXISTS(SELECT 1 FROM persons WHERE insight_tenant_id = ?)  AS has_own,
-            EXISTS(SELECT 1 FROM persons WHERE insight_tenant_id <> ?) AS has_other
-    ";
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            SQL,
-            [
-                tenant_id.as_bytes().to_vec().into(),
-                tenant_id.as_bytes().to_vec().into(),
-            ],
-        ))
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("tenant_presence query returned no row"))?;
-    Ok(TenantPresence {
-        has_own: row.try_get::<i64>("", "has_own")? != 0,
-        has_other: row.try_get::<i64>("", "has_other")? != 0,
-    })
 }
 
 /// Current bindings for the tenant — the latest `value_type='id'` observation

@@ -12,12 +12,13 @@
 ) }}
 
 -- A text reference — in the history, or a current body — must name a stored
--- body of its own source, and a history display must be a prefix of that body.
+-- body of its own tenant's source, and a history display must be a prefix of that body.
 -- An unresolved reference leaves a long-text value with only its first
 -- characters readable, or none.
 
 WITH history_refs AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         issue_id,
@@ -37,6 +38,7 @@ WITH history_refs AS (
 
 current_refs AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         issue_id,
@@ -54,6 +56,7 @@ text_refs AS (
 )
 
 SELECT
+    r.tenant_id,
     r.insight_source_id,
     r.data_source,
     r.issue_id,
@@ -63,7 +66,8 @@ SELECT
     if(ifNull(t.text_id, '') = '', 'no stored body', 'display is not a prefix of the body') AS finding
 FROM text_refs AS r
 LEFT JOIN {{ ref('class_task_field_text') }} AS t FINAL
-    ON t.insight_source_id = r.insight_source_id
+    ON t.tenant_id = r.tenant_id
+   AND t.insight_source_id = r.insight_source_id
    AND t.data_source = r.data_source
    AND t.text_id = r.text_id
 WHERE ifNull(t.text_id, '') = '' OR NOT startsWith(t.content, r.display)

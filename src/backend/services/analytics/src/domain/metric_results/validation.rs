@@ -109,10 +109,6 @@ pub struct ValidatedMetricResultsRequest {
     /// byte-identical SQL in that case.
     pub compare_to: Option<DateWindow>,
     pub metrics: Vec<ValidatedMetricRequest>,
-    /// Whether the compiler injects the per-tenant observation filter (#1967).
-    /// Set from the `metric_catalog.enforce_tenant_scope` config key by the handler; the
-    /// validator defaults it to `false` (see the config knob for why).
-    pub enforce_tenant_scope: bool,
 }
 
 #[derive(Debug)]
@@ -265,10 +261,6 @@ pub async fn validate_request(
         to,
         compare_to,
         metrics,
-        // Off unless the handler turns it on from config; the ingest tenant is
-        // not yet aligned to the JWT tenant (#1829), so enforcing here empties
-        // reads. See `MetricCatalogConfig::enforce_tenant_scope`.
-        enforce_tenant_scope: false,
     };
     validate_projected_view_limits(&validated)?;
     Ok(validated)
@@ -1525,7 +1517,6 @@ mod tests {
                     group_limit: None,
                 }],
             }],
-            enforce_tenant_scope: false,
         };
         assert!(validate_projected_view_limits(&validated).is_err());
     }
@@ -1557,7 +1548,6 @@ mod tests {
                     views: vec![view()],
                 })
                 .collect(),
-            enforce_tenant_scope: false,
         };
         assert!(validate_projected_view_limits(&validated).is_ok());
 
@@ -1589,7 +1579,6 @@ mod tests {
                 filters: vec![],
                 views: vec![ValidatedMetricView::Histogram { dimensions: vec![] }],
             }],
-            enforce_tenant_scope: false,
         };
         assert!(validate_projected_view_limits(&validated).is_err());
 
@@ -1623,7 +1612,6 @@ mod tests {
                     },
                 ],
             }],
-            enforce_tenant_scope: false,
         };
         assert!(validate_projected_view_limits(&validated).is_ok());
     }

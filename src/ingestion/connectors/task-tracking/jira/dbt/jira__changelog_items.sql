@@ -21,7 +21,7 @@
 --     "to": "...", "toString": "..." }
 --
 -- ClickHouse strategy: arrayJoin() on JSONExtractArrayRaw, then JSONExtract* on each element.
--- Bronze dedup is handled by argMax on the natural key (source_id, changelog_id) picking the
+-- Bronze dedup is handled by argMax on the natural key (tenant_id, source_id, changelog_id) picking the
 -- latest Airbyte emission, then the final GROUP BY below collapses content-identical items
 -- within a single changelog.
 --
@@ -34,18 +34,19 @@
 
 WITH winner AS (
     SELECT
+        tenant_id,
         source_id,
         changelog_id,
         argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id,
         max(_airbyte_extracted_at)                     AS extracted_at
     FROM {{ source('bronze_jira', 'jira_issue_history') }}
-    GROUP BY source_id, changelog_id
+    GROUP BY tenant_id, source_id, changelog_id
 ),
 
 exploded AS (
     SELECT
         CAST(h.source_id AS String)                              AS insight_source_id,
-        CAST(h.tenant_id AS String)                              AS tenant_id,
+        ifNull(h.tenant_id, '')                                  AS tenant_id,
         COALESCE(h.id_readable, '')                              AS id_readable,
         h.jira_id                                                AS jira_id,
         COALESCE(toString(h.changelog_id), '')                   AS changelog_id,
@@ -83,6 +84,7 @@ parsed AS (
 -- `unique_key` encodes the same content-identity so silver/RMT dedup works on a single column.
 SELECT
     CAST(concat(
+        ifNull(tenant_id, ''), '-',
         coalesce(insight_source_id, ''), '-',
         coalesce(changelog_id, ''), '-',
         coalesce(field_id, ''), '-',
@@ -92,7 +94,7 @@ SELECT
         coalesce(value_to_string, '')
     ) AS String) AS unique_key,
     insight_source_id,
-    any(tenant_id)          AS tenant_id,
+    tenant_id,
     id_readable,
     -- The issue's immutable id where the row carries one (connector 6.1.0 and the
     -- backfill); NULL on a row neither reached. Readers resolve the key from it.
@@ -112,6 +114,7 @@ SELECT
     toUnixTimestamp64Milli(now64(3))                           AS _version
 FROM parsed
 GROUP BY
+    tenant_id,
     insight_source_id,
     id_readable,
     changelog_id,

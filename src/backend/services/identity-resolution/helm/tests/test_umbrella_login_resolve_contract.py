@@ -31,7 +31,7 @@ def test_logins_resolve_by_external_id_unless_an_install_says_otherwise(umbrella
 
     An upgrade must not change how anyone's sign-in resolves just by landing.
     """
-    code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}")
     assert code == 0, err
 
     secret = _authenticator_secret(out)
@@ -49,7 +49,7 @@ def test_email_mode_carries_the_mode_and_stops_demanding_a_source_type(umbrella_
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         *ROSTER,
         "--set",
         "authenticator.oidc.resolveBy=email",
@@ -74,7 +74,7 @@ def test_email_mode_without_a_roster_is_refused_at_render(umbrella_deps) -> None
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         "--set",
         "authenticator.oidc.resolveBy=email",
     )
@@ -88,7 +88,7 @@ def test_an_unknown_resolve_mode_is_refused_at_render(umbrella_deps) -> None:
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         *ROSTER,
         "--set",
         "authenticator.oidc.resolveBy=e-mail",
@@ -109,7 +109,7 @@ def test_external_id_mode_still_demands_a_source_type(umbrella_deps) -> None:
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         "--set",
         "authenticator.oidc.sourceType=",
     )
@@ -130,7 +130,7 @@ def test_email_mode_accepts_a_scope_list_that_does_not_name_email(umbrella_deps)
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         *ROSTER,
         "--set",
         "authenticator.oidc.resolveBy=email",
@@ -150,7 +150,7 @@ def test_email_mode_refuses_provisioning_rather_than_ignoring_it(umbrella_deps) 
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         *ROSTER,
         "--set",
         "authenticator.oidc.resolveBy=email",

@@ -120,7 +120,7 @@ SELECT
         'UPSERT-',
         toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
     ) AS String) AS unique_key,
-    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+    {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
     toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
     'active-directory' AS insight_source_type,
     entity_id AS source_account_id,
@@ -145,7 +145,7 @@ SELECT
         'UPSERT-',
         toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
     ) AS String) AS unique_key,
-    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+    {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
     toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
     'active-directory' AS insight_source_type,
     entity_id AS source_account_id,
@@ -170,7 +170,7 @@ SELECT
         'DELETE-',
         toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
     ) AS String) AS unique_key,
-    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+    {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
     toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
     'active-directory' AS insight_source_type,
     entity_id AS source_account_id,
@@ -194,7 +194,7 @@ SELECT
         'DELETE-',
         toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
     ) AS String) AS unique_key,
-    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+    {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
     toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
     'active-directory' AS insight_source_type,
     entity_id AS source_account_id,
@@ -218,7 +218,7 @@ SELECT
         'UPSERT-',
         toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
     ) AS String) AS unique_key,
-    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+    {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
     toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
     'active-directory' AS insight_source_type,
     entity_id AS source_account_id,
@@ -243,7 +243,7 @@ SELECT
         'DELETE-',
         toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
     ) AS String) AS unique_key,
-    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+    {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
     toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
     'active-directory' AS insight_source_type,
     entity_id AS source_account_id,

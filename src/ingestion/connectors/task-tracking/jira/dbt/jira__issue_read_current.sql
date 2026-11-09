@@ -9,6 +9,7 @@
 
 WITH issues AS (
     SELECT
+        tenant_id,
         CAST(source_id AS String)                                     AS insight_source_id,
         CAST(jira_id AS String)                                       AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
@@ -16,11 +17,12 @@ WITH issues AS (
         argMax(parseDateTime64BestEffortOrNull(updated, 3), _airbyte_extracted_at) AS updated_at,
         toDateTime64(max(_airbyte_extracted_at), 3)                   AS read_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 )
 
 SELECT
-    concat(insight_source_id, '-', issue_id) AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id, '-', issue_id) AS unique_key,
+    tenant_id,
     insight_source_id,
     issue_id,
     current_key,

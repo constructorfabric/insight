@@ -31,7 +31,7 @@ WITH ranked AS (
 )
 
 SELECT
-    CAST(concat(tenant_id, ':', source_id, ':github:user:', account_id) AS Nullable(String)) AS unique_key,
+    CAST(concat(ifNull(tenant_id, ''), ':', source_id, ':github:user:', account_id) AS Nullable(String)) AS unique_key,
     CAST(tenant_id AS Nullable(String))                     AS tenant_id,
     CAST(source_id AS Nullable(String))                     AS insight_source_id,
     CAST('github' AS String)                                AS data_source,

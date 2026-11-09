@@ -1,0 +1,19 @@
+spec_version: 1
+description: >
+  Metric: ci.runs at tenant grain with a second tenant in the same warehouse.
+
+  This tenant: two decided runs, ids 1 and 2. The neighbour (ci/ci_runs under
+  another tenant) reports runs 1, 2 and 3 from the same source and repository.
+  This tenant's total is 2, split one push and one schedule.
+
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-r1
+      id: 1
+      run_number: 1
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-r2
+      id: 2
+      run_number: 2
+      event: schedule

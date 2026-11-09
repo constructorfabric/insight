@@ -22,18 +22,20 @@
 
 WITH bound AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
     WHERE valid_from <= now64(3)
-    GROUP BY insight_source_id, data_source, field_id
+    GROUP BY tenant_id, insight_source_id, data_source, field_id
     HAVING argMax(is_deleted, (valid_from, recorded_at)) = 0
 ),
 
 latest_mappings AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         field_id,
@@ -46,6 +48,7 @@ latest_mappings AS (
 )
 
 SELECT
+    m.tenant_id,
     m.insight_source_id,
     m.data_source,
     m.field_id,
@@ -54,7 +57,8 @@ SELECT
     m.canonical_value
 FROM latest_mappings AS m
 INNER JOIN bound AS b
-    ON b.insight_source_id = m.insight_source_id
+    ON b.tenant_id = m.tenant_id
+    AND b.insight_source_id = m.insight_source_id
     AND b.data_source = m.data_source
     AND b.field_id = m.field_id
 WHERE m.is_deleted = 0

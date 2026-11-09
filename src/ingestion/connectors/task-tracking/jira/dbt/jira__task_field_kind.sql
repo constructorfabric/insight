@@ -5,7 +5,7 @@
     tags=['jira', 'staging']
 ) }}
 
--- Per-source field classification: one row per (source, field) carrying the
+-- Per-source field classification: one row per (tenant, source, field) carrying the
 -- `field_kind` that decides how the field's value is normalized and how its
 -- changelog deltas are applied. See
 -- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md` §3.
@@ -20,6 +20,7 @@
 -- run in that phase.
 
 SELECT
+    f.tenant_id                           AS tenant_id,
     CAST(f.source_id AS String)           AS insight_source_id,
     CAST('jira' AS String)                AS data_source,
     COALESCE(f.field_id, '')              AS field_id,

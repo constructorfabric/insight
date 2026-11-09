@@ -153,7 +153,6 @@ pub(crate) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
     };
     ValidatedMetricDrilldown {
         tenant_id: TEST_TENANT,
-        enforce_tenant_scope: true,
         fingerprint: selection_fingerprint(
             Uuid::nil(),
             &selection,

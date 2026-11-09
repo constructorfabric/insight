@@ -65,6 +65,9 @@ export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-topology.sh"
 source "$SCRIPT_DIR/lib/retired-relations.sh"
+source "$SCRIPT_DIR/lib/heal-identity-map-tenant.sh"
+source "$SCRIPT_DIR/lib/heal-youtrack-field-observation-tenant.sh"
+source "$SCRIPT_DIR/lib/heal-task-producer-tenant.sh"
 source "$SCRIPT_DIR/lib/warehouse-floor.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
@@ -91,6 +94,9 @@ SQL
 echo "=== Dropping gold identity backups the views superseded ==="
 drop_superseded_gold_backup insight metric_entity_cohorts_current
 drop_superseded_gold_backup insight identity_resolution_coverage
+
+echo "=== Dropping identity map views that predate their tenant ==="
+heal_identity_map_tenants
 
 echo "=== Applying ClickHouse migrations ==="
 # A migration that creates a relation spells its engine family behind the
@@ -331,6 +337,9 @@ heal_jira_substream_issue_id
 echo "=== Healing the Jira catalogue first-sync record ==="
 source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
 heal_jira_catalogue_first_seen
+
+echo "=== Healing YouTrack field observation tenants ==="
+heal_youtrack_field_observation_tenant
 
 echo "=== Healing Allure staging test results ==="
 # INVARIANT: repairs releases without #3707, #3713 (main before 0.7.108); delete once every CH_FLOOR_RELEASES release runs it.
@@ -705,6 +714,12 @@ SQL
 }
 
 heal_focus_metrics
+
+echo "=== Healing task class tenants ==="
+heal_task_class_tenants
+
+echo "=== Healing task class producer tenants ==="
+heal_task_producer_tenants
 
 echo "=== Healing column types a fresh install no longer creates ==="
 # dbt never retypes a column an earlier run created: an incremental model

@@ -1,7 +1,8 @@
-{{ config(materialized='table', schema='staging', engine=insight_engine('MergeTree'), order_by=['insight_source_id', 'issue_id', 'field_id', 'event_id'], tags=['youtrack', 'staging']) }}
+{{ config(materialized='table', schema='staging', engine=insight_engine('MergeTree'), order_by=['tenant_id', 'insight_source_id', 'issue_id', 'field_id', 'event_id'], tags=['youtrack', 'staging']) }}
 
 WITH raw AS (
-    SELECT coalesce(source_id, '') AS insight_source_id, coalesce(id, '') AS event_id,
+    SELECT ifNull(tenant_id, '') AS tenant_id, coalesce(source_id, '') AS insight_source_id,
+        coalesce(id, '') AS event_id,
         coalesce(_type, '') AS activity_type, author_id,
         fromUnixTimestamp64Milli(toInt64(assumeNotNull(timestamp))) AS event_at,
         {{ youtrack_json('target_json') }} AS target,
@@ -14,11 +15,11 @@ WITH raw AS (
     WHERE throwIf(timestamp IS NULL OR toInt64OrNull(timestamp) IS NULL OR id IS NULL OR source_id IS NULL,
                   'YouTrack activity requires identity and a millisecond timestamp') = 0
 ), field_types AS (
-    SELECT insight_source_id, field_id, observed_at, field_type
+    SELECT tenant_id, insight_source_id, field_id, observed_at, field_type
     FROM {{ ref('youtrack__field_observations') }} FINAL
 ), first_field_types AS (
-    SELECT insight_source_id, field_id, argMin(field_type, observed_at) AS field_type
-    FROM field_types GROUP BY insight_source_id, field_id
+    SELECT tenant_id, insight_source_id, field_id, argMin(field_type, observed_at) AS field_type
+    FROM field_types GROUP BY tenant_id, insight_source_id, field_id
 ), normalized AS (
     SELECT *, JSONExtractString(target, 'id') AS issue_id,
         multiIf(activity_type IN ('CustomFieldActivityItem', 'TextCustomFieldActivityItem'),
@@ -43,7 +44,8 @@ WITH raw AS (
     -- type observed last at or before the event, and before the first
     -- observation the first observed type. A later observation therefore never
     -- reinterprets an event it does not precede.
-    SELECT n.insight_source_id AS insight_source_id, n.event_id AS event_id, n.activity_type AS activity_type,
+    SELECT n.tenant_id AS tenant_id, n.insight_source_id AS insight_source_id, n.event_id AS event_id,
+        n.activity_type AS activity_type,
         n.author_id AS author_id, n.event_at AS event_at, n.target AS target, n.field AS field,
         n.added AS added, n.removed AS removed, n.payload AS payload, n.collected_at AS collected_at,
         n.issue_id AS issue_id, n.field_id AS field_id,
@@ -59,15 +61,18 @@ WITH raw AS (
         toUInt8(0) AS restated
     FROM normalized AS n
     ASOF LEFT JOIN field_types AS t
-        ON t.insight_source_id = n.insight_source_id AND t.field_id = n.field_id AND n.event_at >= t.observed_at
-    LEFT JOIN first_field_types AS f ON f.insight_source_id = n.insight_source_id AND f.field_id = n.field_id
+        ON t.tenant_id = n.tenant_id AND t.insight_source_id = n.insight_source_id AND t.field_id = n.field_id
+        AND n.event_at >= t.observed_at
+    LEFT JOIN first_field_types AS f
+        ON f.tenant_id = n.tenant_id AND f.insight_source_id = n.insight_source_id AND f.field_id = n.field_id
     WHERE n.field_id != '' AND n.issue_id != '' AND n.event_id != ''
 ), sync_boards AS (
     -- A board whose sprints are managed through a field (isExplicit = false)
     -- records membership only as that field's change, never as a
     -- SprintActivityItem. The field's values are bundle values named after the
     -- board's sprints.
-    SELECT coalesce(source_id, '') AS insight_source_id, assumeNotNull(id) AS agile_id,
+    SELECT tenant_id, coalesce(source_id, '') AS insight_source_id,
+        assumeNotNull(id) AS agile_id,
         JSONExtractString({{ youtrack_json('agile_json') }}, 'sprintsSettings', 'sprintSyncField', 'id') AS sync_field_id,
         arrayMap(p -> JSONExtractString(p, 'id'), JSONExtractArrayRaw({{ youtrack_json('agile_json') }}, 'projects')) AS project_ids
     FROM {{ source('bronze_youtrack', 'youtrack_agiles') }} FINAL
@@ -79,26 +84,28 @@ WITH raw AS (
     -- (field, project, value name) -> the sprints of every such board that the
     -- project is on: one name spans many boards, and an issue sits in the
     -- sprint of each board its project belongs to.
-    SELECT insight_source_id, field_id, project_id,
+    SELECT tenant_id, insight_source_id, field_id, project_id,
         mapFromArrays(groupArray(sprint_name), groupArray(sprints)) AS sprints_by_name
     FROM (
-        SELECT b.insight_source_id AS insight_source_id, b.sync_field_id AS field_id, project_id,
+        SELECT b.tenant_id AS tenant_id, b.insight_source_id AS insight_source_id, b.sync_field_id AS field_id, project_id,
             s.name AS sprint_name, arraySort(x -> x.1, groupUniqArray((s.id, s.name))) AS sprints
         FROM sync_boards AS b
         ARRAY JOIN b.project_ids AS project_id
         INNER JOIN (
-            SELECT coalesce(source_id, '') AS insight_source_id, assumeNotNull(agile_id) AS agile_id,
+            SELECT tenant_id, coalesce(source_id, '') AS insight_source_id,
+                assumeNotNull(agile_id) AS agile_id,
                 assumeNotNull(id) AS id, assumeNotNull(name) AS name
             FROM {{ source('bronze_youtrack', 'youtrack_sprints') }} FINAL
             WHERE id IS NOT NULL AND agile_id IS NOT NULL AND name IS NOT NULL
-        ) AS s ON s.insight_source_id = b.insight_source_id AND s.agile_id = b.agile_id
-        GROUP BY b.insight_source_id, b.sync_field_id, project_id, s.name
+        ) AS s ON s.tenant_id = b.tenant_id AND s.insight_source_id = b.insight_source_id AND s.agile_id = b.agile_id
+        GROUP BY b.tenant_id, b.insight_source_id, b.sync_field_id, project_id, s.name
     )
-    GROUP BY insight_source_id, field_id, project_id
+    GROUP BY tenant_id, insight_source_id, field_id, project_id
 ), sync_membership AS (
     -- The same change restated as the `sprints` property, in sprint ids, so
     -- membership reads as one property whichever way a board manages it.
-    SELECT a.insight_source_id AS insight_source_id, a.event_id AS event_id, a.activity_type AS activity_type,
+    SELECT a.tenant_id AS tenant_id, a.insight_source_id AS insight_source_id, a.event_id AS event_id,
+        a.activity_type AS activity_type,
         a.author_id AS author_id, a.event_at AS event_at, a.target AS target, a.field AS field,
         a.added AS added, a.removed AS removed, a.payload AS payload, a.collected_at AS collected_at,
         a.issue_id AS issue_id, 'sprints' AS field_id, 'Sprints' AS field_name,
@@ -110,9 +117,11 @@ WITH raw AS (
         -- places the event in youtrack__activity_order.
         toUInt8(1) AS restated
     FROM typed AS a
-    INNER JOIN {{ ref('youtrack__issues') }} AS i USING (insight_source_id, issue_id)
+    INNER JOIN {{ ref('youtrack__issues') }} AS i
+        ON i.tenant_id = a.tenant_id AND i.insight_source_id = a.insight_source_id AND i.issue_id = a.issue_id
     INNER JOIN sync_sprints AS l
-        ON l.insight_source_id = a.insight_source_id AND l.field_id = a.field_id AND l.project_id = i.project_id
+        ON l.tenant_id = a.tenant_id AND l.insight_source_id = a.insight_source_id
+        AND l.field_id = a.field_id AND l.project_id = i.project_id
     WHERE a.activity_type = 'CustomFieldActivityItem'
 )
 SELECT * FROM typed

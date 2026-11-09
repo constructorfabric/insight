@@ -62,6 +62,16 @@ class Subjects:
         self.env_file = env_file
         self.tenant_id = tenant_id
 
+    def for_tenant(self, tenant_id: str) -> Subjects:
+        """The same instance's people, minted and read under another tenant."""
+        return Subjects(
+            self.cfg,
+            repo_root=self.repo_root,
+            project=self.project,
+            env_file=self.env_file,
+            tenant_id=tenant_id,
+        )
+
     def publish(self, *, timeout_s: float = 600.0) -> None:
         """Run persons-seed, which mints from the identity inputs and publishes.
 
@@ -133,7 +143,8 @@ class Subjects:
         rows = ch.query(
             self.cfg,
             "SELECT account_id, toString(person_id) FROM identity.account_assignment "
-            f"WHERE source_type = 'bamboohr' AND account_id IN ({wanted})",
+            f"WHERE tenant_id = {ch.literal(self.tenant_id)} "
+            f"AND source_type = 'bamboohr' AND account_id IN ({wanted})",
         )
         return {
             by_account[str(account)]: str(person_id)
@@ -153,7 +164,8 @@ class Subjects:
         wanted = ", ".join(ch.literal(email.strip().lower()) for email in emails)
         rows = ch.query(
             self.cfg,
-            f"SELECT email, toString(person_id) FROM identity.person_map WHERE email IN ({wanted})",
+            "SELECT email, toString(person_id) FROM identity.person_map "
+            f"WHERE tenant_id = {ch.literal(self.tenant_id)} AND email IN ({wanted})",
         )
         resolved = {str(email): str(person_id) for email, person_id in rows}
         LOG.info("identity resolved %d of %d addresses", len(resolved), len(set(emails)))

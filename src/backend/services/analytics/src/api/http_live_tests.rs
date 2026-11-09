@@ -728,33 +728,90 @@ async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_
     result.map_err(Into::into)
 }
 
-/// Creates the identity relations a person-entity read joins, and maps one
-/// e-mail to one person. Both must exist or the read fails outright — dbt owns
-/// them in a deployment, so a live test has to stand them up itself.
-async fn seed_identity_relations(
-    ch: &insight_clickhouse::Client,
-    email: &str,
-    person_id: Uuid,
-) -> anyhow::Result<()> {
+/// Creates the identity relations a person-entity read joins. Both must exist
+/// or the read fails outright — dbt owns them in a deployment, so a live test
+/// has to stand them up itself.
+async fn create_identity_relations(ch: &insight_clickhouse::Client) -> anyhow::Result<()> {
     ch.query("CREATE DATABASE IF NOT EXISTS identity")
         .execute()
         .await?;
     ch.query(
-        "CREATE TABLE IF NOT EXISTS identity.person_map (email String, person_id UUID) \
-         ENGINE = MergeTree ORDER BY email",
+        "CREATE TABLE IF NOT EXISTS identity.person_map (tenant_id String, email String, person_id UUID) \
+         ENGINE = MergeTree ORDER BY (tenant_id, email)",
     )
     .execute()
     .await?;
     ch.query(
         "CREATE TABLE IF NOT EXISTS identity.account_assignment \
-         (source_type String, source_id UUID, account_id String, person_id UUID, \
-          created_at DateTime64(6)) \
-         ENGINE = MergeTree ORDER BY (source_type, source_id, account_id)",
+         (tenant_id String, source_type String, source_id UUID, account_id String, \
+          person_id UUID, created_at DateTime64(6)) \
+         ENGINE = MergeTree ORDER BY (tenant_id, source_type, source_id, account_id)",
     )
     .execute()
     .await?;
+    Ok(())
+}
+
+async fn map_email(
+    ch: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    email: &str,
+    person_id: Uuid,
+) -> anyhow::Result<()> {
+    ch.query("INSERT INTO identity.person_map SELECT ?, ?, toUUID(?)")
+        .bind(tenant_id.to_string())
+        .bind(email)
+        .bind(person_id.to_string())
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Binds an account the way the identity journal does: the source instance is
+/// keyed by the hash of the connector's raw `source_id`.
+async fn bind_account(
+    ch: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    account: &ObservedAccount<'_>,
+    person_id: Uuid,
+) -> anyhow::Result<()> {
+    ch.query(
+        "INSERT INTO identity.account_assignment \
+         SELECT ?, ?, toUUID(UUIDNumToString(sipHash128(?))), ?, toUUID(?), now64(6)",
+    )
+    .bind(tenant_id.to_string())
+    .bind(account.source_type)
+    .bind(account.source_id)
+    .bind(account.account_id)
+    .bind(person_id.to_string())
+    .execute()
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ObservedAccount<'a> {
+    source_type: &'a str,
+    source_id: &'a str,
+    account_id: &'a str,
+}
+
+/// The serving contract this build reads: `entity_id` is the SOURCE identity
+/// and the runtime resolves it through the identity relations while it serves.
+async fn create_observation_relation(
+    ch: &insight_clickhouse::Client,
+    relation: &str,
+) -> anyhow::Result<()> {
+    ch.query("CREATE DATABASE IF NOT EXISTS insight")
+        .execute()
+        .await?;
     ch.query(&format!(
-        "INSERT INTO identity.person_map VALUES ('{email}', '{person_id}')"
+        "CREATE TABLE {relation} (tenant_id UUID, source_key String, entity_type String, \
+         entity_id String, account_source_type String, account_source_id String, \
+         account_id String, metric_date Date, measure_key String, observed_at DateTime64(3), \
+         value Float64, subject_key Nullable(String), \
+         dimensions Array(Tuple(key String, value String, label Nullable(String)))) \
+         ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
     ))
     .execute()
     .await?;
@@ -777,23 +834,7 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
     let suffix = fixture.tenant_id.simple().to_string();
     let relation = format!("insight.test_{suffix}_metric_observations");
-    ch.query("CREATE DATABASE IF NOT EXISTS insight")
-        .execute()
-        .await?;
-    // The serving contract this build reads: `entity_id` is the SOURCE identity
-    // and the runtime resolves it through the identity relations while it
-    // serves, so the fixture seeds an e-mail and a map row rather than a
-    // pre-resolved person id.
-    ch.query(&format!(
-        "CREATE TABLE {relation} (tenant_id UUID, source_key String, entity_type String, \
-         entity_id String, account_source_type String, account_source_id String, \
-         account_id String, metric_date Date, measure_key String, observed_at DateTime64(3), \
-         value Float64, subject_key Nullable(String), \
-         dimensions Array(Tuple(key String, value String, label Nullable(String)))) \
-         ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
-    ))
-    .execute()
-    .await?;
+    create_observation_relation(&ch, &relation).await?;
     // Per-suffix so parallel runs never contend for one e-mail in the shared map.
     let person_email = format!("person-{suffix}@example.test");
     ch.query(&format!(
@@ -805,7 +846,8 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     ))
     .execute()
     .await?;
-    seed_identity_relations(&ch, &person_email, VISIBLE_PERSON).await?;
+    create_identity_relations(&ch).await?;
+    map_email(&ch, fixture.tenant_id, &person_email, VISIBLE_PERSON).await?;
 
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
@@ -851,6 +893,388 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
             views[2]["view"] == "not_ready" && views[2]["reason"] == "SOURCE_RELATION_MISSING",
             "the peer view must read not-ready alone on its missing cohort relation, got {}",
             views[2]
+        );
+        Ok(())
+    }
+    .await;
+    let _ = ch
+        .query(&format!("DROP TABLE IF EXISTS {relation}"))
+        .execute()
+        .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
+}
+
+/// The `field` of the row a view answers for `person`, null when it has none.
+fn entity_field(rows: &Value, person: Uuid, field: &str) -> Value {
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["entity_id"] == person.to_string())
+        .map_or(Value::Null, |row| row[field].clone())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
+async fn another_tenants_identity_never_claims_this_tenants_observations() -> TestResult {
+    // Both tenants know the same address and the same account, each as its own
+    // person. Only the reading tenant's person may receive the observations.
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let Some(ch) = live_ch_or_skip() else {
+        return Ok(());
+    };
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let suffix = fixture.tenant_id.simple().to_string();
+    let relation = format!("insight.test_{suffix}_metric_observations");
+    create_observation_relation(&ch, &relation).await?;
+
+    let shared_email = format!("shared-{suffix}@example.test");
+    let account_source = format!("source-{suffix}");
+    let account_id = format!("account-{suffix}");
+    let account = ObservedAccount {
+        source_type: "github",
+        source_id: &account_source,
+        account_id: &account_id,
+    };
+    ch.query(&format!(
+        "INSERT INTO {relation} VALUES \
+         ('{tenant}', 'test_{suffix}', 'person', '{shared_email}', '', '', '', \
+          toDate('2026-07-05'), 'value_count', now64(3), 1, NULL, []), \
+         ('{tenant}', 'test_{suffix}', 'person', 'unmapped-{suffix}@example.test', \
+          'github', '{account_source}', '{account_id}', \
+          toDate('2026-07-06'), 'value_count', now64(3), 10, NULL, [])",
+        tenant = fixture.tenant_id,
+    ))
+    .execute()
+    .await?;
+
+    let other_tenant = Uuid::now_v7();
+    let other_tenants_person = Uuid::now_v7();
+    create_identity_relations(&ch).await?;
+    for (tenant, person) in [
+        (fixture.tenant_id, VISIBLE_PERSON),
+        (other_tenant, other_tenants_person),
+    ] {
+        map_email(&ch, tenant, &shared_email, person).await?;
+        bind_account(&ch, tenant, &account, person).await?;
+    }
+
+    let identity = spawn_identity(&[VISIBLE_PERSON, other_tenants_person]).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app_with_identity_and_ch(db.clone(), fixture.tenant_id, identity, ch.clone());
+        let resp = app
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-results",
+                &json!({
+                    "entity": {
+                        "type": "person",
+                        "ids": [VISIBLE_PERSON.to_string(), other_tenants_person.to_string()]
+                    },
+                    "period": {"from": "2026-07-01", "to": "2026-07-28"},
+                    "metrics": [{
+                        "metric_key": "git.commits",
+                        "views": [{"view": "period"}, {"view": "timeseries", "bucket": "day"}]
+                    }]
+                }),
+            )?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::OK, "got {}", resp.status());
+
+        let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let view = &body["metrics"][0]["views"][0];
+        anyhow::ensure!(view["view"] == "period", "got {view}");
+        let value_of = |person: Uuid| entity_field(&view["values"], person, "value");
+        anyhow::ensure!(
+            value_of(VISIBLE_PERSON) == json!(11.0),
+            "the reading tenant's person keeps both the e-mail and the account row, got {view}"
+        );
+        anyhow::ensure!(
+            value_of(other_tenants_person).is_null(),
+            "the other tenant's person must claim nothing here, got {view}"
+        );
+
+        let series = &body["metrics"][0]["views"][1];
+        anyhow::ensure!(series["view"] == "timeseries", "got {series}");
+        let total_of = |person: Uuid| entity_field(&series["series"], person, "total");
+        anyhow::ensure!(
+            total_of(VISIBLE_PERSON) == json!(11.0),
+            "the reading tenant's series keeps both rows, got {series}"
+        );
+        anyhow::ensure!(
+            total_of(other_tenants_person).is_null(),
+            "the other tenant's person must have no series here, got {series}"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = ch
+        .query(&format!("DROP TABLE IF EXISTS {relation}"))
+        .execute()
+        .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
+}
+
+/// The evidence contract a drilldown reads: keyed by the source identity, like
+/// the observations, and resolved through the identity relations while served.
+async fn create_evidence_relation(
+    ch: &insight_clickhouse::Client,
+    relation: &str,
+) -> anyhow::Result<()> {
+    ch.query("CREATE DATABASE IF NOT EXISTS insight")
+        .execute()
+        .await?;
+    ch.query(&format!(
+        "CREATE TABLE {relation} (tenant_id String, source_key String, entity_type String, \
+         entity_id String, account_source_type String, account_source_id String, \
+         account_id String, metric_date Date, observed_at Nullable(DateTime64(3)), \
+         measure_key String, record_id String, record_kind String, granularity String, \
+         record_label String, contribution Nullable(Float64), subject_key Nullable(String), \
+         dimensions Array(Tuple(key String, value String, label Nullable(String))), \
+         details Map(String, String)) \
+         ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
+    ))
+    .execute()
+    .await?;
+    Ok(())
+}
+
+/// The identity journal a drilldown pins its cursor to and names a roster from.
+async fn create_identity_journal(ch: &insight_clickhouse::Client) -> anyhow::Result<()> {
+    ch.query("CREATE DATABASE IF NOT EXISTS identity")
+        .execute()
+        .await?;
+    ch.query(
+        "CREATE TABLE IF NOT EXISTS identity.identity_inputs \
+         (unique_key String, insight_tenant_id UUID, insight_source_id UUID, \
+          insight_source_type String, source_account_id Nullable(String), value_type String, \
+          value Nullable(String), value_field_name String, operation_type String, \
+          _synced_at DateTime64(3), _version Int64) \
+         ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key",
+    )
+    .execute()
+    .await?;
+    ch.query(
+        "CREATE TABLE IF NOT EXISTS identity.identity_persons \
+         (id UInt64, value_type String, insight_source_type String, insight_source_id UUID, \
+          insight_tenant_id UUID, value_id Nullable(String), value_full_text Nullable(String), \
+          value Nullable(String), value_effective Nullable(String), person_id UUID, \
+          author_person_id UUID, reason Nullable(String), created_at DateTime64(6, 'UTC'), \
+          _synced_at DateTime64(3, 'UTC')) \
+         ENGINE = MergeTree ORDER BY id",
+    )
+    .execute()
+    .await?;
+    Ok(())
+}
+
+async fn name_person(
+    ch: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    person_id: Uuid,
+    display_name: &str,
+) -> anyhow::Result<()> {
+    ch.query(
+        "INSERT INTO identity.identity_persons \
+         (id, value_type, insight_source_type, insight_source_id, insight_tenant_id, \
+          value_effective, person_id, author_person_id, created_at, _synced_at) \
+         SELECT sipHash64(?), 'display_name', 'test', toUUID(?), toUUID(?), ?, toUUID(?), \
+                toUUID(?), now64(6), now64(3)",
+    )
+    .bind(person_id.to_string())
+    .bind(Uuid::now_v7().to_string())
+    .bind(tenant_id.to_string())
+    .bind(display_name)
+    .bind(person_id.to_string())
+    .bind(person_id.to_string())
+    .execute()
+    .await?;
+    Ok(())
+}
+
+/// One drilldown page over July, as `(status, body)` — a failed read has no
+/// rows to report, so the body is only decoded on success.
+async fn drilldown_page(app: &Router, entity: &Value) -> anyhow::Result<(StatusCode, Value)> {
+    let body = json!({
+        "metric_key": "git.commits",
+        "entity": entity,
+        "period": {"from": "2026-07-01", "to": "2026-07-28"},
+        "limit": 100
+    });
+    let resp = app
+        .clone()
+        .oneshot(json_req("POST", "/v1/metric-drilldown", &body)?)
+        .await?;
+    let status = resp.status();
+    if status != StatusCode::OK {
+        return Ok((status, Value::Null));
+    }
+    let page = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok((status, page))
+}
+
+fn sorted_dates(page: &Value) -> Vec<Value> {
+    let mut dates = page_column(page, "date");
+    dates.sort_by_key(ToString::to_string);
+    dates
+}
+
+/// The CSV export of the same July selection, as `(status, body)`.
+async fn drilldown_csv(app: &Router, entity: &Value) -> anyhow::Result<(StatusCode, String)> {
+    let body = json!({
+        "metric_key": "git.commits",
+        "entity": entity,
+        "period": {"from": "2026-07-01", "to": "2026-07-28"},
+        "filters": [],
+        "display_dimensions": [],
+        "format": "csv"
+    });
+    let resp = app
+        .clone()
+        .oneshot(json_req("POST", "/v1/metric-drilldown/export", &body)?)
+        .await?;
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), 256 * 1024).await?;
+    Ok((status, String::from_utf8(bytes.to_vec())?))
+}
+
+/// The `column` of every row on a page, in the order served.
+fn page_column(page: &Value, column: &str) -> Vec<Value> {
+    page["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| row["values"][column].clone())
+        .collect()
+}
+
+/// Evidence both tenants hold under the shared address and account: the
+/// reading tenant's by e-mail (07-05) and by account (07-06), the other's on
+/// 07-07.
+async fn insert_shared_identity_evidence(
+    ch: &insight_clickhouse::Client,
+    relation: &str,
+    tenant: Uuid,
+    other_tenant: Uuid,
+    account: &ObservedAccount<'_>,
+) -> anyhow::Result<()> {
+    let suffix = tenant.simple().to_string();
+    let shared_email = format!("shared-{suffix}@example.test");
+    let (account_source, account_id) = (account.source_id, account.account_id);
+    ch.query(&format!(
+        "INSERT INTO {relation} VALUES \
+         ('{tenant}', 'test_{suffix}', 'person', '{shared_email}', '', '', '', \
+          '2026-07-05', NULL, 'value_count', 'by-email', 'commit', 'event', '', 1, NULL, [], map()), \
+         ('{tenant}', 'test_{suffix}', 'person', 'unmapped-{suffix}@example.test', \
+          'github', '{account_source}', '{account_id}', \
+          '2026-07-06', NULL, 'value_count', 'by-account', 'commit', 'event', '', 10, NULL, [], map()), \
+         ('{other_tenant}', 'test_{suffix}', 'person', '{shared_email}', \
+          'github', '{account_source}', '{account_id}', \
+          '2026-07-07', NULL, 'value_count', 'other-tenant', 'commit', 'event', '', 100, NULL, [], map())"
+    ))
+    .execute()
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
+async fn another_tenants_identity_never_claims_this_tenants_drilldown_evidence() -> TestResult {
+    // Both tenants know the same address and the same account, each as its own
+    // person, and each holds evidence under them. A drilldown lists only the
+    // reading tenant's records, and only for the reading tenant's person.
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let Some(ch) = live_ch_or_skip() else {
+        return Ok(());
+    };
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let suffix = fixture.tenant_id.simple().to_string();
+    let relation = format!("insight.test_{suffix}_metric_evidence");
+    create_evidence_relation(&ch, &relation).await?;
+
+    let other_tenant = Uuid::now_v7();
+    let other_tenants_person = Uuid::now_v7();
+    let shared_email = format!("shared-{suffix}@example.test");
+    let account_source = format!("source-{suffix}");
+    let account_id = format!("account-{suffix}");
+    let account = ObservedAccount {
+        source_type: "github",
+        source_id: &account_source,
+        account_id: &account_id,
+    };
+    insert_shared_identity_evidence(&ch, &relation, fixture.tenant_id, other_tenant, &account)
+        .await?;
+
+    create_identity_relations(&ch).await?;
+    create_identity_journal(&ch).await?;
+    for (tenant, person, name) in [
+        (fixture.tenant_id, VISIBLE_PERSON, "Example Reader"),
+        (other_tenant, other_tenants_person, "Example Other"),
+    ] {
+        map_email(&ch, tenant, &shared_email, person).await?;
+        bind_account(&ch, tenant, &account, person).await?;
+        name_person(&ch, tenant, person, name).await?;
+    }
+
+    let identity = spawn_identity(&[VISIBLE_PERSON, other_tenants_person]).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app_with_identity_and_ch(db.clone(), fixture.tenant_id, identity, ch.clone());
+        let own_dates = [json!("2026-07-05"), json!("2026-07-06")];
+
+        let (status, page) = drilldown_page(
+            &app,
+            &json!({"type": "person", "id": VISIBLE_PERSON.to_string()}),
+        )
+        .await?;
+        anyhow::ensure!(status == StatusCode::OK, "own person: got {status}");
+        anyhow::ensure!(
+            sorted_dates(&page) == own_dates,
+            "the reading tenant's person keeps both its e-mail and its account record, got {page}"
+        );
+
+        let (status, page) = drilldown_page(
+            &app,
+            &json!({"type": "person", "id": other_tenants_person.to_string()}),
+        )
+        .await?;
+        anyhow::ensure!(status == StatusCode::OK, "other person: got {status}");
+        anyhow::ensure!(
+            sorted_dates(&page).is_empty(),
+            "the other tenant's person must claim nothing here, got {page}"
+        );
+
+        let roster = json!({
+            "type": "persons",
+            "ids": [VISIBLE_PERSON.to_string(), other_tenants_person.to_string()]
+        });
+        let (status, page) = drilldown_page(&app, &roster).await?;
+        anyhow::ensure!(status == StatusCode::OK, "roster: got {status}");
+        anyhow::ensure!(
+            sorted_dates(&page) == own_dates,
+            "a roster lists only the reading tenant's records, got {page}"
+        );
+        anyhow::ensure!(
+            page_column(&page, "person")
+                .iter()
+                .all(|who| who == "Example Reader"),
+            "every record belongs to the reading tenant's person, got {page}"
+        );
+
+        let (status, csv) = drilldown_csv(&app, &roster).await?;
+        anyhow::ensure!(status == StatusCode::OK, "export: got {status}");
+        anyhow::ensure!(
+            csv.contains("2026-07-05") && csv.contains("2026-07-06"),
+            "the export carries the reading tenant's records, got {csv}"
+        );
+        anyhow::ensure!(
+            !csv.contains("2026-07-07") && !csv.contains("Example Other"),
+            "the export must carry nothing of the other tenant, got {csv}"
         );
         Ok(())
     }
@@ -950,29 +1374,6 @@ async fn a_drilldown_over_an_unbuilt_relation_answers_an_empty_page_and_a_file()
     result.map_err(Into::into)
 }
 
-/// The relations a drilldown pins its cursor to, beside the evidence itself:
-/// the persons journal and the claims the identity watermark is read from.
-async fn seed_identity_watermark_relations(
-    ch: &insight_clickhouse::Client,
-) -> Result<(), Box<dyn std::error::Error>> {
-    ch.query("CREATE DATABASE IF NOT EXISTS identity")
-        .execute()
-        .await?;
-    ch.query(
-        "CREATE TABLE IF NOT EXISTS identity.identity_persons \
-         (id UInt64, person_id UUID) ENGINE = MergeTree ORDER BY id",
-    )
-    .execute()
-    .await?;
-    ch.query(
-        "CREATE TABLE IF NOT EXISTS identity.identity_inputs \
-         (person_id UUID, _version Int64) ENGINE = MergeTree ORDER BY person_id",
-    )
-    .execute()
-    .await?;
-    Ok(())
-}
-
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure() -> TestResult {
@@ -1015,8 +1416,9 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
     ))
     .execute()
     .await?;
-    seed_identity_relations(&ch, &person_email, VISIBLE_PERSON).await?;
-    seed_identity_watermark_relations(&ch).await?;
+    create_identity_relations(&ch).await?;
+    map_email(&ch, fixture.tenant_id, &person_email, VISIBLE_PERSON).await?;
+    create_identity_journal(&ch).await?;
 
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {

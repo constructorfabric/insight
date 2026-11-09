@@ -488,7 +488,8 @@ SELECT
     -- INVARIANT: keyed on `issue_id`, never on `id_readable` — a renamed repository
     -- changes the readable key, and a key built from it would store the issue's
     -- history a second time with nothing for RMT to collapse (#2741).
-    CAST(concat(source_id, '-github-', issue_id, '-', field_id, '-', event_id) AS String) AS unique_key,
+    CAST(concat(ifNull(tenant_id, ''), '-', source_id, '-github-', issue_id, '-', field_id, '-', event_id) AS String) AS unique_key,
+    ifNull(tenant_id, '')                                       AS tenant_id,
     CAST(source_id AS String)                                   AS insight_source_id,
     CAST('github' AS String)                                    AS data_source,
     CAST(issue_id AS String)                                    AS issue_id,

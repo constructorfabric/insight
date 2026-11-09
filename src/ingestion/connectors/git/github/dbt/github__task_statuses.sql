@@ -23,7 +23,8 @@
 -- the alternative is an issue that silently never closes.
 
 SELECT
-    CAST(concat(m.tenant_id, ':', m.insight_source_id, ':github:status:', m.value_id) AS Nullable(String)) AS unique_key,
+    CAST(concat(ifNull(m.tenant_id, ''), ':', m.insight_source_id, ':github:status:', m.value_id) AS Nullable(String)) AS unique_key,
+    ifNull(m.tenant_id, '')                                 AS tenant_id,
     CAST(m.insight_source_id AS Nullable(String))           AS insight_source_id,
     CAST('github' AS String)                                AS data_source,
     CAST(m.value_id AS Nullable(String))                    AS status_id,

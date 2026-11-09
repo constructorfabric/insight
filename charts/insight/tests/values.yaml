@@ -1,5 +1,3 @@
-global:
-  tenantDefaultId: "00000000-0000-4000-8000-000000000001"
 clickhouse:
   host: clickhouse.example.test
   username: test
@@ -18,12 +16,11 @@ redpanda:
 ingestion:
   templates:
     enabled: true
-  reconcile:
-    tenantId: default
 authenticator:
   oidc:
     issuerUrl: https://idp.example.test
     clientId: test-client
     clientSecret: test-secret
     redirectUri: https://app.example.test/callback
+    defaultTenantId: "00000000-0000-4000-8000-000000000001"
     sourceType: ms-entra
