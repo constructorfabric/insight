@@ -28,6 +28,7 @@
             {{ _instance_key(this_keys) }} AS instance,
             max(assumeNotNull({{ column }})){% if lookback %} - INTERVAL {{ lookback }}{% endif %} AS watermark
         FROM {{ this }}
+        WHERE {{ column }} IS NOT NULL
         GROUP BY instance
     )
 )[{{ _instance_key(row_keys or this_keys) }}]

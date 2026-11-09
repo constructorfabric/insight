@@ -33,8 +33,8 @@
 -- rebuild from Bronze deletes those months rather than reproducing them, and
 -- reconcile-connectors dispatches `dbt --full-refresh` automatically on a MAJOR
 -- descriptor bump. Silver still rebuilds freely: it reads this model, not
--- Bronze. To rebuild deliberately, drop the table — the empty-table guard below
--- then reloads the whole Bronze window.
+-- Bronze. To rebuild deliberately, drop the table — the next run then builds it
+-- from the whole Bronze window.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',

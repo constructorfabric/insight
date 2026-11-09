@@ -31,6 +31,7 @@ class TableWideBoundary(unittest.TestCase):
             "WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})",
             "AND toDate(d) > (\n SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY\n FROM {{ this }}\n)",
             "AND x > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY",
+            "AND d > (SELECT max(day) FROM {{ this }} WHERE day IS NOT NULL)",
         ]
         for sql in cases:
             with self.subTest(sql=sql):

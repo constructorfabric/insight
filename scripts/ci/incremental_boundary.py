@@ -41,9 +41,10 @@ SKIPPED_DIRS = ("dbt/macros", "dbt/tests", "dbt/target", "scripts")
 
 LINE_COMMENT = re.compile(r"--[^\n]*")
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
-# `max(` and a `FROM {{ this }}` that closes its subquery, with no other SELECT in between.
+# `max(` and a `FROM {{ this }}` whose subquery closes without a GROUP BY or another SELECT.
 TABLE_WIDE = re.compile(
-    r"\bmax\((?:(?!\bSELECT\b)[\s\S])*?\bFROM\s+\{\{\s*this\s*\}\}\s*\)",
+    r"\bmax\((?:(?!\bSELECT\b)[\s\S])*?\bFROM\s+\{\{\s*this\s*\}\}"
+    r"(?:(?!\bGROUP\s+BY\b|\bSELECT\b)[^()])*\)",
     re.IGNORECASE,
 )
 
