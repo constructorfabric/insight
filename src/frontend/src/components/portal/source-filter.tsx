@@ -2,14 +2,16 @@ import { useMemo, useState } from "react";
 import { ListFilter, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Button, Checkbox, Input } from "@gears-frontx/ui-kit";
 import {
+  Button,
+  Checkbox,
+  Input,
   Popover,
   PopoverContent,
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@gears-frontx/ui-kit";
 
 interface SourceFilterProps {
   sources: readonly string[];
