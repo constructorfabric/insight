@@ -6,6 +6,7 @@ import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
+import { formatRange } from "@/lib/date-range-label";
 import { formatMetricFigure, formatMetricValue } from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
@@ -244,6 +245,12 @@ export function MetricValue({
       onClick={() =>
         evidence.openEvidenceTargets([{ selection, label: result.label }], {
           activeMetricKey: selection.metric_key,
+          title: [
+            result.label,
+            personName,
+            fullText,
+            formatRange(selection.period.from, selection.period.to),
+          ].join(" · "),
         })
       }
       className="cursor-pointer hover:text-primary hover:underline"

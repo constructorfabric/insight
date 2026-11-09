@@ -361,7 +361,10 @@ describe("MetricsView", () => {
           }),
         }),
       ],
-      { activeMetricKey: "git.commits" },
+      {
+        activeMetricKey: "git.commits",
+        title: expect.stringMatching(/^Default branch commits · b · 20 · 1 Jul( 2026)? – 31 Jul/),
+      },
     );
   });
 
@@ -463,7 +466,7 @@ describe("MetricsView", () => {
           selection: expect.objectContaining({ entity: { type: "person", id: pid("a") } }),
         }),
       ],
-      { activeMetricKey: "git.commits" },
+      expect.objectContaining({ title: expect.stringMatching(/^Default branch commits · a · 10 · /) }),
     );
   });
 

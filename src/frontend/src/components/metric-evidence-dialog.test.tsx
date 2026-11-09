@@ -231,6 +231,55 @@ describe("MetricEvidenceDialog", () => {
     expect(mocks.tableProps?.numbered).toBe(true);
   });
 
+  it.each([
+    [
+      "names a record's own value after the metric, right after its title",
+      [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+        { key: "repository", label: "Repository", type: "string" },
+        { key: "title", label: "Title", type: "string" },
+        { key: "ref", label: "Ref", type: "string" },
+      ],
+      [
+        ["ref", "Ref"],
+        ["title", "Title"],
+        ["value", "Commits"],
+        ["repository", "Repository"],
+        ["date", "Date"],
+      ],
+    ],
+    [
+      "puts a ratio's two parts right after the record's title",
+      [
+        { key: "date", label: "Date", type: "date" },
+        { key: "denominator", label: "PRs opened", type: "number" },
+        { key: "numerator", label: "PRs merged", type: "number" },
+        { key: "ref", label: "Ref", type: "string" },
+      ],
+      [
+        ["ref", "Ref"],
+        ["numerator", "PRs merged"],
+        ["denominator", "PRs opened"],
+        ["date", "Date"],
+      ],
+    ],
+  ] as const)("%s", (_case, columns, shown) => {
+    mocks.query = readyQuery({
+      data: {
+        pages: [{ selection: ordered, columns, rows: [{ values: { ref: "a" } }], next_cursor: null }],
+      },
+    });
+    render(<MetricEvidenceDialog state={state} onMetricChange={vi.fn()} onClose={vi.fn()} />);
+
+    expect(
+      (mocks.tableProps?.columns as Array<{ key: string; label: string }>).map((column) => [
+        column.key,
+        column.label,
+      ]),
+    ).toEqual(shown);
+  });
+
   it("loads, orders, paginates, exports, and closes evidence", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
