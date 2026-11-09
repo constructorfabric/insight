@@ -44,7 +44,9 @@ pub fn compile_query(
     match shape {
         RowShape::Record => compile_value_query(req, shape, None),
         RowShape::FoldedRecord => compile_value_query(req, shape, record_parts(&req.plan)),
-        RowShape::DailyRatio | RowShape::RecordRatio => compile_ratio_query(req, shape),
+        RowShape::DailyRatio | RowShape::RecordRatio | RowShape::RecordsPerSubject => {
+            compile_ratio_query(req, shape)
+        }
     }
 }
 
@@ -407,19 +409,17 @@ struct RatioRowSql {
 const SUMMED_DENOMINATOR: &str = "sumIf(collapsed.contribution, collapsed.measure_key = ?)";
 
 impl RatioRowSql {
-    /// INVARIANT: a distinct-count denominator splits each subject evenly
-    /// across the records counting it, so the rows divide out to the tile.
     fn of(
         shape: RowShape,
         aggregation: RatioDenominatorAggregation,
     ) -> Result<Self, CanonicalError> {
         match shape {
-            RowShape::RecordRatio => {
-                let (denominator, subject_share) = match aggregation {
+            RowShape::RecordRatio | RowShape::RecordsPerSubject => {
+                let (denominator, subject_records) = match aggregation {
                     RatioDenominatorAggregation::Sum => (SUMMED_DENOMINATOR, ""),
                     RatioDenominatorAggregation::DistinctCount => (
-                        "sumIf(collapsed.subject_share, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL)",
-                        ", 1 / count() OVER (PARTITION BY evidence.measure_key, person_key, evidence.subject_key) AS subject_share",
+                        "toFloat64(anyIf(collapsed.subject_records, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL))",
+                        ", count() OVER (PARTITION BY evidence.measure_key, person_key, evidence.subject_key) AS subject_records",
                     ),
                 };
                 Ok(Self {
@@ -431,7 +431,7 @@ impl RatioRowSql {
                     outer_group: "collapsed.record_key HAVING numerator != 0 OR denominator != 0",
                     inner_columns: format!(
                         ", {record_key} AS record_key, any(evidence.record_kind) AS record_kind, \
-                         any(evidence.dimensions) AS dimensions, any(evidence.details) AS details{subject_share}",
+                         any(evidence.dimensions) AS dimensions, any(evidence.details) AS details{subject_records}",
                         record_key = record_key_expr(),
                     ),
                     inner_group: ", record_key",
@@ -1261,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ratio_of_records_counting_distinct_days_gives_each_record_its_share_of_the_day() {
+    fn a_ratio_of_records_counting_distinct_days_counts_the_records_sharing_each_day() {
         let (sql, params) = compile_query(&record_ratio_plan(
             RatioDenominatorAggregation::DistinctCount,
         ))
@@ -1271,27 +1271,28 @@ mod tests {
             sql.contains("GROUP BY collapsed.record_key HAVING numerator != 0 OR denominator != 0")
         );
         assert!(!sql.contains("daily_ratio"));
+        assert!(!sql.contains("subject_share"));
         assert!(
             sql.contains(
-                "1 / count() OVER (PARTITION BY evidence.measure_key, person_key, evidence.subject_key) AS subject_share"
+                "count() OVER (PARTITION BY evidence.measure_key, person_key, evidence.subject_key) AS subject_records"
             ),
-            "a record holds its share of the subject, split with every record counting it: {sql}"
+            "a record knows how many records share its day: {sql}"
         );
         assert!(
             sql.contains(
-                "sumIf(collapsed.subject_share, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL) AS denominator"
+                "toFloat64(anyIf(collapsed.subject_records, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL)) AS denominator"
             ),
-            "the shares of one subject add back up to one: {sql}"
+            "the row carries that whole count: {sql}"
         );
         assert_eq!(sql.matches('?').count(), params.len());
     }
 
     #[test]
-    fn a_ratio_of_records_that_sums_its_denominator_holds_no_subject_share() {
+    fn a_ratio_of_records_that_sums_its_denominator_counts_no_subject_records() {
         let (sql, _) = compile_query(&record_ratio_plan(RatioDenominatorAggregation::Sum))
             .unwrap_or_else(|error| panic!("query must compile: {error}"));
 
-        assert!(!sql.contains("subject_share"));
+        assert!(!sql.contains("subject_records"));
     }
 
     fn folded_plan(entity: MetricDrilldownEntity) -> ValidatedMetricDrilldown {

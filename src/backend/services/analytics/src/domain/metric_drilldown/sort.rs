@@ -56,6 +56,7 @@ pub(super) const DATE_KEY: &str = "date";
 pub(super) const VALUE_KEY: &str = "value";
 pub(super) const NUMERATOR_KEY: &str = "numerator";
 pub(super) const DENOMINATOR_KEY: &str = "denominator";
+pub(super) const RECORDS_THAT_DAY_KEY: &str = "records_that_day";
 pub(super) const PERSON_KEY: &str = "person";
 pub(super) const PARTS_KEY: &str = "parts";
 
@@ -189,12 +190,13 @@ pub(super) fn column_sql(
         RowShape::Record | RowShape::FoldedRecord => record_column_sql(key, r#type),
         RowShape::DailyRatio => ratio_column_sql(key),
         RowShape::RecordRatio => record_ratio_column_sql(key, r#type),
+        RowShape::RecordsPerSubject => records_per_subject_column_sql(key, r#type),
     }
 }
 
 fn record_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<ColumnSql> {
     let sql = match key {
-        PERSON_KEY | NUMERATOR_KEY | DENOMINATOR_KEY => return None,
+        PERSON_KEY | NUMERATOR_KEY | DENOMINATOR_KEY | RECORDS_THAT_DAY_KEY => return None,
         DATE_KEY => ColumnSql::projected(
             MetricDrilldownColumnType::Date,
             "toString(evidence.metric_date)".to_owned(),
@@ -233,6 +235,17 @@ fn record_ratio_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Opti
     match key {
         VALUE_KEY => None,
         NUMERATOR_KEY | DENOMINATOR_KEY => ratio_column_sql(key),
+        key => record_column_sql(key, r#type),
+    }
+}
+
+fn records_per_subject_column_sql(
+    key: &str,
+    r#type: MetricDrilldownColumnType,
+) -> Option<ColumnSql> {
+    match key {
+        VALUE_KEY | NUMERATOR_KEY => None,
+        RECORDS_THAT_DAY_KEY => ratio_column_sql(DENOMINATOR_KEY),
         key => record_column_sql(key, r#type),
     }
 }

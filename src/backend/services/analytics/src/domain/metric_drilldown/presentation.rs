@@ -16,7 +16,7 @@ use super::dto::{
 };
 use super::error::config_error;
 use super::row_shape::{RowShape, record_parts};
-use super::sort::{PARTS_KEY, PERSON_KEY, is_sortable};
+use super::sort::{PARTS_KEY, PERSON_KEY, RECORDS_THAT_DAY_KEY, is_sortable};
 
 #[derive(Debug, Deserialize)]
 struct EvidenceDimension {
@@ -120,7 +120,7 @@ pub(super) fn presentation_columns(
     let shape = RowShape::of(plan);
     let (declared, ratio) = match shape {
         RowShape::Record | RowShape::FoldedRecord => (declared_columns(plan), false),
-        RowShape::RecordRatio => (declared_columns(plan), true),
+        RowShape::RecordRatio | RowShape::RecordsPerSubject => (declared_columns(plan), true),
         RowShape::DailyRatio => (Vec::new(), true),
     };
     // Both sources of dimension columns drop together for a ratio: the outer
@@ -161,24 +161,35 @@ pub(super) fn presentation_columns(
         sortable: true,
     });
 
-    if ratio {
-        columns.push(input_column("numerator", plan, MetricInputRole::Numerator));
-        columns.push(input_column(
-            "denominator",
-            plan,
-            MetricInputRole::Denominator,
-        ));
-    } else if plan
-        .inputs
-        .iter()
-        .any(|input| input.presentation.show_value)
-    {
-        columns.push(MetricDrilldownColumn {
-            key: "value".to_owned(),
-            label: "Value".to_owned(),
+    match shape {
+        RowShape::RecordRatio | RowShape::DailyRatio => {
+            columns.push(input_column("numerator", plan, MetricInputRole::Numerator));
+            columns.push(input_column(
+                "denominator",
+                plan,
+                MetricInputRole::Denominator,
+            ));
+        }
+        RowShape::RecordsPerSubject => columns.push(MetricDrilldownColumn {
+            key: RECORDS_THAT_DAY_KEY.to_owned(),
+            label: records_that_day_label(&plan.definition.base.label),
             r#type: MetricDrilldownColumnType::Number,
             sortable: true,
-        });
+        }),
+        RowShape::Record | RowShape::FoldedRecord => {
+            if plan
+                .inputs
+                .iter()
+                .any(|input| input.presentation.show_value)
+            {
+                columns.push(MetricDrilldownColumn {
+                    key: "value".to_owned(),
+                    label: "Value".to_owned(),
+                    r#type: MetricDrilldownColumnType::Number,
+                    sortable: true,
+                });
+            }
+        }
     }
     for column in &mut columns {
         column.sortable = column.sortable && is_sortable(&column.key, column.r#type, shape);
@@ -267,7 +278,9 @@ fn project_row(
             "date" => row.metric_date.clone().into(),
             "value" => serde_json::to_value(row.contribution).map_err(|_| config_error())?,
             "numerator" => serde_json::to_value(row.numerator).map_err(|_| config_error())?,
-            "denominator" => serde_json::to_value(row.denominator).map_err(|_| config_error())?,
+            "denominator" | RECORDS_THAT_DAY_KEY => {
+                serde_json::to_value(row.denominator).map_err(|_| config_error())?
+            }
             key => details
                 .get(key)
                 .filter(|value| visible_value(value))
@@ -352,6 +365,13 @@ fn presentation_dimensions(
                 .map_err(|_| config_error())
         })
         .collect()
+}
+
+fn records_that_day_label(metric_label: &str) -> String {
+    let counted = metric_label
+        .split_once(" per ")
+        .map_or("Records", |(counted, _)| counted);
+    format!("{counted} that day")
 }
 
 fn input_label(plan: &EvidencePlan, role: MetricInputRole) -> String {
@@ -888,13 +908,11 @@ mod tests {
     }
 
     #[test]
-    fn a_ratio_counting_distinct_days_lists_the_records_it_counts() {
-        let columns = presentation_columns(
-            &ratio_over(commit_input, RatioDenominatorAggregation::DistinctCount),
-            &[],
-            &[],
-            &one_person(),
-        );
+    fn a_ratio_counting_distinct_days_lists_each_record_beside_how_many_share_its_day() {
+        let mut plan = ratio_over(commit_input, RatioDenominatorAggregation::DistinctCount);
+        plan.definition.base.label = "Commits per active day, any branch".to_owned();
+
+        let columns = presentation_columns(&plan, &[], &[], &one_person());
 
         assert_eq!(
             columns
@@ -909,9 +927,12 @@ mod tests {
                 "lines_added",
                 "lines_removed",
                 "date",
-                "numerator",
-                "denominator"
+                "records_that_day"
             ]
+        );
+        assert_eq!(
+            columns.last().map(|column| column.label.as_str()),
+            Some("Commits that day")
         );
     }
 
