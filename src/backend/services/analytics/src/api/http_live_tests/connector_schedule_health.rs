@@ -13,6 +13,7 @@ pub(crate) async fn assert_health_enrichment(ch: &insight_clickhouse::Client) ->
     };
     let db = Database::connect(url).await?;
     Migration.up(&SchemaManager::new(&db)).await?;
+    delete_health_acknowledgement(&db).await?;
     let mut ack = acknowledgement();
     ack.applied_revision = Some(0);
     ack.attempted_revision = 0;
@@ -55,10 +56,15 @@ pub(crate) async fn assert_health_enrichment(ch: &insight_clickhouse::Client) ->
     assert_eq!(state.get("updated_at"), Some(&Value::Null));
     assert_eq!(state.get("updated_by"), Some(&Value::Null));
     assert_eq!(state.get("error"), Some(&Value::Null));
+    delete_health_acknowledgement(&db).await?;
+    Ok(())
+}
+
+async fn delete_health_acknowledgement(db: &DatabaseConnection) -> TestResult {
     acknowledgements::Entity::delete_many()
         .filter(acknowledgements::Column::Connector.eq("example-tracker"))
         .filter(acknowledgements::Column::SourceId.eq("main"))
-        .exec(&db)
+        .exec(db)
         .await?;
     Ok(())
 }
