@@ -188,17 +188,24 @@ fn parts_expr(dimension: &str) -> String {
         "arrayFilter(part -> part.2 != 0, arrayZip(tupleElement({totals}, 1), tupleElement({totals}, 2)))"
     );
     let largest_first = format!("arrayReverseSort(part -> part.2, {nonzero})");
+    let named = |parts: &str| {
+        format!("arrayMap(part -> concat(part.1, ' ', toString(round(part.2, 2))), {parts})")
+    };
     let rest = format!(
         "arraySlice({largest_first}, {first_unnamed})",
         first_unnamed = NAMED_RECORD_PARTS + 1
     );
     format!(
-        "arrayStringConcat(arrayConcat(\
-             arrayMap(part -> concat(part.1, ' ', toString(round(part.2, 2))), \
-                      arraySlice({largest_first}, 1, {NAMED_RECORD_PARTS})), \
-             if(empty({rest}), [], \
-                [concat('+', toString(length({rest})), ' more ', \
-                        toString(round(arraySum(part -> part.2, {rest}), 2)))])), ' · ')"
+        "arrayStringConcat(if(length({largest_first}) > {foldable}, \
+             arrayConcat({top}, \
+                         [concat(toString(length({rest})), ' other types ', \
+                                 toString(round(arraySum(part -> part.2, {rest}), 2)))]), \
+             {all}), ' · ')",
+        foldable = NAMED_RECORD_PARTS + 1,
+        top = named(&format!(
+            "arraySlice({largest_first}, 1, {NAMED_RECORD_PARTS})"
+        )),
+        all = named(&largest_first),
     )
 }
 
@@ -1341,7 +1348,7 @@ mod tests {
     }
 
     #[test]
-    fn a_record_split_into_many_parts_names_the_largest_three_and_totals_the_rest() {
+    fn a_record_split_into_many_parts_names_the_largest_three_and_totals_the_other_types() {
         let (sql, _) = compile_query(&folded_plan(MetricDrilldownEntity::Person {
             id: TEST_PERSON.to_string(),
         }))
@@ -1352,8 +1359,12 @@ mod tests {
             "only the three largest parts are named: {sql}"
         );
         assert!(
-            sql.contains("concat('+', toString(length(") && sql.contains("' more '"),
-            "the parts beyond them collapse into one remainder: {sql}"
+            sql.contains("' other types '") && !sql.contains("' more '"),
+            "the parts beyond them read as the other types they are: {sql}"
+        );
+        assert!(
+            sql.contains(") > 4,"),
+            "a single leftover part is named rather than folded: {sql}"
         );
     }
 
