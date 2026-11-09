@@ -272,7 +272,7 @@ fn person_projection(
 /// missing any of the three describes a ratio nothing can compute.
 fn ratio_halves(
     req: &ValidatedMetricDrilldown,
-) -> Result<(&EvidenceInput, &EvidenceInput, &'static str), CanonicalError> {
+) -> Result<(&EvidenceInput, &EvidenceInput, RatioDenominatorAggregation), CanonicalError> {
     let numerator = req
         .plan
         .inputs
@@ -292,15 +292,7 @@ fn ratio_halves(
     else {
         return Err(config_error());
     };
-    let denominator_expr = match denominator_aggregation {
-        RatioDenominatorAggregation::Sum => {
-            "sumIf(collapsed.contribution, collapsed.measure_key = ?)"
-        }
-        RatioDenominatorAggregation::DistinctCount => {
-            "toFloat64(uniqExactIf((collapsed.person_key, collapsed.subject_key), collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL))"
-        }
-    };
-    Ok((numerator, denominator, denominator_expr))
+    Ok((numerator, denominator, *denominator_aggregation))
 }
 
 fn compile_ratio_query(
@@ -308,8 +300,8 @@ fn compile_ratio_query(
     shape: RowShape,
 ) -> Result<(String, Vec<String>), CanonicalError> {
     let (database, table) = req.plan.relation.table_ref();
-    let (numerator, denominator, denominator_expr) = ratio_halves(req)?;
-    let rows = RatioRowSql::of(shape)?;
+    let (numerator, denominator, aggregation) = ratio_halves(req)?;
+    let rows = RatioRowSql::of(shape, aggregation)?;
     let columns = presentation_columns(
         &req.plan,
         &req.selection.filters,
@@ -349,7 +341,7 @@ fn compile_ratio_query(
             SELECT 'value' AS role, '' AS entity_id, '' AS person_id, {outer_row}, \
                    CAST(NULL AS Nullable(Float64)) AS contribution, \
                    sumIf(collapsed.contribution, collapsed.measure_key = ?) AS numerator, \
-                   {denominator_expr} AS denominator, \
+                   {denominator} AS denominator, \
                    '' AS subject_key, any(collapsed.dimensions_json) AS dimensions_json, \
                    {outer_details} \
             FROM (\
@@ -376,6 +368,7 @@ fn compile_ratio_query(
          ORDER BY {order_by} \
          LIMIT {limit}",
         outer_row = rows.outer_row,
+        denominator = rows.denominator,
         outer_details = rows.outer_details,
         outer_group = rows.outer_group,
         record_columns = rows.inner_columns,
@@ -394,32 +387,56 @@ fn compile_ratio_query(
 
 struct RatioRowSql {
     outer_row: &'static str,
+    denominator: &'static str,
     outer_details: &'static str,
     outer_group: &'static str,
     inner_columns: String,
     inner_group: &'static str,
 }
 
+const SUMMED_DENOMINATOR: &str = "sumIf(collapsed.contribution, collapsed.measure_key = ?)";
+
 impl RatioRowSql {
-    fn of(shape: RowShape) -> Result<Self, CanonicalError> {
+    /// INVARIANT: a distinct-count denominator splits each subject evenly
+    /// across the records counting it, so the rows divide out to the tile.
+    fn of(
+        shape: RowShape,
+        aggregation: RatioDenominatorAggregation,
+    ) -> Result<Self, CanonicalError> {
         match shape {
-            RowShape::RecordRatio => Ok(Self {
-                outer_row: "toString(max(collapsed.metric_date)) AS metric_date, '' AS observed_at, \
-                            any(collapsed.source_key) AS source_key, '' AS measure_key, \
-                            collapsed.record_key AS record_id, any(collapsed.record_kind) AS record_kind",
-                outer_details: "any(collapsed.dimensions) AS dimensions, any(collapsed.details) AS details",
-                outer_group: "collapsed.record_key HAVING numerator != 0 OR denominator != 0",
-                inner_columns: format!(
-                    ", {record_key} AS record_key, any(evidence.record_kind) AS record_kind, \
-                     any(evidence.dimensions) AS dimensions, any(evidence.details) AS details",
-                    record_key = record_key_expr(),
-                ),
-                inner_group: ", record_key",
-            }),
+            RowShape::RecordRatio => {
+                let (denominator, subject_share) = match aggregation {
+                    RatioDenominatorAggregation::Sum => (SUMMED_DENOMINATOR, ""),
+                    RatioDenominatorAggregation::DistinctCount => (
+                        "sumIf(collapsed.subject_share, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL)",
+                        ", 1 / count() OVER (PARTITION BY evidence.measure_key, person_key, evidence.subject_key) AS subject_share",
+                    ),
+                };
+                Ok(Self {
+                    outer_row: "toString(max(collapsed.metric_date)) AS metric_date, '' AS observed_at, \
+                                any(collapsed.source_key) AS source_key, '' AS measure_key, \
+                                collapsed.record_key AS record_id, any(collapsed.record_kind) AS record_kind",
+                    denominator,
+                    outer_details: "any(collapsed.dimensions) AS dimensions, any(collapsed.details) AS details",
+                    outer_group: "collapsed.record_key HAVING numerator != 0 OR denominator != 0",
+                    inner_columns: format!(
+                        ", {record_key} AS record_key, any(evidence.record_kind) AS record_kind, \
+                         any(evidence.dimensions) AS dimensions, any(evidence.details) AS details{subject_share}",
+                        record_key = record_key_expr(),
+                    ),
+                    inner_group: ", record_key",
+                })
+            }
             RowShape::DailyRatio => Ok(Self {
                 outer_row: "toString(collapsed.metric_date) AS metric_date, '' AS observed_at, \
                             any(collapsed.source_key) AS source_key, '' AS measure_key, \
                             toString(collapsed.metric_date) AS record_id, 'daily_ratio' AS record_kind",
+                denominator: match aggregation {
+                    RatioDenominatorAggregation::Sum => SUMMED_DENOMINATOR,
+                    RatioDenominatorAggregation::DistinctCount => {
+                        "toFloat64(uniqExactIf((collapsed.person_key, collapsed.subject_key), collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL))"
+                    }
+                },
                 outer_details: "CAST(map() AS Map(String, String)) AS details",
                 outer_group: "collapsed.metric_date",
                 inner_columns: String::new(),
@@ -1234,14 +1251,37 @@ mod tests {
     }
 
     #[test]
-    fn a_ratio_of_records_counting_distinct_days_keeps_the_daily_rollup() {
-        let (sql, _) = compile_query(&record_ratio_plan(
+    fn a_ratio_of_records_counting_distinct_days_gives_each_record_its_share_of_the_day() {
+        let (sql, params) = compile_query(&record_ratio_plan(
             RatioDenominatorAggregation::DistinctCount,
         ))
         .unwrap_or_else(|error| panic!("query must compile: {error}"));
 
-        assert!(sql.contains("daily_ratio"));
-        assert!(!sql.contains("record_key"));
+        assert!(
+            sql.contains("GROUP BY collapsed.record_key HAVING numerator != 0 OR denominator != 0")
+        );
+        assert!(!sql.contains("daily_ratio"));
+        assert!(
+            sql.contains(
+                "1 / count() OVER (PARTITION BY evidence.measure_key, person_key, evidence.subject_key) AS subject_share"
+            ),
+            "a record holds its share of the subject, split with every record counting it: {sql}"
+        );
+        assert!(
+            sql.contains(
+                "sumIf(collapsed.subject_share, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL) AS denominator"
+            ),
+            "the shares of one subject add back up to one: {sql}"
+        );
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    #[test]
+    fn a_ratio_of_records_that_sums_its_denominator_holds_no_subject_share() {
+        let (sql, _) = compile_query(&record_ratio_plan(RatioDenominatorAggregation::Sum))
+            .unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(!sql.contains("subject_share"));
     }
 
     fn folded_plan(entity: MetricDrilldownEntity) -> ValidatedMetricDrilldown {
