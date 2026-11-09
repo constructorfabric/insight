@@ -15,7 +15,8 @@ use super::dto::{
     PersonNames, ValidatedMetricDrilldown,
 };
 use super::error::config_error;
-use super::sort::{PERSON_KEY, RowShape, is_sortable};
+use super::row_shape::{RowShape, record_parts};
+use super::sort::{PARTS_KEY, PERSON_KEY, is_sortable};
 
 #[derive(Debug, Deserialize)]
 struct EvidenceDimension {
@@ -116,18 +117,15 @@ pub(super) fn presentation_columns(
     display_dimensions: &[String],
     entity: &MetricDrilldownEntity,
 ) -> Vec<MetricDrilldownColumn> {
-    // A daily ratio row is a day's two sums over different records, so neither
-    // measure's columns describe it: the two numbers are what the row has to say.
     let shape = RowShape::of(plan);
-    let declared = if shape == RowShape::DailyRatio {
-        Vec::new()
-    } else {
-        declared_columns(plan)
+    let (declared, ratio) = match shape {
+        RowShape::Record | RowShape::FoldedRecord => (declared_columns(plan), false),
+        RowShape::RecordRatio => (declared_columns(plan), true),
+        RowShape::DailyRatio => (Vec::new(), true),
     };
     // Both sources of dimension columns drop together for a ratio: the outer
     // aggregate carries no cell the query can order or search, so a column
     // rendered from it would answer neither.
-    let ratio = shape.is_ratio();
     let display_dimensions: &[String] = if ratio { &[] } else { display_dimensions };
     let filters: &[MetricDrilldownFilter] = if ratio { &[] } else { filters };
 
@@ -143,6 +141,14 @@ pub(super) fn presentation_columns(
         });
     }
     columns.extend(declared.iter().map(detail_column));
+    if let Some(dimension) = record_parts(plan) {
+        columns.push(MetricDrilldownColumn {
+            key: PARTS_KEY.to_owned(),
+            label: format!("By {}", humanize_field_name(dimension).to_lowercase()),
+            r#type: MetricDrilldownColumnType::String,
+            sortable: true,
+        });
+    }
     columns.extend(
         dimension_keys(filters, display_dimensions, &declared)
             .into_iter()
@@ -416,7 +422,8 @@ mod tests {
     use crate::domain::metric_drilldown::cursor::selection_fingerprint;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
     use crate::domain::metric_drilldown::test_support::{
-        TEST_TENANT, commit_input, commit_presentation, input, plan, row, validated,
+        TEST_TENANT, commit_input, commit_presentation, input, plan, ratio_over, row,
+        summary_input, validated,
     };
 
     fn one_person() -> MetricDrilldownEntity {
@@ -438,35 +445,6 @@ mod tests {
                 value: value.clone(),
             },
             vec![commit_input(MetricInputRole::Value, &value.measure_key)],
-        )
-    }
-
-    fn summary_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
-        EvidenceInput {
-            role,
-            measure_key: measure_key.to_owned(),
-            alias_collapse: AliasCollapse::Sum,
-            presentation: EvidencePresentation::undeclared(EvidenceGranularity::SourceSummary),
-        }
-    }
-
-    fn ratio_over(
-        inputs: fn(MetricInputRole, &str) -> EvidenceInput,
-        denominator_aggregation: RatioDenominatorAggregation,
-    ) -> EvidencePlan {
-        let numerator = input(MetricInputRole::Numerator, "focus_hours");
-        let denominator = input(MetricInputRole::Denominator, "work_hours");
-        plan(
-            ComputationSpec::Ratio {
-                numerator: numerator.clone(),
-                denominator: denominator.clone(),
-                scale: 100.0,
-                denominator_aggregation,
-            },
-            vec![
-                inputs(MetricInputRole::Numerator, &numerator.measure_key),
-                inputs(MetricInputRole::Denominator, &denominator.measure_key),
-            ],
         )
     }
 

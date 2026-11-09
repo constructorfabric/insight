@@ -1,44 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::metric_definitions::ComputationSpec;
-use crate::domain::metric_definitions::definition::RatioDenominatorAggregation;
 use crate::domain::metric_results::compiler::sql_string_literal;
 
-use super::dto::{EvidencePlan, MetricDrilldownColumnType};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RowShape {
-    Record,
-    DailyRatio,
-    RecordRatio,
-}
-
-impl RowShape {
-    /// A distinct-count denominator counts days, which no single record holds.
-    pub(super) fn of(plan: &EvidencePlan) -> Self {
-        let ComputationSpec::Ratio {
-            denominator_aggregation,
-            ..
-        } = &plan.definition.spec
-        else {
-            return Self::Record;
-        };
-        let both_halves_are_records = !plan.inputs.is_empty()
-            && plan
-                .inputs
-                .iter()
-                .all(|input| input.presentation.names_a_record());
-        if *denominator_aggregation == RatioDenominatorAggregation::Sum && both_halves_are_records {
-            Self::RecordRatio
-        } else {
-            Self::DailyRatio
-        }
-    }
-
-    pub(super) fn is_ratio(self) -> bool {
-        self != Self::Record
-    }
-}
+use super::dto::MetricDrilldownColumnType;
+use super::row_shape::RowShape;
 
 /// `u64::MAX` is 20 digits. A longer run of digits is not a number worth
 /// padding, and padding it would push a real value out of the field.
@@ -92,6 +57,7 @@ pub(super) const VALUE_KEY: &str = "value";
 pub(super) const NUMERATOR_KEY: &str = "numerator";
 pub(super) const DENOMINATOR_KEY: &str = "denominator";
 pub(super) const PERSON_KEY: &str = "person";
+pub(super) const PARTS_KEY: &str = "parts";
 
 /// A presented column as the query reads it, applying the same
 /// details-then-dimension fallback the row projection does — an order or a
@@ -220,7 +186,7 @@ pub(super) fn column_sql(
     shape: RowShape,
 ) -> Option<ColumnSql> {
     match shape {
-        RowShape::Record => record_column_sql(key, r#type),
+        RowShape::Record | RowShape::FoldedRecord => record_column_sql(key, r#type),
         RowShape::DailyRatio => ratio_column_sql(key),
         RowShape::RecordRatio => record_ratio_column_sql(key, r#type),
     }
@@ -264,23 +230,11 @@ fn ratio_column_sql(key: &str) -> Option<ColumnSql> {
 }
 
 fn record_ratio_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<ColumnSql> {
-    let sql = match key {
-        PERSON_KEY | VALUE_KEY => return None,
-        DATE_KEY => ColumnSql::projected(
-            MetricDrilldownColumnType::Date,
-            "toString(evidence.metric_date)".to_owned(),
-        ),
-        NUMERATOR_KEY => ColumnSql::native_number(
-            "ifNull(toString(evidence.numerator), '')".to_owned(),
-            "ifNull(evidence.numerator, 0)".to_owned(),
-        ),
-        DENOMINATOR_KEY => ColumnSql::native_number(
-            "ifNull(toString(evidence.denominator), '')".to_owned(),
-            "ifNull(evidence.denominator, 0)".to_owned(),
-        ),
-        key => ColumnSql::projected(r#type, detail_text(key)),
-    };
-    Some(sql)
+    match key {
+        VALUE_KEY => None,
+        NUMERATOR_KEY | DENOMINATOR_KEY => ratio_column_sql(key),
+        key => record_column_sql(key, r#type),
+    }
 }
 
 /// Whether the query can order by a column at all — the one answer the
@@ -302,7 +256,7 @@ fn detail_text(key: &str) -> String {
     )
 }
 
-fn dimension_text(literal: &str) -> String {
+pub(super) fn dimension_text(literal: &str) -> String {
     format!(
         "arrayMap(dimension -> if(trimBoth(ifNull(dimension.3, '')) != '', \
                                   ifNull(dimension.3, ''), \

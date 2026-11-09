@@ -334,8 +334,14 @@ mod tests {
 
     /// Column keys the drilldown fills from the evidence row rather than from
     /// its details map; a declaration claiming one would be overwritten.
-    const STRUCTURAL_COLUMN_KEYS: &[&str] =
-        &["person", "date", "value", "numerator", "denominator"];
+    const STRUCTURAL_COLUMN_KEYS: &[&str] = &[
+        "person",
+        "date",
+        "value",
+        "numerator",
+        "denominator",
+        "parts",
+    ];
 
     #[test]
     fn every_event_measure_declares_the_columns_its_rows_carry() {
@@ -675,6 +681,23 @@ mod tests {
                     "{} references undeclared measure {}",
                     metric.metric_key,
                     input.measure_key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_measure_split_into_parts_names_the_record_they_fold_into() {
+        for builtin_source in builtin_sources() {
+            for measure in &builtin_source.measures {
+                let Some(presentation) = measure.evidence_presentation.as_ref() else {
+                    continue;
+                };
+                assert!(
+                    presentation.record_parts.is_none() || presentation.names_a_record(),
+                    "{}/{} splits rows into parts of no record",
+                    builtin_source.source.key,
+                    measure.key
                 );
             }
         }

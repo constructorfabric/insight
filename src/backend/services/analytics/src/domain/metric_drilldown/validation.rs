@@ -24,7 +24,8 @@ use super::dto::{
     ValidatedDrilldown, ValidatedMetricDrilldown,
 };
 use super::presentation::presentation_columns;
-use super::sort::{MetricDrilldownSort, RowShape, column_sql};
+use super::row_shape::RowShape;
+use super::sort::{MetricDrilldownSort, column_sql};
 
 struct CommonRequest {
     metric_key: String,

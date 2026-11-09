@@ -233,7 +233,7 @@ unattributed_line_measures AS (
         observed_at,
         repository_label,
         branch_scope_label,
-        'Unknown' AS file_extension_label,
+        '__unknown__' AS category,
         line_measure.1 AS measure_key,
         line_measure.2 AS value,
         -- INVARIANT: the same KEYS as category_source_dimensions, which the
@@ -608,7 +608,7 @@ file_change_measures AS (
         observed_at,
         repository_label,
         branch_scope_label,
-        file_extension_label,
+        category,
         file_measure.1 AS measure_key,
         file_measure.2 AS value,
         file_measure.3 AS dimensions
@@ -673,43 +673,15 @@ file_change_measures AS (
     ))) AS file_measure
 ),
 commit_line_measures AS (
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        measure_key,
-        dimensions,
-        source_value,
-        commit_hash,
-        repository_label,
-        any(commit_source_id) AS commit_source_id,
-        any(message) AS message,
-        any(author_name) AS author_name,
-        any(observed_at) AS observed_at,
-        any(branch_scope_label) AS branch_scope_label,
-        any(file_extension_label) AS file_extension_label,
-        toNullable(sum(value)) AS value
-    FROM (
-        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions,
-               commit_source_id, source_value, commit_hash, message, author_name,
-               observed_at, repository_label, branch_scope_label, file_extension_label
-        FROM file_change_measures
-        UNION ALL
-        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions,
-               commit_source_id, source_value, commit_hash, message, author_name,
-               observed_at, repository_label, branch_scope_label, file_extension_label
-        FROM unattributed_line_measures
-    )
-    GROUP BY tenant_id, entity_id, metric_date, measure_key, dimensions,
-             source_value, commit_hash, repository_label
-),
-commit_line_rows AS (
-    SELECT
-        *,
-        sumMap([file_extension_label], [coalesce(value, 0)]) OVER (
-            PARTITION BY tenant_id, entity_id, source_value, repository_label, commit_hash, measure_key
-        ) AS file_type_lines
-    FROM commit_line_measures
+    SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions, category,
+           commit_source_id, source_value, commit_hash, message, author_name,
+           observed_at, repository_label, branch_scope_label
+    FROM file_change_measures
+    UNION ALL
+    SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions, category,
+           commit_source_id, source_value, commit_hash, message, author_name,
+           observed_at, repository_label, branch_scope_label
+    FROM unattributed_line_measures
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,
@@ -729,12 +701,14 @@ SELECT
         ':',
         measure_key,
         ':',
-        hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), dimensions))))
+        -- INVARIANT: category is keyed though not a dimension: test lines share
+        -- their file dimensions with the code lines of the same commit.
+        hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), dimensions)), category))
     ) AS record_id,
     'commit' AS record_kind,
     'event' AS granularity,
     if(message = '', commit_hash, message) AS record_label,
-    value AS contribution,
+    toNullable(value) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
     dimensions,
     map(
@@ -743,19 +717,9 @@ SELECT
         'title', message,
         'repository', repository_label,
         'author', author_name,
-        'branch_scope', branch_scope_label,
-        'file_types', arrayStringConcat(
-            arrayMap(
-                part -> concat(part.1, ' ', toString(toInt64(part.2))),
-                arrayReverseSort(
-                    part -> part.2,
-                    arrayFilter(part -> part.2 > 0, arrayZip(file_type_lines.1, file_type_lines.2))
-                )
-            ),
-            ' · '
-        )
+        'branch_scope', branch_scope_label
     ) AS details
-FROM commit_line_rows
+FROM commit_line_measures
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL

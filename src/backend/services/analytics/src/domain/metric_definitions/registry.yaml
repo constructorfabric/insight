@@ -68,14 +68,13 @@ sources:
         evidence_granularity: event
         evidence_presentation: &commit_lines_row
           show_value: true
-          one_row_per_record: true
+          record_parts: file_extension
           detail_columns:
             - { key: ref, label: Ref }
             - { key: title, label: Title }
             - { key: repository, label: Repository }
             - { key: author, label: Author }
             - { key: branch_scope, label: Branch scope }
-            - { key: file_types, label: By file type }
       - key: test_lines_added
         evidence_granularity: event
         evidence_presentation: &commit_line_share_row
