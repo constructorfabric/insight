@@ -94,6 +94,15 @@ function isRatio(metricKey: string): boolean {
   return metaFor(metricKey).computation === "ratio";
 }
 
+function showsValue(metricKey: string): boolean {
+  const { computation, format } = metaFor(metricKey);
+  return (
+    ["median", "percentile", "stddev"].includes(computation) ||
+    format === "decimal" ||
+    format === "currency"
+  );
+}
+
 function dayIn(period: { from: string; to: string }, offset: number): string {
   const [year, month, day] = period.from.split("-").map(Number);
   const start = Date.UTC(year ?? 2026, (month ?? 1) - 1, day ?? 1);
@@ -158,7 +167,7 @@ export function drilldownColumns(
     ...details.map((column) => ({ ...column, sortable: true })),
     { key: "date", label: "Date", type: "date" as const, sortable: true },
   );
-  if (details.length === 0) {
+  if (details.length === 0 || showsValue(request.metric_key)) {
     columns.push({
       key: "value",
       label: "Value",
@@ -237,7 +246,12 @@ function evidenceRows(request: MetricDrilldownRequest): MetricEvidenceRow[] {
         }
       }
       values.date = date;
-      if (details.length === 0) values.value = (seed % 12) + 1;
+      if (details.length === 0 || showsValue(request.metric_key)) {
+        values.value =
+          metaFor(request.metric_key).format === "decimal"
+            ? ((seed % 120) + 1) / 10
+            : (seed % 12) + 1;
+      }
 
       return {
         values,
