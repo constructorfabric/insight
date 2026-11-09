@@ -35,7 +35,11 @@ pub struct EvidencePresentation {
     #[serde(default)]
     pub detail_columns: Vec<EvidenceDetailColumn>,
     pub show_value: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub one_row_per_record: bool,
 }
+
+pub const RECORD_REF_KEY: &str = "ref";
 
 impl EvidencePresentation {
     /// What a measure presents when it declares nothing: no detail columns, and
@@ -44,7 +48,12 @@ impl EvidencePresentation {
         Self {
             detail_columns: Vec::new(),
             show_value: granularity != EvidenceGranularity::Event,
+            one_row_per_record: false,
         }
+    }
+
+    pub fn names_a_record(&self) -> bool {
+        self.detail_keys().any(|key| key == RECORD_REF_KEY)
     }
 
     fn parse(json: &str) -> Option<Self> {
@@ -162,6 +171,7 @@ mod tests {
                 },
             ],
             show_value: false,
+            one_row_per_record: true,
         };
         let stored = serde_json::to_string(&declared)
             .unwrap_or_else(|error| panic!("declaration must serialize: {error}"));
@@ -218,5 +228,30 @@ mod tests {
             .unwrap_or_else(|| panic!("a readable declaration must resolve"));
         assert!(presentation.show_value);
         assert_eq!(presentation.detail_keys().collect::<Vec<_>>(), ["ref"]);
+    }
+
+    #[test]
+    fn a_declaration_that_never_folds_records_stores_as_before() {
+        let StoredPresentation::Declared(parsed) = StoredPresentation::read(Some(
+            r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":true}"#,
+        )) else {
+            panic!("declaration must parse");
+        };
+        assert!(!parsed.one_row_per_record);
+        assert_eq!(
+            serde_json::to_string(&parsed).unwrap_or_default(),
+            r#"{"detail_columns":[{"key":"ref","label":"Ref","type":"string"}],"show_value":true}"#
+        );
+    }
+
+    #[test]
+    fn a_declaration_names_a_record_only_through_its_ref_column() {
+        assert!(!EvidencePresentation::undeclared(EvidenceGranularity::Event).names_a_record());
+        let StoredPresentation::Declared(parsed) = StoredPresentation::read(Some(
+            r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":true}"#,
+        )) else {
+            panic!("declaration must parse");
+        };
+        assert!(parsed.names_a_record());
     }
 }

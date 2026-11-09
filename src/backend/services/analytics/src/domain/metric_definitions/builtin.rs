@@ -681,6 +681,54 @@ mod tests {
     }
 
     #[test]
+    fn every_git_and_task_metric_drills_down_to_its_source_records() {
+        const NOT_YET_LINKED: &[&str] = &[
+            "git.active_days",
+            "git.default_branch_active_days",
+            "git.commits_per_active_day",
+            "git.default_branch_commits_per_active_day",
+            "tasks.flow_efficiency",
+            "tasks.reopen_rate",
+            "tasks.estimation_accuracy",
+            "tasks.worklog_accuracy",
+            "tasks.stale_in_progress",
+        ];
+        let presentations: HashMap<(&str, &str), Option<&EvidencePresentation>> = builtin_sources()
+            .iter()
+            .flat_map(|builtin_source| {
+                builtin_source.measures.iter().map(|measure| {
+                    (
+                        (builtin_source.source.key.as_str(), measure.key.as_str()),
+                        measure.evidence_presentation.as_ref(),
+                    )
+                })
+            })
+            .collect();
+
+        for metric in builtin_metrics()
+            .iter()
+            .filter(|metric| ["git", "task"].contains(&metric.source_key.as_str()))
+        {
+            let every_input_is_a_record = metric.inputs.iter().all(|input| {
+                presentations
+                    .get(&(metric.source_key.as_str(), input.measure_key.as_str()))
+                    .copied()
+                    .flatten()
+                    .is_some_and(EvidencePresentation::names_a_record)
+            });
+            let linked = every_input_is_a_record
+                && metric.computation.denominator_aggregation() == RatioDenominatorAggregation::Sum;
+            assert_eq!(
+                linked,
+                !NOT_YET_LINKED.contains(&metric.metric_key.as_str()),
+                "{}: its drilldown {} reach the records it counts",
+                metric.metric_key,
+                if linked { "does" } else { "does not" }
+            );
+        }
+    }
+
+    #[test]
     fn metric_dimensions_reference_declared_source_dimensions() {
         let dimensions_by_source: HashMap<&str, BTreeSet<&str>> = builtin_sources()
             .iter()

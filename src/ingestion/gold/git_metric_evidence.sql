@@ -142,6 +142,12 @@ file_changes_source AS (
         file_changes.lines_removed AS lines_removed,
         commits.repository_value AS repository_value,
         commits.repository_label AS repository_label,
+        commits.source_id AS commit_source_id,
+        commits.source_value AS source_value,
+        commits.commit_hash AS commit_hash,
+        commits.message AS message,
+        commits.author_name AS author_name,
+        commits.observed_at AS observed_at,
         -- Inherited, not recomputed: lines belong to the bucket their commit
         -- belongs to. A commit in `default` whose lines read `non_default` is
         -- exactly the column disagreement #2464 was about.
@@ -219,6 +225,15 @@ unattributed_line_measures AS (
         tenant_id,
         entity_id,
         metric_date,
+        source_id AS commit_source_id,
+        source_value,
+        commit_hash,
+        message,
+        author_name,
+        observed_at,
+        repository_label,
+        branch_scope_label,
+        'Unknown' AS file_extension_label,
         line_measure.1 AS measure_key,
         line_measure.2 AS value,
         -- INVARIANT: the same KEYS as category_source_dimensions, which the
@@ -585,6 +600,15 @@ file_change_measures AS (
         tenant_id,
         entity_id,
         metric_date,
+        commit_source_id,
+        source_value,
+        commit_hash,
+        message,
+        author_name,
+        observed_at,
+        repository_label,
+        branch_scope_label,
+        file_extension_label,
         file_measure.1 AS measure_key,
         file_measure.2 AS value,
         file_measure.3 AS dimensions
@@ -648,22 +672,44 @@ file_change_measures AS (
         dimensions Array(Tuple(key String, value String, label Nullable(String)))
     ))) AS file_measure
 ),
-measure_observations AS (
+commit_line_measures AS (
     SELECT
         tenant_id,
         entity_id,
         metric_date,
         measure_key,
-        toNullable(sum(value)) AS value,
-        dimensions
+        dimensions,
+        source_value,
+        commit_hash,
+        repository_label,
+        any(commit_source_id) AS commit_source_id,
+        any(message) AS message,
+        any(author_name) AS author_name,
+        any(observed_at) AS observed_at,
+        any(branch_scope_label) AS branch_scope_label,
+        any(file_extension_label) AS file_extension_label,
+        toNullable(sum(value)) AS value
     FROM (
-        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions
+        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions,
+               commit_source_id, source_value, commit_hash, message, author_name,
+               observed_at, repository_label, branch_scope_label, file_extension_label
         FROM file_change_measures
         UNION ALL
-        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions
+        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions,
+               commit_source_id, source_value, commit_hash, message, author_name,
+               observed_at, repository_label, branch_scope_label, file_extension_label
         FROM unattributed_line_measures
     )
-    GROUP BY tenant_id, entity_id, metric_date, measure_key, dimensions
+    GROUP BY tenant_id, entity_id, metric_date, measure_key, dimensions,
+             source_value, commit_hash, repository_label
+),
+commit_line_rows AS (
+    SELECT
+        *,
+        sumMap([file_extension_label], [coalesce(value, 0)]) OVER (
+            PARTITION BY tenant_id, entity_id, source_value, repository_label, commit_hash, measure_key
+        ) AS file_type_lines
+    FROM commit_line_measures
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,
@@ -674,23 +720,42 @@ SELECT
     '' AS account_source_id,
     '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
-    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
+    toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     measure_key,
     concat(
-        toString(metric_date),
+        source_value,
+        ':',
+        commit_hash,
         ':',
         measure_key,
         ':',
         hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), dimensions))))
     ) AS record_id,
-    measure_key AS record_kind,
-    'source_summary' AS granularity,
-    replaceAll(measure_key, '_', ' ') AS record_label,
+    'commit' AS record_kind,
+    'event' AS granularity,
+    if(message = '', commit_hash, message) AS record_label,
     value AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
     dimensions,
-    CAST(map() AS Map(String, String)) AS details
-FROM measure_observations
+    map(
+        'source_id', coalesce(toString(commit_source_id), ''),
+        'ref', commit_hash,
+        'title', message,
+        'repository', repository_label,
+        'author', author_name,
+        'branch_scope', branch_scope_label,
+        'file_types', arrayStringConcat(
+            arrayMap(
+                part -> concat(part.1, ' ', toString(toInt64(part.2))),
+                arrayReverseSort(
+                    part -> part.2,
+                    arrayFilter(part -> part.2 > 0, arrayZip(file_type_lines.1, file_type_lines.2))
+                )
+            ),
+            ' · '
+        )
+    ) AS details
+FROM commit_line_rows
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL

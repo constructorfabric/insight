@@ -51,6 +51,7 @@ pub(crate) fn commit_presentation() -> EvidencePresentation {
             detail_column("lines_removed", "Lines removed", EvidenceColumnType::Number),
         ],
         show_value: false,
+        one_row_per_record: false,
     }
 }
 

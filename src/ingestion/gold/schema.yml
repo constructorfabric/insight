@@ -239,9 +239,10 @@ models:
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.
-      Median inputs retain event grain; additive measures retain daily and
-      dimension summaries. Active commit days retain their date subject and
-      dimensions for exact distinct counts at every supported breakdown.
+      Commit and pull-request measures retain event grain; line measures keep
+      one row per commit per file dimension set, so every line traces to its
+      commit. Active commit days retain their date subject and dimensions for
+      exact distinct counts at every supported breakdown.
     columns: *metric_evidence_columns
 
   - name: collab_metric_evidence

@@ -5,7 +5,6 @@ use serde::Deserialize;
 use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::external_links::ExternalSourceRegistry;
-use crate::domain::metric_definitions::ComputationSpec;
 use crate::domain::metric_definitions::definition::MetricInputRole;
 use crate::domain::metric_definitions::{EvidenceColumnType, EvidenceDetailColumn};
 
@@ -16,7 +15,7 @@ use super::dto::{
     PersonNames, ValidatedMetricDrilldown,
 };
 use super::error::config_error;
-use super::sort::{PERSON_KEY, is_sortable};
+use super::sort::{PERSON_KEY, RowShape, is_sortable};
 
 #[derive(Debug, Deserialize)]
 struct EvidenceDimension {
@@ -117,11 +116,10 @@ pub(super) fn presentation_columns(
     display_dimensions: &[String],
     entity: &MetricDrilldownEntity,
 ) -> Vec<MetricDrilldownColumn> {
-    // A ratio row is one side of a division, so the records behind its two
-    // measures are different things and neither measure's columns describe the
-    // pair: the two numbers are what the row has to say.
-    let ratio = matches!(plan.definition.spec, ComputationSpec::Ratio { .. });
-    let declared = if ratio {
+    // A daily ratio row is a day's two sums over different records, so neither
+    // measure's columns describe it: the two numbers are what the row has to say.
+    let shape = RowShape::of(plan);
+    let declared = if shape == RowShape::DailyRatio {
         Vec::new()
     } else {
         declared_columns(plan)
@@ -129,6 +127,7 @@ pub(super) fn presentation_columns(
     // Both sources of dimension columns drop together for a ratio: the outer
     // aggregate carries no cell the query can order or search, so a column
     // rendered from it would answer neither.
+    let ratio = shape.is_ratio();
     let display_dimensions: &[String] = if ratio { &[] } else { display_dimensions };
     let filters: &[MetricDrilldownFilter] = if ratio { &[] } else { filters };
 
@@ -176,7 +175,7 @@ pub(super) fn presentation_columns(
         });
     }
     for column in &mut columns {
-        column.sortable = column.sortable && is_sortable(&column.key, column.r#type, ratio);
+        column.sortable = column.sortable && is_sortable(&column.key, column.r#type, shape);
     }
     columns
 }
@@ -411,7 +410,7 @@ mod tests {
     use crate::domain::metric_definitions::definition::AliasCollapse;
 
     use crate::config::{ExternalSourceConfig, ExternalSourceProvider};
-    use crate::domain::metric_definitions::EvidencePresentation;
+    use crate::domain::metric_definitions::{ComputationSpec, EvidencePresentation};
     use crate::domain::metric_definitions::{EvidenceGranularity, RatioDenominatorAggregation};
     use crate::domain::metric_drilldown::cursor::decode_cursor;
     use crate::domain::metric_drilldown::cursor::selection_fingerprint;
@@ -442,7 +441,19 @@ mod tests {
         )
     }
 
-    fn ratio_plan() -> EvidencePlan {
+    fn summary_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
+        EvidenceInput {
+            role,
+            measure_key: measure_key.to_owned(),
+            alias_collapse: AliasCollapse::Sum,
+            presentation: EvidencePresentation::undeclared(EvidenceGranularity::SourceSummary),
+        }
+    }
+
+    fn ratio_over(
+        inputs: fn(MetricInputRole, &str) -> EvidenceInput,
+        denominator_aggregation: RatioDenominatorAggregation,
+    ) -> EvidencePlan {
         let numerator = input(MetricInputRole::Numerator, "focus_hours");
         let denominator = input(MetricInputRole::Denominator, "work_hours");
         plan(
@@ -450,13 +461,21 @@ mod tests {
                 numerator: numerator.clone(),
                 denominator: denominator.clone(),
                 scale: 100.0,
-                denominator_aggregation: RatioDenominatorAggregation::Sum,
+                denominator_aggregation,
             },
             vec![
-                commit_input(MetricInputRole::Numerator, &numerator.measure_key),
-                commit_input(MetricInputRole::Denominator, &denominator.measure_key),
+                inputs(MetricInputRole::Numerator, &numerator.measure_key),
+                inputs(MetricInputRole::Denominator, &denominator.measure_key),
             ],
         )
+    }
+
+    fn ratio_plan() -> EvidencePlan {
+        ratio_over(summary_input, RatioDenominatorAggregation::Sum)
+    }
+
+    fn record_ratio_plan() -> EvidencePlan {
+        ratio_over(commit_input, RatioDenominatorAggregation::Sum)
     }
 
     #[test]
@@ -825,20 +844,7 @@ mod tests {
 
     #[test]
     fn ratio_presentation_names_numerator_and_denominator() {
-        let numerator = input(MetricInputRole::Numerator, "focus_hours");
-        let denominator = input(MetricInputRole::Denominator, "work_hours");
-        let plan = plan(
-            ComputationSpec::Ratio {
-                numerator: numerator.clone(),
-                denominator: denominator.clone(),
-                scale: 100.0,
-                denominator_aggregation: RatioDenominatorAggregation::Sum,
-            },
-            vec![
-                commit_input(MetricInputRole::Numerator, &numerator.measure_key),
-                commit_input(MetricInputRole::Denominator, &denominator.measure_key),
-            ],
-        );
+        let plan = ratio_plan();
         let mut ratio_row = row();
         ratio_row.numerator = Some(6.0);
         ratio_row.denominator = Some(8.0);
@@ -864,6 +870,61 @@ mod tests {
         assert_eq!(columns[2].label, "Work hours");
         assert_eq!(rows[0].values["numerator"], 6.0);
         assert_eq!(rows[0].values["denominator"], 8.0);
+    }
+
+    #[test]
+    fn a_ratio_of_records_shows_each_record_beside_its_two_numbers() {
+        let mut ratio_row = row();
+        ratio_row.numerator = Some(1.0);
+        ratio_row.denominator = Some(1.0);
+        let (columns, rows) = presentation(
+            &[ratio_row],
+            &record_ratio_plan(),
+            &[],
+            &["category".to_owned()],
+            &a_roster(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("ratio presentation must build: {error}"));
+
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "lines_added",
+                "lines_removed",
+                "date",
+                "numerator",
+                "denominator"
+            ]
+        );
+        assert!(columns.iter().all(|column| column.sortable));
+        assert_eq!(rows[0].values["ref"], "abc123");
+        assert_eq!(rows[0].values["numerator"], 1.0);
+    }
+
+    #[test]
+    fn a_ratio_counting_distinct_days_keeps_the_daily_rollup() {
+        let columns = presentation_columns(
+            &ratio_over(commit_input, RatioDenominatorAggregation::DistinctCount),
+            &[],
+            &[],
+            &one_person(),
+        );
+
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["date", "numerator", "denominator"]
+        );
     }
 
     #[test]
