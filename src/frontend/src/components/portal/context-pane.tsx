@@ -34,14 +34,14 @@ export function ContextPane() {
   const nav = useZoneNav();
   const rail = railItemFor(nav.activeZone);
   const { t } = useTranslation();
-  const { isMobile, state } = useSidebar();
+  const { state } = useSidebar();
 
   return (
     <Sidebar
       collapsible="none"
       className="flex-1"
       // WORKAROUND: the kit only clips a collapsed pane; it stays in the Tab order.
-      inert={!isMobile && state === "collapsed"}
+      inert={state === "collapsed"}
     >
       <SidebarHeader>
         <span className="px-2 py-1.5 text-sm font-semibold tracking-tight text-sidebar-foreground">
@@ -52,10 +52,16 @@ export function ContextPane() {
         role="navigation"
         aria-label={t("common.a11y.section_navigation")}
       >
-        {rail ? <RailPane rail={rail.id} nav={nav} /> : null}
+        <ZonePages nav={nav} />
       </SidebarContent>
     </Sidebar>
   );
+}
+
+/** The active rail item's pages, for the pane and the phone drawer alike. */
+export function ZonePages({ nav }: { nav: ZoneNav }) {
+  const rail = railItemFor(nav.activeZone);
+  return rail ? <RailPane rail={rail.id} nav={nav} /> : null;
 }
 
 function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {

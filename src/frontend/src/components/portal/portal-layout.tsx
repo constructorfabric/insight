@@ -1,13 +1,20 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { Outlet } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
-import { ContextPane } from "@/components/portal/context-pane";
-import { LensRail } from "@/components/portal/lens-rail";
+import { ContextPane, ZonePages } from "@/components/portal/context-pane";
+import {
+  LensRail,
+  RailFooterItems,
+  RailItems,
+} from "@/components/portal/lens-rail";
 import { PortalTopBar } from "@/components/portal/portal-topbar";
 import {
   Sidebar,
+  SidebarContent,
+  SidebarFooter,
   SidebarInset,
   SidebarProvider,
   useSidebar,
@@ -20,6 +27,7 @@ import {
   type ShellLayout,
 } from "@/lib/portal/use-shell-layout";
 import { useViewerReach } from "@/lib/portal/use-viewer-reach";
+import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { useIsAdmin } from "@/queries/identity-me";
 
 /**
@@ -99,21 +107,53 @@ const SHELL_SIDEBAR_WIDTH = "calc(var(--sidebar-width-icon) + 1px + 16rem)";
 
 /**
  * Collapsible to the icon rail: the rail column stays, the pane beside it goes.
- * On a phone the kit renders the same two columns in its drawer.
+ * On a phone the kit renders it as a drawer holding one labelled column.
  */
 export function ShellSidebar() {
+  const { isMobile } = useSidebar();
+
   return (
     <Sidebar
       collapsible="icon"
       className={
         // WORKAROUND: the kit's phone drawer is a Sheet, whose 24px inset pads
         // the sidebar inside it; the sidebar's rows carry their own spacing.
-        "overflow-hidden *:flex-row [--sheet-inset:0]"
+        "overflow-hidden md:*:flex-row [--sheet-inset:0]"
       }
     >
-      <LensRail />
-      <ContextPane />
+      {isMobile ? (
+        <PhoneDrawer />
+      ) : (
+        <>
+          <LensRail />
+          <ContextPane />
+        </>
+      )}
     </Sidebar>
+  );
+}
+
+/** The rail items as labelled rows, the active item's pages under them. */
+function PhoneDrawer() {
+  const { t } = useTranslation();
+  const nav = useZoneNav();
+
+  return (
+    <>
+      <SidebarContent>
+        <RailItems />
+        <div
+          role="navigation"
+          aria-label={t("common.a11y.section_navigation")}
+          className="contents"
+        >
+          <ZonePages nav={nav} />
+        </div>
+      </SidebarContent>
+      <SidebarFooter>
+        <RailFooterItems />
+      </SidebarFooter>
+    </>
   );
 }
 

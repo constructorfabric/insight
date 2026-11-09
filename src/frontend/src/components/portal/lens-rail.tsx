@@ -34,16 +34,11 @@ import { cn } from "@/lib/utils";
  * only this column; picking an item opens the pane beside it again.
  */
 export function LensRail() {
-  const { items, activeItem, selectItem } = useRailNav();
-  const { setOpen } = useSidebar();
-
   return (
     <Sidebar
       collapsible="none"
       data-testid="lens-rail"
-      // WORKAROUND: the kit portals its phone drawer out of the provider, so the
-      // icon width the provider sets never reaches it; 3rem is the kit's default.
-      className="w-[calc(var(--sidebar-width-icon,3rem)+1px)] border-e"
+      className="w-[calc(var(--sidebar-width-icon)+1px)] border-e"
     >
       <SidebarHeader>
         <img
@@ -55,39 +50,55 @@ export function LensRail() {
         />
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => (
-                <SidebarMenuItem key={item.id}>
-                  <RailTooltip label={item.label}>
-                    <SidebarMenuButton
-                      aria-label={item.label}
-                      data-planned={item.planned || undefined}
-                      isActive={activeItem === item.id}
-                      className={cn(item.planned && "text-muted-foreground")}
-                      onClick={() => {
-                        selectItem(item);
-                        setOpen(true);
-                      }}
-                    >
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </RailTooltip>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <RailItems />
       </SidebarContent>
       <SidebarFooter>
-        <SidebarMenu>
-          <FeedbackItem />
-          <SettingsItem />
-        </SidebarMenu>
+        <RailFooterItems />
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+/** One row per rail item: icons in the rail, labelled rows in the phone drawer. */
+export function RailItems() {
+  const { items, activeItem, selectItem } = useRailNav();
+  const { setOpen } = useSidebar();
+
+  return (
+    <SidebarGroup>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {items.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <RailTooltip label={item.label}>
+                <SidebarMenuButton
+                  aria-label={item.label}
+                  data-planned={item.planned || undefined}
+                  isActive={activeItem === item.id}
+                  className={cn(item.planned && "text-muted-foreground")}
+                  onClick={() => {
+                    selectItem(item);
+                    setOpen(true);
+                  }}
+                >
+                  <item.icon />
+                  <span>{item.label}</span>
+                </SidebarMenuButton>
+              </RailTooltip>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+export function RailFooterItems() {
+  return (
+    <SidebarMenu>
+      <FeedbackItem />
+      <SettingsItem />
+    </SidebarMenu>
   );
 }
 
@@ -121,7 +132,7 @@ function FeedbackItem() {
 
 function SettingsItem() {
   const [open, setOpen] = useState(false);
-  const { setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   return (
     <SidebarMenuItem>
@@ -136,7 +147,11 @@ function SettingsItem() {
             }
           />
         </RailTooltip>
-        <PopoverContent side="right" align="end" className="w-64 gap-0 p-1">
+        <PopoverContent
+          side={isMobile ? "top" : "right"}
+          align={isMobile ? "start" : "end"}
+          className="w-64 gap-0 p-1"
+        >
           <AppSidebarFooter
             showFeedback={false}
             onNavigate={() => {
@@ -151,8 +166,9 @@ function SettingsItem() {
 }
 
 /**
- * The rail's labels at every width. The kit's own `tooltip` prop shows only
- * while the whole sidebar is collapsed, and the rail is visible open or not.
+ * The rail's labels at every desktop width. The kit's own `tooltip` prop shows
+ * only while the whole sidebar is collapsed, and the rail is visible open or
+ * not. The phone drawer's rows carry their labels, so it gets none.
  */
 function RailTooltip({
   label,
@@ -161,6 +177,9 @@ function RailTooltip({
   label: string;
   children: ReactElement;
 }) {
+  const { isMobile } = useSidebar();
+  if (isMobile) return children;
+
   return (
     <Tooltip>
       <TooltipTrigger render={children} />

@@ -168,6 +168,41 @@ describe("shell layout: phone", () => {
     expect(screen.getByText("At a glance")).toBeInTheDocument();
   });
 
+  it("lists every rail item as a labelled row, with no icon rail", async () => {
+    render(<Shell />);
+    await openDrawer();
+
+    expect(screen.queryByTestId("lens-rail")).not.toBeInTheDocument();
+    for (const label of ["Home", "Dashboards", "Explore", "People", "Reports", "Manage"]) {
+      expect(screen.getByRole("button", { name: label }), label).toHaveTextContent(label);
+    }
+  });
+
+  it("opens no tooltip over the drawer when its first row takes focus", async () => {
+    render(<Shell />);
+    const user = await openDrawer();
+    const home = screen.getByRole("button", { name: "Home" });
+
+    home.focus();
+    await user.hover(home);
+
+    expect(screen.getAllByText("Home")).toHaveLength(1);
+  });
+
+  it("puts feedback and settings below the pages, in the drawer's footer", async () => {
+    render(<Shell />);
+    await openDrawer();
+    const pages = screen.getByRole("navigation", { name: "Section navigation" });
+
+    for (const label of ["Send feedback", "Settings"]) {
+      const row = screen.getByRole("button", { name: label });
+      expect(
+        pages.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
+        label,
+      ).toBeTruthy();
+    }
+  });
+
   it("keeps the drawer open on a zone pick, so the zone's sections are next", async () => {
     render(<Shell />);
     const user = await openDrawer();
