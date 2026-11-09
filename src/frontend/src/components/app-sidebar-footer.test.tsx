@@ -63,7 +63,7 @@ vi.mock("@/components/feedback-context", () => ({
   useFeedbackDialog: () => ({ openFeedback: mocks.openFeedback }),
 }));
 
-vi.mock("@/components/ui/avatar", () => ({
+vi.mock("@gears-frontx/ui-kit", () => ({
   Avatar: ({ children }: { children?: React.ReactNode }) => (
     <span>{children}</span>
   ),

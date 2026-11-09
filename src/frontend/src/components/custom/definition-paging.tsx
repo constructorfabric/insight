@@ -1,4 +1,4 @@
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";

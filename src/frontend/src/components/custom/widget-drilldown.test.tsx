@@ -58,8 +58,8 @@ const CLOCKLESS = {
 };
 
 const COLUMNS: DrilldownPage["columns"] = [
-  { key: "service", label: "service", type: "string", sortable: true, percent: false },
-  { key: "commits", label: "commits", type: "number", sortable: true, percent: false },
+  { key: "service", label: "service", type: "string", sortable: true, percent: false, exact: false },
+  { key: "commits", label: "commits", type: "number", sortable: true, percent: false, exact: false },
 ];
 
 function page(
@@ -169,15 +169,14 @@ describe("<WidgetDrilldown>", () => {
     ).toHaveAttribute("aria-sort", "none");
   });
 
-  // The card and the rows behind it are the same numbers, so they are
-  // written the same way: grouped, and with the unit the metric declares.
-  it("shows numbers as the record holds them, a percent marked as one", async () => {
+  it("rounds a fraction and a percent to two decimals and keeps whole numbers as the record holds them", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
     vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
-      page([{ service: "example-api", commits: 1234567, share: 83.91167 }], {
+      page([{ service: "example-api", commits: 1234567, cost: 12.3456, share: 83.91167 }], {
         columns: [
           ...COLUMNS,
-          { key: "share", label: "share", type: "number", sortable: true, percent: true },
+          { key: "cost", label: "cost", type: "number", sortable: true, percent: false, exact: false },
+          { key: "share", label: "share", type: "number", sortable: true, percent: true, exact: false },
         ],
       })
     );
@@ -185,7 +184,8 @@ describe("<WidgetDrilldown>", () => {
     renderDrilldown();
 
     expect(await screen.findByText("1234567")).toBeInTheDocument();
-    expect(screen.getByText("83.91167%")).toBeInTheDocument();
+    expect(screen.getByText("12.35")).toBeInTheDocument();
+    expect(screen.getByText("83.91%")).toBeInTheDocument();
   });
 
   // A header click is a question to the service; the answer is the next

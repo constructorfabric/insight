@@ -27,8 +27,8 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
         // the org's top line was three-quarters code and cost, and the work
         // that never touches a repo went unrepresented.
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
+          "git.pr_size",
           "tasks.closed",
           "collab.messages_sent",
           "ai.cost",

@@ -20,16 +20,14 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-} from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
-import {
+  Spinner,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { formatMetricNumber } from "@/lib/format";
 import { nextSort } from "@/lib/metrics/evidence-rows";
 import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";

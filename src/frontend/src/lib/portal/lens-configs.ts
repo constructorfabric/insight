@@ -535,23 +535,24 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "headline",
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
+          "git.pr_size",
           "git.default_branch_lines_added",
+          "git.reviews_performed",
         ],
       },
       {
         kind: "stat-tiles",
         title: "Typical values (median)",
-        metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.default_branch_merge_rate"],
+        metrics: ["git.pr_cycle_time_h", "git.default_branch_merge_rate"],
       },
       {
         kind: "trend",
-        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
+        metrics: ["git.default_branch_prs_created", "git.default_branch_prs_merged"],
       },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
       },
       {

@@ -7,7 +7,7 @@ import { useFeedbackDialog } from "@/components/feedback-context";
 import { personName } from "@/lib/identities/person-display";
 import { SidebarSettings } from "@/components/sidebar-settings";
 import { ThemeSwitcher } from "@/components/theme-switcher";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@gears-frontx/ui-kit";
 import {
   SidebarMenu,
   SidebarMenuButton,

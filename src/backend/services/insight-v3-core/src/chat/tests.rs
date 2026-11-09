@@ -518,6 +518,7 @@ fn the_query_schema_names_a_dataset_and_its_fields() {
         "a field can divide two others"
     );
     assert_eq!(field["percent"]["type"], json!("boolean"));
+    assert_eq!(field["exact"]["type"], json!("boolean"));
     // The field a metric reads is not required: counting rows names none, and
     // no JSON schema this API accepts can say "required unless counting", so
     // the compiler refuses what the schema lets through.

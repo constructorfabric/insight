@@ -5,15 +5,16 @@ import { useMemo, useState } from "react";
 import type { PeopleListItem } from "@/api/identity-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Badge, Input } from "@gears-frontx/ui-kit";
 import {
+  Badge,
+  Input,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { personName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { useVisibilityPolicy } from "@/queries/identity-me";
