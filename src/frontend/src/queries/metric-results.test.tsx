@@ -294,8 +294,8 @@ describe("useMetricCollectionSet", () => {
     await waitFor(() =>
       expect(result.current.get("g")?.isPending).toBe(false),
     );
-    // period+peer → 2 rows/entity → 2250/chunk → 3000 ids span 2 requests.
-    expect(mock).toHaveBeenCalledTimes(2);
+    // period+peer → 2 rows/entity → 2250 by rows, capped at 1000 ids → 3 requests.
+    expect(mock).toHaveBeenCalledTimes(3);
     expect(result.current.get("g")?.byKey.get("m")?.period?.values).toHaveLength(
       3000,
     );
@@ -317,7 +317,7 @@ describe("useMetricCollectionSet", () => {
     );
     mock.mockClear();
     result.current.get("g")?.refetch();
-    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(3));
   });
 
   it("serves a tenant entity as one unchunked id-less request", async () => {

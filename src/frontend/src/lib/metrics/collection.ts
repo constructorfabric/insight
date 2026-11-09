@@ -423,6 +423,9 @@ export function forEntity(
  */
 export const MAX_PROJECTED_ROWS = 4500;
 
+// INVARIANT: matches MAX_PERSON_IDS in the analytics metric_results validation.
+export const MAX_ENTITY_IDS = 1000;
+
 /**
  * How many entities fit in one request for this collection, or null when the
  * collection is not chunkable. Timeseries/breakdown project rows per bucket
@@ -452,7 +455,10 @@ export function entityChunkSize(
     }
   }
   if (rowsPerEntity === 0) return null;
-  return Math.max(1, Math.floor(MAX_PROJECTED_ROWS / rowsPerEntity));
+  return Math.min(
+    MAX_ENTITY_IDS,
+    Math.max(1, Math.floor(MAX_PROJECTED_ROWS / rowsPerEntity)),
+  );
 }
 
 export function chunkEntityIds(ids: string[], size: number): string[][] {
