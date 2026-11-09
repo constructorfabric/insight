@@ -7,8 +7,9 @@ Entry points: `./dev-compose.sh test-stand` (raises a compose stand and runs the
 `scripts/ci/*` (coverage + spec gates), and the standard per-language tools (`cargo`, `pytest`).
 
 The [mock source and Airbyte API fault proxy guide](SCHEDULING-HARNESS.md)
-documents the implemented scheduling harness and planned plain pytest scenarios
-for connector scheduling and capacity tests through Airbyte.
+documents the implemented harness and planned plain pytest scenarios for the
+`connectors` service's apply-on-save, 60-second drift correction and bash reconcile
+schedule reader, plus capacity tests through Airbyte.
 
 ---
 

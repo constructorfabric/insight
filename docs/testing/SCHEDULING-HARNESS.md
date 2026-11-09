@@ -24,32 +24,51 @@ completion.
 
 ## Scheduling under test
 
-Schedule requests are always available. An admin reads, saves or clears an
-instance's request through `GET`, `PUT` or `DELETE`
-`/v1/connectors/{connector}/{source_id}/schedule`; writes use the current revision
-as a quoted value in `If-Match`. Ingestion reads one complete request snapshot
-from MariaDB's `connector_schedule_requests_v1` view per pass. A nonempty request
-wins over the Secret schedule annotation, the connector descriptor and the daily
-default, in that order. Clearing an active request stores an empty cron list
-with a new revision and selects the deployment fallback.
+The planned scheduling scenarios target the `connectors` service and the bash
+reconcile reader. Both must be installed for these checks.
 
-The `schedule-apply` CronWorkflow runs every minute and shares an Argo mutex with
-full reconcile. It patches only schedules, timezone and schedule origin on
-existing connector CronWorkflows, with UID/resourceVersion checks. It does not
-create connections or CronWorkflows, submit syncs, call Airbyte or run the sync
-history sweep. Full reconcile creates missing CronWorkflows and also applies
-requests. A failed request snapshot read prevents schedule changes and fails
-the pass; it does not silently select a deployment fallback.
+An admin reads, saves or clears an instance's request through `GET`, `PUT` or
+`DELETE` `/api/connectors/v1/connectors/{connector}/{source_id}/schedule`.
+Writes use the current revision as a quoted value in `If-Match`. Requests live
+in the service's MariaDB database, `connectors`.
 
-After applying, ingestion reads the CronWorkflow back and writes an
-acknowledgement record in MariaDB's `connector_schedule_acknowledgements` table.
-The record holds the applied revision, schedule, timezone, origin, suspension,
-deployment fallback and its origin, observation time and last attempt/error.
-Failed apply/readback attempts preserve the last successful observation. The
-schedule API and Connector health derive request status (`pending`, `applied`,
-`inherited` or `error`) from this record and the requested revision. Deployment
-fallback belongs in the acknowledgement record; sync history records sync
-evidence separately.
+On save, the service stores the request, patches the existing CronWorkflow and
+reads it back in the same request. An instance lock serializes saves and drift
+corrections. The patch carries UID/resourceVersion guards and changes only
+`spec.schedules`, `spec.timezone` and `insight.cyberfabric.com/schedule-origin`.
+A saved schedule uses timezone `UTC` and origin `api`. A refused apply keeps the
+save and returns HTTP 200 with status `error` and a fixed message.
+
+Every 60 seconds, the service's drift loop compares stored requests with live
+CronWorkflows. It re-applies on drift and refreshes observations. It retries
+failed attempts. The service never creates or deletes CronWorkflows.
+
+The bash reconcile reads one complete snapshot from
+`connectors.connector_schedule_requests_v1` per pass. A nonempty saved request
+wins over the Secret schedule annotation, the connector descriptor and
+`0 0 * * *`, in that order. Reconcile creates missing CronWorkflows and records
+the deployment fallback on each one as
+`insight.cyberfabric.com/deployment-schedule`. The annotation holds JSON with
+`origin` and `crons`, for example
+`{"origin":"descriptor","crons":["0 4 * * *"]}`. A failed view read leaves all
+CronWorkflows unchanged and counts one failure.
+
+Clearing a request stores an empty cron list with a new revision. The service
+restores the fallback from the `deployment-schedule` annotation. It waits for
+reconcile when that annotation is absent. A reconcile pass can render a snapshot
+taken before a save; the drift loop restores the saved schedule within 60 seconds.
+
+The schedule API computes status from the stored request, live CronWorkflow and
+last attempt. Its `live` field is read in the current request. The service stores
+observations and attempts in `connector_schedule_applications`. Connector health
+reads the dated `last_observation`; sync history records sync evidence separately.
+
+| Status | Evidence |
+|---|---|
+| `applied` | A nonempty request exactly matches the live crons, timezone `UTC` and origin `api`. |
+| `inherited` | No request or an empty list, with live origin `annotation`, `descriptor` or `default`. |
+| `error` | The last attempt at the current revision failed and the live object does not match the request. The response carries a fixed error message. |
+| `pending` | Other states, with `pending_reason`: `no_cronworkflow` when the object is missing, `awaiting_reconcile` when the deployment annotation is absent, or `applying`. |
 
 ## Components and callers
 
@@ -58,12 +77,12 @@ flowchart LR
     Operator -->|install synthetic Secrets| Kubernetes
     Kubernetes -->|discover Secrets| Reconcile
     Reconcile -->|manifest and instance config| Proxy[Optional local Airbyte API proxy]
-    MariaDB[MariaDB request view] -->|snapshot| Reconcile
-    MariaDB -->|snapshot| Apply[One-minute schedule-apply]
-    Reconcile -->|apply and read back| Cron[Connector CronWorkflows]
-    Apply -->|patch and read back| Cron
-    Reconcile -->|write| Ack[MariaDB acknowledgement record]
-    Apply -->|write| Ack
+    Admin -->|schedule API| Service[connectors service]
+    Service <-->|requests and observations| MariaDB[MariaDB connectors]
+    MariaDB -->|request view snapshot| Reconcile
+    Drift[60-second drift loop] --> Service
+    Reconcile -->|render with deployment schedule| Cron[Connector CronWorkflows]
+    Service -->|patch and read back| Cron
     Proxy --> Airbyte
     Cron -->|scheduled Workflow| Schedule[Scheduled or manual Workflow]
     Schedule -->|submit job| Proxy
@@ -558,12 +577,13 @@ they inherit its chart-rendered URL. Existing running Workflows retain their
 captured parameters; resubmit them after enabling the profile. Explicit
 `airbyte_url` overrides, host-side CLI `AIRBYTE_URL` values
 and arbitrary external callers must be aimed separately. The Airbyte profile
-cannot route ClickHouse, Kubernetes or MariaDB faults. Schedule request reads and
-acknowledgement writes use the `CONNECTOR_SCHEDULES_DB_*` settings supplied by
-`insight.connectorSchedulesEnv`; they do not traverse this HTTP proxy. The
-`schedule-apply` CronWorkflow has those database settings and no Airbyte caller.
-Schedule-read, acknowledgement-write and admin API failures therefore need
-separate database/API fault setup in future pytest scenarios.
+cannot route ClickHouse, Kubernetes or MariaDB faults. The reconcile reader uses
+the `CONNECTOR_SCHEDULES_DB_*` settings supplied by
+`insight.connectorSchedulesEnv` to read the view in the connectors database.
+Its account has only `SELECT` on that view. The service uses its own database
+connection and calls Kubernetes directly for schedule patches and read-back.
+Schedule-read, database-write, Kubernetes and admin API failures need separate
+fault setup in future pytest scenarios.
 
 Keep `MOCK_AIRBYTE_UPSTREAM` as the independent Airbyte URL inside the cluster.
 For host-side direct observation, use a second terminal:
@@ -624,10 +644,12 @@ and confirm one upstream job independently even though the submitter loses its
 response. Record outcomes; the proxy supplies fault controls, while automated
 scheduling assertions remain planned plain pytest scenarios.
 
-For schedule application, inspect the connector CronWorkflow and its
-acknowledgement record, then compare the admin schedule API's revision, status
-and applied schedule. A `schedule-apply` tick produces no Airbyte proxy traffic;
-its success must be checked through Workflow status and database/readback evidence.
+For schedule application, compare the admin schedule API's revision, `status`,
+`pending_reason`, `live` and `inherited` with the connector CronWorkflow.
+Check its schedules, timezone, origin and `deployment-schedule` annotation.
+The service calls Kubernetes directly on save and during drift correction.
+Use live read-back as evidence; the Airbyte proxy journal cannot prove schedule
+application.
 
 Before removal, restore the direct route by upgrading the same application chart
 with `--reuse-values --set-string airbyte.apiUrl=`, restoring the chart's empty
@@ -681,39 +703,35 @@ does not establish its original cause.
 | Airbyte availability | API unavailability during admission/polling | Actual server restart/OOM still needs Kubernetes faults |
 | Public listing and credential convergence | Distinguish public job listings from internal listings; fail source updates after hash mutation | Endpoint assertions and hash/credential convergence |
 | State and destination recovery | Discovery/catalog, state export/import/recreate and destination API failpoints/barriers | Incremental state and reconcile convergence assertions |
-| Schedule application failures | No coverage from the Airbyte profile: schedule reads and acknowledgement writes use MariaDB | Separate database/API fault setup and acknowledgement record assertions |
+| Schedule application failures | Schedule storage and view reads use MariaDB; patches and read-back use Kubernetes | Separate database/Kubernetes/API faults, saved revision and live read-back assertions |
 | Rename/recreate races | Hold connection lookup response before returning a stale UUID | Rename/recreate steps and independent job/intent accounting |
 | Sync history sweep and recovery | Barriers around listings; listing/status/time/stat fixtures by call; public API failures and pagination movement | Sweep ticks, sync history and watermark assertions, persistent Workflow evidence; Kubernetes/ClickHouse faults remain separate |
 
-## Planned redeploy scenario
+## Planned scheduling scenarios
 
-This is planned slice 5 coverage, implemented later as plain pytest:
+These are planned plain pytest scenarios on a local Kubernetes installation.
+Use the synthetic `mock-a` instance without a Secret schedule annotation. Its
+descriptor schedule is `0 4 * * *`. Install the service, reconcile reader and
+schedule pane. Let one reconcile pass render the `deployment-schedule`
+annotation before E1. Capture revisions and use the current `If-Match` for each
+write.
 
-1. Reconcile a synthetic mock instance so its connector CronWorkflow exists.
-   Save a request through the admin instance schedule API using `If-Match` and
-   capture its revision. Wait for a `schedule-apply` tick, allowing for the shared
-   mutex, and assert the CronWorkflow's schedules, UTC timezone and `api` origin.
-   Check the acknowledgement record's applied revision and schedule, and require
-   the API status to be `applied`.
-2. Upgrade/redeploy the application with the current scheduling stack. The
-   stored request and revision must survive. After the next apply tick or full
-   reconcile pass, require the same effective schedule and acknowledged revision.
-   Acknowledgement observation/attempt times may advance.
-3. Change the Secret schedule annotation while the request is active. After an
-   apply tick, require the requested schedule and revision to remain effective,
-   with the new deployment fallback and its origin in the acknowledgement record.
-   An unchanged tick must leave the effective schedule and revision unchanged.
-4. Clear the request with the current revision. After application, require the
-   new clear revision to be acknowledged, the annotation fallback to be applied
-   and API status to be `inherited`.
+| Case | Steps | Pass when |
+|---|---|---|
+| E1 | Save `*/5 * * * *` for `mock-a` in the UI. | The pane says `applied`. The live CronWorkflow shows that schedule, timezone `UTC` and origin `api` within a minute. |
+| E2 | Run a bash reconcile pass. | The saved schedule stays. The CronWorkflow carries `deployment-schedule` with the descriptor fallback. |
+| E3 | Hold a reconcile pass at a proxy barrier after it reads saved schedules. Save `*/10 * * * *`, then release the barrier. | The pass renders the older schedule. Within 60 seconds the service restores `*/10 * * * *` and reports `applied`. |
+| E4 | Clear the schedule in the UI. | The response is immediately `inherited`. The live schedule is `0 4 * * *` with origin `descriptor`. |
+| E5 | Remove `patch` from the service Role. Save `*/5 * * * *`, then restore the Role. | The save is kept with status `error` and the fixed message `the cluster refused the schedule`. Within a minute of restoring the Role, it is `applied`. |
+| E6 | Let the `*/5` schedule fire. | A Workflow runs `ingestion-pipeline` and the Airbyte job succeeds. After the next sweep, the health row shows `succeeded`. |
+| E7 | Through the proxy, rewrite the job's `status` to `failed` in `GET /api/public/v1/jobs`. Separately exercise `auth_reject` on the mock source. | The next sweep records `failed`. The health row shows the failure and sorts first. |
+| E8 | Revoke the reconcile account's view grant and run a pass. Restore the grant afterward. | No CronWorkflow changes. The pass counts one failure. |
 
-Related pytest cases should cover a save during an older in-flight snapshot
-(only that snapshot's revision can be acknowledged), a missing CronWorkflow
-(the apply loop records an error until full reconcile creates it), failed
-snapshot reads (no schedule changes), and failed apply/readback attempts (last
-successful acknowledgement preserved). The Airbyte proxy cannot inject these
-database or Kubernetes failures. Sync history checks remain separate from
-request status and deployment-fallback assertions.
+Also check a missing CronWorkflow (`pending`, `no_cronworkflow`) and an absent
+deployment annotation (`pending`, `awaiting_reconcile`, with no patch). A refused
+patch or failed read-back must keep the saved request for retry. Database and
+Kubernetes faults need separate setup from the Airbyte proxy. Sync history
+checks remain separate from schedule status and deployment-fallback assertions.
 
 ## Verification
 
