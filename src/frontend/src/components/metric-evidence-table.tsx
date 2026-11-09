@@ -496,11 +496,8 @@ export function MetricEvidenceTable({
                       role="cell"
                       key={column.key}
                       className={cn(
-                        "h-11 min-w-0 px-3 tabular-nums",
-                        column.key === "ref" && value != null
-                          ? "flex items-center py-0"
-                          : "py-3",
-                        column.type === "number" && "text-right"
+                        "flex h-11 min-w-0 items-center px-3 py-0 tabular-nums",
+                        column.type === "number" && "justify-end text-right"
                       )}
                     >
                       {column.key === "ref" && value != null ? (

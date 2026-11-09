@@ -216,3 +216,14 @@ export function headerUnit(
   if (!shown) return null;
   return label.toLocaleLowerCase().includes(shown.toLocaleLowerCase()) ? null : shown;
 }
+
+export function rolesById(root: IdentityPerson | null): Map<string, string> {
+  const roles = new Map<string, string>();
+  const walk = (node: IdentityPerson) => {
+    const role = node.job_title?.trim();
+    if (role) roles.set(normalizePersonId(node.person_id), role);
+    node.subordinates.forEach(walk);
+  };
+  if (root) walk(root);
+  return roles;
+}

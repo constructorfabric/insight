@@ -29,6 +29,7 @@ import {
   useAttention,
   listsAnyone,
   useAccountList,
+  useAccountSources,
   useBindAccount,
   usePersonList,
 } from "./identity-resolution";
@@ -47,6 +48,8 @@ const ATTENTION_KEY = [
   "attention",
   "tenant-a",
   identityClient.QUEUE_FIRST_PAGE,
+  [],
+  [],
 ];
 
 const REF = {
@@ -341,6 +344,119 @@ describe("useAccountList", () => {
   );
 });
 
+describe("source filter hooks", () => {
+  const searchAccounts = vi.mocked(identityClient.searchAccounts);
+  const getAttention = vi.mocked(identityClient.getAttention);
+  const listSources = vi.mocked(identityClient.listSources);
+  const empty = { items: [], next_cursor: null };
+
+  it("asks the account list again when the sources change", async () => {
+    const { wrapper } = harness();
+    searchAccounts.mockResolvedValue(empty);
+
+    const { result, rerender } = renderHook(
+      ({ sources }) => useAccountList("", "browse", sources),
+      { wrapper, initialProps: { sources: ["github"] } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    rerender({ sources: ["github", "gitlab"] });
+    await waitFor(() => expect(searchAccounts).toHaveBeenCalledTimes(2));
+
+    expect(searchAccounts.mock.calls[1][3]).toEqual(["github", "gitlab"]);
+  });
+
+  it("keys the account list by the sorted source set", async () => {
+    const { wrapper, queryClient: client } = harness();
+    searchAccounts.mockResolvedValue(empty);
+
+    const { result } = renderHook(
+      () => useAccountList("", "browse", ["gitlab", "github"]),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(
+      client
+        .getQueryCache()
+        .findAll({ queryKey: ["identity", "resolution", "account-search"] })
+        .map((q) => q.queryKey),
+    ).toEqual([
+      ["identity", "resolution", "account-search", "tenant-a", "browse", "", ["github", "gitlab"]],
+    ]);
+  });
+
+  it("passes the sources to the attention read", async () => {
+    const { wrapper } = harness();
+    getAttention.mockResolvedValue({
+      items: [],
+      rates: { observed: 0, bound: 0, pending: 0, no_source_id: 0, no_evidence: 0, excluded: 0 },
+    });
+
+    const { result } = renderHook(() => useAttention(50, ["gitlab", "github"]), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getAttention).toHaveBeenCalledWith(50, ["github", "gitlab"], []);
+  });
+
+  it("shows no rows of the previous source set while the new one is read", async () => {
+    const { wrapper } = harness();
+    const rates = { observed: 0, bound: 0, pending: 0, no_source_id: 0, no_evidence: 0, excluded: 0 };
+    getAttention.mockResolvedValueOnce({ items: [item("a1")], rates });
+
+    const { result, rerender } = renderHook(
+      ({ sources }) => useAttention(50, sources),
+      { wrapper, initialProps: { sources: ["github"] } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    getAttention.mockReturnValueOnce(new Promise(() => {}));
+    rerender({ sources: ["gitlab"] });
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isPlaceholderData).toBe(false);
+  });
+
+  it("shows no accounts of the previous source set while the new one is read", async () => {
+    const { wrapper } = harness();
+    searchAccounts.mockResolvedValueOnce(empty);
+
+    const { result, rerender } = renderHook(
+      ({ sources }) => useAccountList("ann", "browse", sources),
+      { wrapper, initialProps: { sources: ["github"] } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    searchAccounts.mockReturnValueOnce(new Promise(() => {}));
+    rerender({ sources: ["gitlab"] });
+
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("keeps the accounts on screen while a new term is read for the same sources", async () => {
+    const { wrapper } = harness();
+    searchAccounts.mockResolvedValueOnce(empty);
+
+    const { result, rerender } = renderHook(
+      ({ q }) => useAccountList(q, "browse", ["github"]),
+      { wrapper, initialProps: { q: "ann" } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    searchAccounts.mockReturnValueOnce(new Promise(() => {}));
+    rerender({ q: "anna" });
+
+    expect(result.current.data).toBeDefined();
+    expect(result.current.isPlaceholderData).toBe(true);
+  });
+
+  it("reads the source list", async () => {
+    const { wrapper } = harness();
+    listSources.mockResolvedValue(["github", "gitlab"]);
+
+    const { result } = renderHook(() => useAccountSources(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(["github", "gitlab"]);
+  });
+});
+
 describe("usePersonList while a term is being typed", () => {
   function page(...names: string[]): identityClient.PersonSearchResponse {
     return {
@@ -438,11 +554,44 @@ describe("useAttention", () => {
     const { result } = renderHook(() => useAttention(400), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(identityClient.getAttention).toHaveBeenCalledWith(400);
+    expect(identityClient.getAttention).toHaveBeenCalledWith(400, [], []);
     expect(
       queryClient
         .getQueryCache()
-        .find({ queryKey: ["identity", "resolution", "attention", "tenant-a", 400] }),
+        .find({ queryKey: ["identity", "resolution", "attention", "tenant-a", 400, [], []] }),
+    ).toBeDefined();
+  });
+
+  it("asks for the kinds it is keyed on, sorted", async () => {
+    vi.mocked(identityClient.getAttention).mockResolvedValue({
+      items: [],
+      rates: { observed: 0, bound: 0, pending: 0, no_source_id: 0, no_evidence: 0, excluded: 0 },
+    });
+    const { queryClient, wrapper } = harness();
+
+    const { result } = renderHook(
+      () => useAttention(400, ["gitlab"], ["no_evidence", "contested"]),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(identityClient.getAttention).toHaveBeenCalledWith(
+      400,
+      ["gitlab"],
+      ["contested", "no_evidence"],
+    );
+    expect(
+      queryClient.getQueryCache().find({
+        queryKey: [
+          "identity",
+          "resolution",
+          "attention",
+          "tenant-a",
+          400,
+          ["contested", "no_evidence"],
+          ["gitlab"],
+        ],
+      }),
     ).toBeDefined();
   });
 

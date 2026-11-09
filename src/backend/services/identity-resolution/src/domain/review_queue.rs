@@ -48,6 +48,34 @@ pub enum ItemKind {
     NoEvidence,
 }
 
+impl ItemKind {
+    pub const ALL: [Self; 6] = [
+        Self::Contested,
+        Self::BindingConflict,
+        Self::ProvisionedAtLogin,
+        Self::MintedFromRoster,
+        Self::NoSourceId,
+        Self::NoEvidence,
+    ];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Contested => "contested",
+            Self::BindingConflict => "binding_conflict",
+            Self::ProvisionedAtLogin => "provisioned_at_login",
+            Self::MintedFromRoster => "minted_from_roster",
+            Self::NoSourceId => "no_source_id",
+            Self::NoEvidence => "no_evidence",
+        }
+    }
+
+    #[must_use]
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.label() == label)
+    }
+}
+
 /// What the connector says this account IS, beyond the values automation
 /// matches on.
 ///
@@ -209,6 +237,46 @@ pub fn build(
     Review { items, rates }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum KindFilter {
+    Any,
+    Only(Vec<ItemKind>),
+}
+
+impl KindFilter {
+    #[must_use]
+    pub fn from_labels(labels: &[String]) -> Self {
+        if labels.is_empty() {
+            return Self::Any;
+        }
+
+        Self::Only(
+            labels
+                .iter()
+                .filter_map(|label| ItemKind::from_label(label))
+                .collect(),
+        )
+    }
+
+    fn admits(&self, kind: ItemKind) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Only(kinds) => kinds.contains(&kind),
+        }
+    }
+}
+
+#[must_use]
+pub fn narrow(items: Vec<QueueItem>, sources: &[String], kinds: &KindFilter) -> Vec<QueueItem> {
+    items
+        .into_iter()
+        .filter(|item| {
+            (sources.is_empty() || sources.contains(&item.account.source_type))
+                && kinds.admits(item.kind)
+        })
+        .collect()
+}
+
 /// Accounts sharing an e-mail whose bindings disagree, with no operator-authored
 /// binding explaining the split.
 fn binding_conflicts(
@@ -285,12 +353,25 @@ fn has_matchable_evidence(account: &EvidenceAccount) -> bool {
 /// it differently here would either hide an account the seed skips or queue one
 /// the seed resolves; both are states nobody can see from the other side.
 fn address_is_claimed(account: &EvidenceAccount, claimed: &HashMap<String, Uuid>) -> bool {
-    account
-        .email
-        .as_deref()
+    address_holder(account.email.as_deref(), None, claimed).is_some()
+}
+
+/// INVARIANT: normalization and the sentinel exclusion are the seed's, shared
+/// with [`address_is_claimed`]; a bound account has no address holder.
+#[must_use]
+pub fn address_holder(
+    email: Option<&str>,
+    binding: Option<&KnownBinding>,
+    claimed: &HashMap<String, Uuid>,
+) -> Option<Uuid> {
+    if binding.is_some() {
+        return None;
+    }
+
+    email
         .map(normalize_email)
         .and_then(|email| claimed.get(&email).copied())
-        .is_some_and(|person| person != EXCLUDED_PERSON)
+        .filter(|person| *person != EXCLUDED_PERSON)
 }
 
 /// The item an already-bound account earns, when its binding still awaits a
@@ -931,5 +1012,184 @@ mod tests {
         assert!(review.items.is_empty());
         assert_eq!(review.rates.excluded, 1);
         assert_eq!(review.rates.bound, 0, "excluded is its own state");
+    }
+
+    fn queued(kind: ItemKind, source: &str, account_id: &str) -> QueueItem {
+        QueueItem {
+            kind,
+            account: SourceAccountKey {
+                source_type: source.to_owned(),
+                source_id: Uuid::from_u128(1),
+                account_id: account_id.to_owned(),
+            },
+            email: None,
+            username: None,
+            description: AccountDescription::default(),
+            bound_to: None,
+            candidates: Vec::new(),
+        }
+    }
+
+    fn ids(items: &[QueueItem]) -> Vec<&str> {
+        items
+            .iter()
+            .map(|i| i.account.account_id.as_str())
+            .collect()
+    }
+
+    fn labels(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    fn sample_queue() -> Vec<QueueItem> {
+        vec![
+            queued(ItemKind::BindingConflict, "gitlab", "x-1"),
+            queued(ItemKind::Contested, "gitlab", "c-1"),
+            queued(ItemKind::NoEvidence, "gitlab", "e-1"),
+            queued(ItemKind::NoEvidence, "github", "e-2"),
+            queued(ItemKind::NoSourceId, "hr", "n-1"),
+        ]
+    }
+
+    #[test]
+    fn narrowing_keeps_queue_order_and_applies_both_filters() {
+        for (case, sources, kinds, expected) in [
+            (
+                "no filter keeps everything",
+                labels(&[]),
+                KindFilter::Any,
+                vec!["x-1", "c-1", "e-1", "e-2", "n-1"],
+            ),
+            (
+                "sources only",
+                labels(&["gitlab", "hr"]),
+                KindFilter::Any,
+                vec!["x-1", "c-1", "e-1", "n-1"],
+            ),
+            (
+                "a known kind keeps only its items",
+                labels(&[]),
+                KindFilter::from_labels(&labels(&["no_evidence"])),
+                vec!["e-1", "e-2"],
+            ),
+            (
+                "several kinds",
+                labels(&[]),
+                KindFilter::from_labels(&labels(&["contested", "no_source_id"])),
+                vec!["c-1", "n-1"],
+            ),
+            (
+                "unknown kinds only match nothing",
+                labels(&[]),
+                KindFilter::from_labels(&labels(&["nope"])),
+                vec![],
+            ),
+            (
+                "an unknown kind beside a known one keeps the known one",
+                labels(&[]),
+                KindFilter::from_labels(&labels(&["nope", "contested"])),
+                vec!["c-1"],
+            ),
+            (
+                "sources and kinds together",
+                labels(&["gitlab"]),
+                KindFilter::from_labels(&labels(&["no_evidence"])),
+                vec!["e-1"],
+            ),
+            (
+                "an unknown source matches nothing",
+                labels(&["nope"]),
+                KindFilter::Any,
+                vec![],
+            ),
+        ] {
+            let kept = narrow(sample_queue(), &sources, &kinds);
+
+            assert_eq!(ids(&kept), expected, "wrong items for: {case}");
+        }
+    }
+
+    #[test]
+    fn no_kind_labels_is_no_filter_while_unknown_labels_is_an_empty_one() {
+        assert_eq!(KindFilter::from_labels(&[]), KindFilter::Any);
+        assert_eq!(
+            KindFilter::from_labels(&labels(&["nope"])),
+            KindFilter::Only(Vec::new())
+        );
+    }
+
+    #[test]
+    fn every_kind_label_round_trips() {
+        for kind in ItemKind::ALL {
+            assert_eq!(ItemKind::from_label(kind.label()), Some(kind));
+        }
+        assert_eq!(ItemKind::from_label("nope"), None);
+        assert_eq!(ItemKind::from_label("Contested"), None);
+    }
+
+    #[test]
+    fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
+        for (kind, expected) in [
+            (ItemKind::Contested, "contested"),
+            (ItemKind::BindingConflict, "binding_conflict"),
+            (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
+            (ItemKind::MintedFromRoster, "minted_from_roster"),
+            (ItemKind::NoSourceId, "no_source_id"),
+            (ItemKind::NoEvidence, "no_evidence"),
+        ] {
+            assert_eq!(kind.label(), expected, "wrong label for {kind:?}");
+        }
+        assert_eq!(ItemKind::ALL.len(), 6);
+    }
+
+    #[test]
+    fn the_address_holder_is_the_person_an_unbound_address_resolves_to() {
+        let holder = Uuid::from_u128(7);
+        let claimed = HashMap::from([
+            ("a@example.com".to_owned(), holder),
+            ("bot@example.com".to_owned(), EXCLUDED_PERSON),
+        ]);
+        let bound = seed_bound(9);
+        let excluded = KnownBinding {
+            person_id: EXCLUDED_PERSON,
+            author_person_id: Uuid::nil(),
+            provenance: Provenance::Resolved,
+        };
+
+        for (case, email, binding, expected) in [
+            ("bound", Some("a@example.com"), Some(&bound), None),
+            (
+                "bound to the excluded person",
+                Some("a@example.com"),
+                Some(&excluded),
+                None,
+            ),
+            (
+                "unbound and claimed",
+                Some("a@example.com"),
+                None,
+                Some(holder),
+            ),
+            (
+                "claimed by the excluded person",
+                Some("bot@example.com"),
+                None,
+                None,
+            ),
+            ("no address", None, None, None),
+            (
+                "address differing only in case",
+                Some("A@Example.COM"),
+                None,
+                Some(holder),
+            ),
+            ("unclaimed address", Some("b@example.com"), None, None),
+        ] {
+            assert_eq!(
+                address_holder(email, binding, &claimed),
+                expected,
+                "wrong holder for: {case}"
+            );
+        }
     }
 }

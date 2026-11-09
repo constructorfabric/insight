@@ -1,4 +1,5 @@
 import { fetchWithAuth } from "@/api/fetch-with-auth";
+import { normalizeSources } from "@/lib/identities/sources";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -134,6 +135,16 @@ export interface AttentionResponse {
   items_truncated?: boolean;
 }
 
+function sourceParam(sources: readonly string[]): string {
+  const picked = normalizeSources(sources).map(encodeURIComponent);
+  return picked.length > 0 ? `&source=${picked.join(",")}` : "";
+}
+
+function kindParam(kinds: readonly string[]): string {
+  const picked = normalizeSources(kinds).map(encodeURIComponent);
+  return picked.length > 0 ? `&kind=${picked.join(",")}` : "";
+}
+
 /** The queue's first read — a healthy backlog arrives whole. */
 export const QUEUE_FIRST_PAGE = 200;
 
@@ -152,10 +163,12 @@ export const QUEUE_MAX_ITEMS = 1000;
  * read, so asking for more of it is a larger `limit`, not a next page.
  */
 export async function getAttention(
-  limit: number = QUEUE_FIRST_PAGE
+  limit: number = QUEUE_FIRST_PAGE,
+  sources: readonly string[] = [],
+  kinds: readonly string[] = []
 ): Promise<AttentionResponse> {
   const res = await fetchWithAuth(
-    `${BASE}/resolution/attention?limit=${limit}`
+    `${BASE}/resolution/attention?limit=${limit}${sourceParam(sources)}${kindParam(kinds)}`
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -189,6 +202,7 @@ export interface AccountMatch {
    *  bind. Optional so an older backend reads as never-excluded. */
   excluded?: boolean;
   bound_by_operator: boolean;
+  address_holder?: PersonSummary | null;
 }
 
 export interface AccountSearchResponse {
@@ -206,10 +220,11 @@ export interface AccountSearchResponse {
 export async function searchAccounts(
   q: string,
   page: PageRequest = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  sources: readonly string[] = []
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
-    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}${sourceParam(sources)}`,
     { signal }
   );
   if (!res.ok) {
@@ -217,6 +232,16 @@ export async function searchAccounts(
     throw new IdentityApiError(res.status, body);
   }
   return (await res.json()) as AccountSearchResponse;
+}
+
+export async function listSources(signal?: AbortSignal): Promise<string[]> {
+  const res = await fetchWithAuth(`${BASE}/resolution/sources`, { signal });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  const body = (await res.json()) as { items?: string[] };
+  return Array.isArray(body.items) ? body.items : [];
 }
 
 /** One decision recorded for an account, newest first on the wire. */

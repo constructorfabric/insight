@@ -379,6 +379,14 @@ describe("row-limit chunking", () => {
     expect(entityChunkSize(PERIOD_PEER)).toBe(225);
   });
 
+  it("never asks for more people than the endpoint takes in one request", () => {
+    const onePeriodMetric: MetricCollectionConfig = {
+      metrics: [{ key: "git.commits", views: [{ view: "period" }] }],
+    };
+
+    expect(entityChunkSize(onePeriodMetric)).toBe(1000);
+  });
+
   it("is not chunkable with bucket-projected views", () => {
     expect(entityChunkSize(COLLECTION)).toBeNull();
   });

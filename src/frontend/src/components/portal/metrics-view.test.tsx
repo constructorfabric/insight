@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   definitions: [] as MetricDefinition[],
   requestedKeys: [] as readonly string[],
   requestedIds: [] as readonly string[],
+  definitionsError: false,
+  refetchDefinitions: vi.fn(),
   data: {
     byKey: new Map<string, NormalizedMetricResult>(),
     isPending: false,
@@ -54,7 +56,8 @@ vi.mock("@/queries/metric-definitions", () => ({
   useMetricDefinitionsResponse: () => ({
     data: { metrics: mocks.definitions },
     isPending: false,
-    isError: false,
+    isError: mocks.definitionsError,
+    refetch: mocks.refetchDefinitions,
   }),
 }));
 vi.mock("@/queries/metrics-view", () => ({
@@ -141,6 +144,8 @@ beforeEach(() => {
   ]);
   mocks.personId = pid("boss");
   mocks.layout = "wide";
+  mocks.definitionsError = false;
+  mocks.refetchDefinitions.mockReset();
   mocks.roster = peopleFromIdentityTree(tree);
   mocks.definitions = [
     definition("collab.messages", "Messages"),
@@ -193,7 +198,7 @@ beforeEach(() => {
     ],
   ]);
   act(() => {
-    portalRouter.set({ scope: undefined, direct: false });
+    portalRouter.set({ scope: undefined, direct: false, metrics: undefined, compare: undefined });
     setMetricsViewPaneShown(false);
   });
 });
@@ -281,6 +286,32 @@ describe("MetricsView", () => {
     );
   });
 
+  it("shows each person's role beside their name, in the table and in a comparison", async () => {
+    mocks.roster = peopleFromIdentityTree(
+      identityPerson("boss", {}, [
+        identityPerson("a", {}, [identityPerson("c")]),
+        identityPerson("b", { job_title: "Software Engineer" }),
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    expect(within(screen.getByText("Software Engineer").closest("tr")!).getByRole("button", { name: "b" })).toBeInTheDocument();
+
+    await compare(user, ["a", "b"]);
+
+    expect(screen.getByRole("columnheader", { name: /^b/ })).toHaveTextContent("Software Engineer");
+  });
+
+  it("asks for the metric catalog again when Retry is pressed after it failed", async () => {
+    mocks.definitionsError = true;
+    render(<MetricsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(mocks.refetchDefinitions).toHaveBeenCalled();
+  });
+
   it("asks for every person-level metric, in family order", () => {
     render(<MetricsView />);
 
@@ -361,7 +392,10 @@ describe("MetricsView", () => {
           }),
         }),
       ],
-      { activeMetricKey: "git.commits" },
+      {
+        activeMetricKey: "git.commits",
+        title: expect.stringMatching(/^Default branch commits · b · 20 · 1 Jul( 2026)? – 31 Jul/),
+      },
     );
   });
 
@@ -463,7 +497,7 @@ describe("MetricsView", () => {
           selection: expect.objectContaining({ entity: { type: "person", id: pid("a") } }),
         }),
       ],
-      { activeMetricKey: "git.commits" },
+      expect.objectContaining({ title: expect.stringMatching(/^Default branch commits · a · 10 · /) }),
     );
   });
 
@@ -502,6 +536,35 @@ describe("MetricsView", () => {
     expect([...mocks.requestedIds].sort()).toEqual(
       [pid("boss"), pid("a"), pid("b"), pid("c")].sort(),
     );
+  });
+
+  it("puts the picked metrics in the link", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
+    await user.click(screen.getByRole("checkbox", { name: "Messages" }));
+
+    expect(portalRouter.search).toMatchObject({ metrics: "git.commits,tasks.closed" });
+  });
+
+  it("opens on the metrics a link names", () => {
+    act(() => portalRouter.set({ metrics: "git.commits" }));
+    render(<MetricsView />);
+
+    expect(mocks.requestedKeys).toEqual(["git.commits"]);
+  });
+
+  it("puts a comparison in the link and opens on one a link names", async () => {
+    const user = userEvent.setup();
+    const first = render(<MetricsView />);
+    await compare(user, ["a", "b"]);
+
+    expect(portalRouter.search).toMatchObject({ compare: `${pid("a")},${pid("b")}` });
+
+    first.unmount();
+    render(<MetricsView />);
+    expect(screen.getByRole("button", { name: "Exit compare" })).toBeInTheDocument();
   });
 
   it("goes back to the table when the comparison is closed", async () => {

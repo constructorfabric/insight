@@ -57,3 +57,29 @@ export const TestRowContentSharesOneLine: Story = {
     ).toBeLessThanOrEqual(1);
   },
 };
+
+export const TestNumbersAlignRight: Story = {
+  tags: ["test"],
+  args: {
+    columns: [
+      { key: "ref", label: "Ref", type: "string", sortable: true },
+      { key: "lines", label: "Lines", type: "number", sortable: true },
+    ],
+    rows: [{ values: { ref: "15830", lines: 42 } }],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const figure = canvas.getByText("42");
+    const cell = figure.closest("td")!;
+    const padding = Number.parseFloat(getComputedStyle(cell).paddingRight);
+
+    await expect(
+      Math.abs(cell.getBoundingClientRect().right - padding - figure.getBoundingClientRect().right),
+      "a number sits off its cell's right edge",
+    ).toBeLessThanOrEqual(1);
+    await expect(
+      Math.abs(verticalCentre(figure) - verticalCentre(cell)),
+      "a number sits off its row's line",
+    ).toBeLessThanOrEqual(1);
+  },
+};

@@ -1,6 +1,7 @@
 //! HTTP API layer — shared state, route table, extractors.
 
 pub(crate) mod canonical_json;
+pub(crate) mod comma_list;
 pub(crate) mod datetime;
 pub mod error;
 mod gate;
@@ -15,6 +16,7 @@ pub mod persons;
 pub mod resolution;
 pub mod roles;
 pub mod seed;
+pub(crate) mod source_set;
 pub mod subchart;
 pub mod sync;
 pub mod visibility;
@@ -344,6 +346,29 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .authenticated()
         .no_license_required()
         .query_param_typed(
+            "source",
+            false,
+            "Comma-separated source types; keeps only queue items of exactly \
+             those sources (`gitlab` does not match `gitlab-commit-email`). \
+             At most 20 entries of at most 30 characters each. Absent or \
+             blank keeps every source; an unknown source matches nothing. \
+             Applied before `limit`, so `items_truncated` describes the \
+             filtered list; the rates stay whole-tenant.",
+            "string",
+        )
+        .query_param_typed(
+            "kind",
+            false,
+            "Comma-separated queue kinds (`contested`, `no_source_id`, \
+             `no_evidence`, ...); keeps only items of exactly those kinds. \
+             At most 20 entries of at most 40 characters each. Absent or \
+             blank keeps every kind; an unknown kind matches nothing. \
+             Applied before `limit`, together with `source`, so \
+             `items_truncated` describes the filtered list; the rates stay \
+             whole-tenant.",
+            "string",
+        )
+        .query_param_typed(
             "limit",
             false,
             "Cap on returned items (1..=1000, default 100); `items_truncated` \
@@ -380,6 +405,16 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             "string",
         )
         .query_param_typed(
+            "source",
+            false,
+            "Comma-separated source types; keeps only accounts of exactly \
+             those sources (`gitlab` does not match `gitlab-commit-email`). \
+             At most 20 entries of at most 30 characters each. Absent or \
+             blank lists every source; an unknown source matches nothing. A \
+             `cursor` is valid only with the `source` set it was issued for.",
+            "string",
+        )
+        .query_param_typed(
             "limit",
             false,
             "Cap on returned accounts (1..=100, default 20)",
@@ -398,6 +433,20 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(resolution::search_accounts)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/resolution/sources")
+        .operation_id("identity_resolution.resolution.sources")
+        .summary("The source types that have reported an account")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<resolution::SourcesResponse>(
+            openapi,
+            StatusCode::OK,
+            "Source types, sorted",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::sources)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/resolution/accounts/{source}/{source_id}/{account_id}")

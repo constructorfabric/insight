@@ -6,6 +6,7 @@ import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
+import { formatRange } from "@/lib/date-range-label";
 import { formatMetricFigure, formatMetricValue } from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
@@ -32,6 +33,7 @@ export function MetricsTable({
   groups,
   byKey,
   helpByKey,
+  roles,
   sort,
   onSort,
   onToggle,
@@ -41,6 +43,7 @@ export function MetricsTable({
   groups: readonly MetricGroup[];
   byKey: ReadonlyMap<string, NormalizedMetricResult>;
   helpByKey: ReadonlyMap<string, MetricHelpText>;
+  roles: ReadonlyMap<string, string>;
   sort: MetricsSort | null;
   onSort: (metricKey: string) => void;
   onToggle: (entityId: string) => void;
@@ -51,7 +54,7 @@ export function MetricsTable({
 
   return (
     <div className="max-h-[calc(100svh-13rem)] overflow-auto rounded-lg border bg-card">
-      <table className="border-separate border-spacing-0 text-sm">
+      <table className="w-full border-separate border-spacing-0 text-sm">
         <caption className="sr-only">People × metrics</caption>
         <thead>
           <tr className={GROUP_ROW_HEIGHT}>
@@ -159,6 +162,11 @@ export function MetricsTable({
                   >
                     {row.displayName}
                   </button>
+                  {roles.get(row.entityId) ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {roles.get(row.entityId)}
+                    </span>
+                  ) : null}
                   <Link
                     to="/ic/$person/personal"
                     params={{ person: row.entityId }}
@@ -244,6 +252,12 @@ export function MetricValue({
       onClick={() =>
         evidence.openEvidenceTargets([{ selection, label: result.label }], {
           activeMetricKey: selection.metric_key,
+          title: [
+            result.label,
+            personName,
+            fullText,
+            formatRange(selection.period.from, selection.period.to),
+          ].join(" · "),
         })
       }
       className="cursor-pointer hover:text-primary hover:underline"

@@ -50,6 +50,17 @@
           "account_id": {
             "type": "string"
           },
+          "address_holder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PersonSummaryResponse",
+                "description": "The person an unbound account's address resolves to. Present only\nwhen the account has no binding."
+              }
+            ]
+          },
           "bound_by_operator": {
             "description": "`true` when a person decided this binding rather than automation.",
             "type": "boolean"
@@ -1556,6 +1567,20 @@
         "required": [
           "role_id",
           "name"
+        ],
+        "type": "object"
+      },
+      "SourcesResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -3244,6 +3269,15 @@
             }
           },
           {
+            "description": "Comma-separated source types; keeps only accounts of exactly those sources (`gitlab` does not match `gitlab-commit-email`). At most 20 entries of at most 30 characters each. Absent or blank lists every source; an unknown source matches nothing. A `cursor` is valid only with the `source` set it was issued for.",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "Cap on returned accounts (1..=100, default 20)",
             "in": "query",
             "name": "limit",
@@ -3478,6 +3512,24 @@
       "get": {
         "operationId": "identity_resolution.resolution.attention",
         "parameters": [
+          {
+            "description": "Comma-separated source types; keeps only queue items of exactly those sources (`gitlab` does not match `gitlab-commit-email`). At most 20 entries of at most 30 characters each. Absent or blank keeps every source; an unknown source matches nothing. Applied before `limit`, so `items_truncated` describes the filtered list; the rates stay whole-tenant.",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated queue kinds (`contested`, `no_source_id`, `no_evidence`, ...); keeps only items of exactly those kinds. At most 20 entries of at most 40 characters each. Absent or blank keeps every kind; an unknown kind matches nothing. Applied before `limit`, together with `source`, so `items_truncated` describes the filtered list; the rates stay whole-tenant.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "description": "Cap on returned items (1..=1000, default 100); `items_truncated` says whether it cut the list. The rates cover every observed account whatever the cap — unless `truncated` is set, which means the evidence read itself hit its safety ceiling and both the rates and the queue describe only the accounts read before it.",
             "in": "query",
@@ -4096,6 +4148,99 @@
           }
         ],
         "summary": "Every account bound to a person, with the values behind each link"
+      }
+    },
+    "/v1/resolution/sources": {
+      "get": {
+        "operationId": "identity_resolution.resolution.sources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            },
+            "description": "Source types, sorted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The source types that have reported an account"
       }
     },
     "/v1/roles": {

@@ -49,6 +49,8 @@ function peopleItem(person: (typeof PEOPLE)[number]) {
  */
 const MOCK_PAGE_SIZE = 8;
 
+const DECIDED_MOCK_ACCOUNTS = new Set<string>();
+
 /**
  * One page of a listing, cursor and all — the mock pages the way the service
  * does so the console's "show more" is exercised in mock mode too. The cursor
@@ -537,30 +539,82 @@ export const handlers = [
       { status: 404 }
     );
   }),
-  // The account listing: the same roster seen as accounts; blank lists them all.
   http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
     const params = new URL(request.url).searchParams;
     const q = params.get("q")?.trim() ?? "";
     const needle = q.toLowerCase();
-    const items = PEOPLE.filter(
-      (p) =>
-        !needle ||
-        [p.name, p.email].some((v) => v.toLowerCase().includes(needle))
-    ).map((p, index) => ({
+    const picked = (params.get("source") ?? "").split(",").filter(Boolean);
+    const card = (p: (typeof PEOPLE)[number]) => ({
+      person_id: p.person_id,
+      email: p.email,
+      display_name: p.name,
+      job_title: p.role,
+    });
+    const bound = PEOPLE.map((p, index) => ({
       source: index % 2 === 0 ? "github" : "gitlab",
       source_id: "01900000-0000-7000-8000-00000000aa01",
       account_id: `acct-${index + 1}`,
       email: p.email,
       username: null,
       display_name: p.name,
-      person: {
-        person_id: p.person_id,
-        email: p.email,
-        display_name: p.name,
-        job_title: p.role,
-      },
+      person: card(p),
       bound_by_operator: index % 3 === 0,
     }));
+    const [, , alice, david] = PEOPLE;
+    const unbound = [
+      {
+        source: "gitlab-commit-email",
+        source_id: "01900000-0000-7000-8000-00000000aa04",
+        account_id: "david.liu@example.com",
+        email: "david.liu@example.com",
+        username: null,
+        display_name: null,
+        person: null,
+        address_holder: david ? card(david) : null,
+        bound_by_operator: false,
+      },
+      {
+        source: "gitlab",
+        source_id: "01900000-0000-7000-8000-00000000aa02",
+        account_id: "a.kim",
+        email: alice?.email ?? "alice.kim@example.com",
+        username: null,
+        display_name: null,
+        person: null,
+        address_holder: alice ? card(alice) : null,
+        bound_by_operator: false,
+      },
+      {
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "dev-42",
+        email: "dev42@example.com",
+        username: "dev42",
+        display_name: null,
+        person: null,
+        bound_by_operator: false,
+      },
+      {
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "ci-runner-3",
+        email: null,
+        username: "ci-runner-3",
+        display_name: null,
+        person: null,
+        excluded: true,
+        bound_by_operator: true,
+      },
+    ];
+    const items = [...bound, ...unbound]
+      .filter(
+        (item) =>
+          !needle ||
+          [item.display_name, item.email, item.account_id].some((v) =>
+            v?.toLowerCase().includes(needle)
+          )
+      )
+      .filter((item) => picked.length === 0 || picked.includes(item.source));
     // The service orders by the label each row shows; the mock mirrors it so a
     // mock run does not demonstrate an order the real listing never produces.
     items.sort((left, right) =>
@@ -570,6 +624,11 @@ export const handlers = [
     );
     return HttpResponse.json(pageOf(items, params, q));
   }),
+  http.get("/api/identity/v1/resolution/sources", () =>
+    HttpResponse.json({
+      items: ["github", "gitlab", "gitlab-commit-email", "hr"],
+    })
+  ),
   // A merge preview's substance: two synthetic accounts for anyone.
   http.get(
     "/api/identity/v1/resolution/persons/:personId/accounts",
@@ -596,30 +655,55 @@ export const handlers = [
         ],
       })
   ),
-  // The four correction verbs: happy-path outcomes, no state kept — the queue
-  // mock is static, so the demo shows the flow rather than a simulation.
   ...["bind", "merge", "detach", "exclude"].map((verb) =>
-    http.post(`/api/identity/v1/resolution/${verb}`, () =>
-      HttpResponse.json({
-        applied: 1,
+    http.post(`/api/identity/v1/resolution/${verb}`, async ({ request }) => {
+      type WireAccount = { source: string; source_id: string; id: string };
+      const body = (await request.json().catch(() => null)) as {
+        account?: WireAccount;
+        bindings?: Array<{ account: WireAccount }>;
+      } | null;
+      const decided: WireAccount[] =
+        verb === "bind"
+          ? (body?.bindings ?? []).map((binding) => binding.account)
+          : verb === "merge" || !body?.account
+            ? []
+            : [body.account];
+      for (const account of decided) {
+        DECIDED_MOCK_ACCOUNTS.add(
+          `${account.source}|${account.source_id}|${account.id}`
+        );
+      }
+      const named =
+        verb === "merge"
+          ? [
+              {
+                source: "github",
+                source_id: "01900000-0000-7000-8000-00000000aa01",
+                id: "dev-42",
+              },
+            ]
+          : decided;
+      return HttpResponse.json({
+        applied: named.length,
         already_decided: 0,
-        items: [
-          {
-            source: "github",
-            source_id: "01900000-0000-7000-8000-00000000aa01",
-            account_id: "dev-42",
-            outcome: "applied",
-          },
-        ],
+        items: named.map((account) => ({
+          source: account.source,
+          source_id: account.source_id,
+          account_id: account.id,
+          outcome: "applied",
+        })),
         ...(verb === "detach"
           ? { new_person_id: "01900000-0000-7000-8000-00000000dead" }
           : {}),
-      })
-    )
+      });
+    })
   ),
   // The review queue, exercising all three kinds. Candidates reuse the seeded
   // roster so names/emails stay consistent with every other mock surface.
-  http.get("/api/identity/v1/resolution/attention", () => {
+  http.get("/api/identity/v1/resolution/attention", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const picked = (params.get("source") ?? "").split(",").filter(Boolean);
+    const kinds = (params.get("kind") ?? "").split(",").filter(Boolean);
     const [bob, carol, alice] = PEOPLE;
     const card = (p: (typeof PEOPLE)[number], extra?: object) => ({
       person_id: p.person_id,
@@ -630,100 +714,137 @@ export const handlers = [
       status: "active",
       ...extra,
     });
+    const queue = [
+      {
+        kind: "contested",
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "dev-42",
+        email: "dev42@example.com",
+        username: "dev42",
+        // Contested means unbound: nobody holds it, which is why two people
+        // can claim it.
+        bound_to: null,
+        candidates: [card(bob), card(carol)],
+      },
+      {
+        kind: "binding_conflict",
+        source: "gitlab",
+        source_id: "01900000-0000-7000-8000-00000000aa02",
+        account_id: "a.kim",
+        email: alice?.email ?? "alice.kim@example.com",
+        username: null,
+        bound_to: alice?.person_id,
+        candidates: [card(alice)],
+      },
+      {
+        kind: "no_evidence",
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "ci-bot-7",
+        email: null,
+        username: "ci-bot-7",
+        candidates: [],
+      },
+      {
+        // Minted during a sign-in so its owner could get in: bound, and
+        // still nobody's decision. It may duplicate a person the roster
+        // already knows, which only an operator can settle.
+        kind: "provisioned_at_login",
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "new-joiner",
+        email: null,
+        username: "new-joiner",
+        bound_to: carol?.person_id,
+        candidates: [card(carol, { provisional: true })],
+      },
+      {
+        // Added because the roster lists the account, not because anything
+        // matched: no address, so the person may already be on the roster
+        // under a different account. Bound, and still nobody's decision.
+        kind: "minted_from_roster",
+        source: "hr",
+        source_id: "01900000-0000-7000-8000-00000000aa03",
+        account_id: "874",
+        email: null,
+        username: null,
+        display_name: "Ravi Menon",
+        job_title: "Facilities Lead",
+        department: "Operations",
+        status: "Active",
+        manager_email: "carol.chen@example.com",
+        bound_to: "01900000-0000-7000-8000-0000000000d0",
+        candidates: [
+          {
+            person_id: "01900000-0000-7000-8000-0000000000d0",
+            email: null,
+            username: null,
+            display_name: "Ravi Menon",
+            job_title: "Facilities Lead",
+            status: "active",
+            // Minted for this very account, so nothing else is known about
+            // them and they may be someone the roster already lists.
+            provisional: true,
+          },
+        ],
+      },
+      {
+        // Neither address nor handle — nothing automation can match on. The
+        // source still describes the human, which is what the fold reads for
+        // the operator and what makes this row bindable by hand.
+        kind: "no_evidence",
+        source: "hr",
+        source_id: "01900000-0000-7000-8000-00000000aa03",
+        account_id: "921",
+        email: null,
+        username: null,
+        display_name: "Nadia Orlov",
+        job_title: "Office Manager",
+        department: "Operations",
+        status: "Inactive",
+        manager_email: "carol.chen@example.com",
+        candidates: [],
+      },
+      {
+        kind: "no_source_id",
+        source: "gitlab",
+        source_id: "01900000-0000-7000-8000-00000000aa02",
+        account_id: "pm.lee",
+        email: "pm.lee@example.com",
+        username: null,
+        candidates: [],
+      },
+      {
+        kind: "contested",
+        source: "gitlab",
+        source_id: "01900000-0000-7000-8000-00000000aa02",
+        account_id: "shared-ci",
+        email: "shared.ci@example.com",
+        username: "shared-ci",
+        bound_to: null,
+        candidates: [card(alice), card(carol)],
+      },
+      {
+        kind: "no_evidence",
+        source: "gitlab",
+        source_id: "01900000-0000-7000-8000-00000000aa02",
+        account_id: "build-agent",
+        email: null,
+        username: "build-agent",
+        candidates: [],
+      },
+    ]
+      .filter((item) => picked.length === 0 || picked.includes(item.source))
+      .filter((item) => kinds.length === 0 || kinds.includes(item.kind))
+      .filter(
+        (item) =>
+          !DECIDED_MOCK_ACCOUNTS.has(
+            `${item.source}|${item.source_id}|${item.account_id}`
+          )
+      );
     return HttpResponse.json({
-      items: [
-        {
-          kind: "contested",
-          source: "github",
-          source_id: "01900000-0000-7000-8000-00000000aa01",
-          account_id: "dev-42",
-          email: "dev42@example.com",
-          username: "dev42",
-          // Contested means unbound: nobody holds it, which is why two people
-          // can claim it.
-          bound_to: null,
-          candidates: [card(bob), card(carol)],
-        },
-        {
-          kind: "binding_conflict",
-          source: "gitlab",
-          source_id: "01900000-0000-7000-8000-00000000aa02",
-          account_id: "a.kim",
-          email: alice?.email ?? "alice.kim@example.com",
-          username: null,
-          bound_to: alice?.person_id,
-          candidates: [card(alice)],
-        },
-        {
-          kind: "no_evidence",
-          source: "github",
-          source_id: "01900000-0000-7000-8000-00000000aa01",
-          account_id: "ci-bot-7",
-          email: null,
-          username: "ci-bot-7",
-          candidates: [],
-        },
-        {
-          // Minted during a sign-in so its owner could get in: bound, and
-          // still nobody's decision. It may duplicate a person the roster
-          // already knows, which only an operator can settle.
-          kind: "provisioned_at_login",
-          source: "github",
-          source_id: "01900000-0000-7000-8000-00000000aa01",
-          account_id: "new-joiner",
-          email: null,
-          username: "new-joiner",
-          bound_to: carol?.person_id,
-          candidates: [card(carol, { provisional: true })],
-        },
-        {
-          // Added because the roster lists the account, not because anything
-          // matched: no address, so the person may already be on the roster
-          // under a different account. Bound, and still nobody's decision.
-          kind: "minted_from_roster",
-          source: "hr",
-          source_id: "01900000-0000-7000-8000-00000000aa03",
-          account_id: "874",
-          email: null,
-          username: null,
-          display_name: "Ravi Menon",
-          job_title: "Facilities Lead",
-          department: "Operations",
-          status: "Active",
-          manager_email: "carol.chen@example.com",
-          bound_to: "01900000-0000-7000-8000-0000000000d0",
-          candidates: [
-            {
-              person_id: "01900000-0000-7000-8000-0000000000d0",
-              email: null,
-              username: null,
-              display_name: "Ravi Menon",
-              job_title: "Facilities Lead",
-              status: "active",
-              // Minted for this very account, so nothing else is known about
-              // them and they may be someone the roster already lists.
-              provisional: true,
-            },
-          ],
-        },
-        {
-          // Neither address nor handle — nothing automation can match on. The
-          // source still describes the human, which is what the fold reads for
-          // the operator and what makes this row bindable by hand.
-          kind: "no_evidence",
-          source: "hr",
-          source_id: "01900000-0000-7000-8000-00000000aa03",
-          account_id: "921",
-          email: null,
-          username: null,
-          display_name: "Nadia Orlov",
-          job_title: "Office Manager",
-          department: "Operations",
-          status: "Inactive",
-          manager_email: "carol.chen@example.com",
-          candidates: [],
-        },
-      ],
+      items: queue,
       rates: {
         observed: 60,
         bound: 55,

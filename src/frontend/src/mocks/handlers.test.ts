@@ -102,3 +102,78 @@ it("returns canonical person detail from the people mock", async () => {
     display_name: "Carol Chen",
   });
 });
+
+const SOURCE_ID = "01900000-0000-7000-8000-00000000aa02";
+const PERSON_ID = "e8a33e91-2658-58dc-8175-ebf473d8be5c";
+
+function wireAccount(id: string) {
+  return { source: "gitlab", source_id: SOURCE_ID, id };
+}
+
+async function post(path: string, body: unknown) {
+  const response = await fetch(
+    new URL(`/api/identity/v1/resolution/${path}`, window.location.href),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  return (await response.json()) as {
+    items: Array<{ account_id: string; outcome: string }>;
+  };
+}
+
+async function queuedIds() {
+  const response = await fetch(
+    new URL("/api/identity/v1/resolution/attention", window.location.href)
+  );
+  const body = (await response.json()) as {
+    items: Array<{ account_id: string }>;
+  };
+  return body.items.map((item) => item.account_id);
+}
+
+it("decides the account a bind names and leaves the rest queued", async () => {
+  const answer = await post("bind", {
+    bindings: [{ account: wireAccount("pm.lee"), person_id: PERSON_ID }],
+    comment: "",
+  });
+
+  expect(answer.items.map((item) => item.account_id)).toEqual(["pm.lee"]);
+  const queued = await queuedIds();
+  expect(queued).not.toContain("pm.lee");
+  expect(queued).toContain("dev-42");
+});
+
+it("decides every account of a multi-binding bind", async () => {
+  const answer = await post("bind", {
+    bindings: [
+      { account: wireAccount("shared-ci"), person_id: PERSON_ID },
+      { account: wireAccount("build-agent"), person_id: PERSON_ID },
+    ],
+    comment: "",
+  });
+
+  expect(answer.items.map((item) => item.account_id)).toEqual([
+    "shared-ci",
+    "build-agent",
+  ]);
+  const queued = await queuedIds();
+  expect(queued).not.toContain("shared-ci");
+  expect(queued).not.toContain("build-agent");
+});
+
+it("decides the account an exclude names", async () => {
+  const answer = await post("exclude", {
+    account: {
+      source: "github",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      id: "ci-bot-7",
+    },
+    comment: "",
+  });
+
+  expect(answer.items.map((item) => item.account_id)).toEqual(["ci-bot-7"]);
+  expect(await queuedIds()).not.toContain("ci-bot-7");
+});

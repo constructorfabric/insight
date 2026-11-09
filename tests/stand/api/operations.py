@@ -151,7 +151,7 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )
 
-#: identity-resolution — 31 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 32 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
@@ -166,6 +166,7 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     # address the same literal — a stand-in would fold a segment nothing varies.
     _i("GET", "/v1/resolution/attention"),
     _i("GET", "/v1/resolution/accounts"),
+    _i("GET", "/v1/resolution/sources"),
     _i("GET", f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}"),
     _i("GET", f"/v1/resolution/persons/{SOME_ID}/accounts"),
     _i("POST", "/v1/resolution/bind"),
@@ -203,6 +204,7 @@ _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     "/v1/persons",
     "/v1/resolution/attention",
     "/v1/resolution/accounts",
+    "/v1/resolution/sources",
     f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}",
     f"/v1/resolution/persons/{SOME_ID}/accounts",
     "/v1/resolution/bind",
@@ -221,7 +223,7 @@ _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     f"/v1/visibility/{SOME_ID}",
 )
 
-#: The 22 identity operations behind `require_admin`, which resolves the caller
+#: The 23 identity operations behind `require_admin`, which resolves the caller
 #: from the gateway JWT and requires an active `admin` row in `person_roles` —
 #: it never reads the `insight-admin` REALM role. The seed grants that row to
 #: exactly one persona, the admin operator; every other persona is refused.

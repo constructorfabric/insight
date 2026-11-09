@@ -18,6 +18,31 @@ import {
  * boundary in place of a dashboard over one mistyped character.
  */
 describe("validatePortalSearch", () => {
+  it("normalises the picked sources and drops an empty list", () => {
+    expect(validatePortalSearch({ src: " gitlab,github,github" }).src).toBe(
+      "github,gitlab",
+    );
+    expect(validatePortalSearch({ src: ",," }).src).toBeUndefined();
+    expect(validatePortalSearch({ src: 5 }).src).toBeUndefined();
+  });
+
+  it("degrades an oversized src to at most 20 entries of at most 30 characters", () => {
+    const many = Array.from({ length: 25 }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    const long = "x".repeat(31);
+    const fits = "y".repeat(30);
+
+    const kept = validatePortalSearch({ src: [...many, long, fits].join(",") }).src?.split(",");
+
+    expect(kept).toHaveLength(20);
+    expect(kept?.every((entry) => entry.length <= 30)).toBe(true);
+    expect(kept).not.toContain(long);
+    expect(validatePortalSearch({ src: `${long},${fits}` }).src).toBe(fits);
+  });
+
+  it("carries src across a route change", () => {
+    expect(PORTAL_SEARCH_KEYS).toContain("src");
+  });
+
   it("keeps the navigation keys it recognises", () => {
     expect(
       validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
@@ -107,6 +132,17 @@ describe("the ingestion drill-down key", () => {
   it("is retained across navigation", () => {
     // Without this the drill-down is lost the moment anything else navigates.
     expect(PORTAL_SEARCH_KEYS).toContain("conn");
+  });
+});
+
+describe("Metrics view links", () => {
+  it.each([
+    ["keeps well-formed metric keys and drops the rest", { metrics: "git.commits,<b>,ai.cost" }, { metrics: "git.commits,ai.cost" }],
+    ["keeps an empty pick", { metrics: "none" }, { metrics: "none" }],
+    ["drops a list with nothing usable", { metrics: ",," }, { metrics: undefined }],
+    ["keeps compared ids, lower-cased", { compare: "AB12-CD,x y" }, { compare: "ab12-cd" }],
+  ])("%s", (_case, raw, expected) => {
+    expect(validatePortalSearch(raw)).toMatchObject(expected);
   });
 });
 
