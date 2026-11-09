@@ -256,8 +256,10 @@ models:
   - name: task_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for task source measures.
-      Issue duration inputs retain event grain; lifecycle ratios, snapshots,
-      and daily flows are marked as derived populations.
+      Every row is one issue's share of one measure, carrying the issue's ref
+      and title: closes and reopens per issue-day, in-progress and worklog
+      seconds per person-day and issue, and a person-day's estimate deviation
+      split equally among the issues estimated that day.
     columns: *metric_evidence_columns
 
   - name: wiki_metric_evidence
@@ -1024,10 +1026,10 @@ models:
   - name: task_worklog_flow
     description: >
       Per-person per-day time flow for the task-delivery observation pipeline:
-      in-progress seconds split from the status spans by calendar day, summed
-      with the worklog seconds logged per author. One row per person-day: per
-      (tenant, email, date) where the tracker states an email, per (tenant,
-      account, date) where it states none; either figure is 0 on a day the
+      in-progress seconds split from the status spans by calendar day, beside
+      the worklog seconds logged per author. One row per person-day and issue:
+      per (tenant, email, date) where the tracker states an email, per (tenant,
+      account, date) where it states none; either figure is 0 on an issue the
       other side has no rows for. The account columns are set only on a day
       a single account made, so the row resolves account-first; a day several
       accounts of one email made resolves through the email.
@@ -1050,10 +1052,26 @@ models:
         description: "Calendar day the seconds fall on"
         tests:
           - not_null
+      - name: insight_source_id
+        description: "Connector source id of the issue"
+        tests:
+          - not_null
+      - name: issue_id
+        description: "Tracker id of the issue; '' for a worklog that names none"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Tracker family of the issue (jira, youtrack, github)"
+      - name: id_readable
+        description: "Key the tracker shows for the issue, e.g. PROJ-7"
+      - name: title
+        description: "Issue title; NULL when the issue has no title or no row in task_issue_state"
       - name: in_progress_seconds
-        description: "Seconds of the day the person's issues sat in an in-progress status"
+        description: "Seconds of the day the issue sat in an in-progress status, assigned to the person"
       - name: worklog_seconds
-        description: "Seconds of work the person logged on the day (deleted worklogs excluded)"
+        description: "Seconds of work the person logged on the issue that day (deleted worklogs excluded)"
+      - name: person_day_in_progress_seconds
+        description: "In-progress seconds of the whole person-day, across all its issues"
 
   - name: ci_metric_observations
     description: >

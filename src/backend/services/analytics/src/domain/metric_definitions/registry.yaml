@@ -322,23 +322,32 @@ sources:
         evidence_granularity: event
         evidence_presentation: *issue_counted
       - key: estimation_error_pct
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: estimation_samples
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: flow_dev_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: flow_lead_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: close_events
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: reopened_within_14d
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: worklog_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: in_progress_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: stale_in_progress
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: resolution_days
         evidence_granularity: event
         evidence_presentation: *issue_measured
