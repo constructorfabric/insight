@@ -103,6 +103,12 @@ spec:
             {{- end }}
             - name: RECONCILE_DESTINATION_NAME
               value: {{ default "clickhouse-bronze" .Values.ingestion.reconcile.destinationName | quote }}
+            {{- with .Values.ingestion.reconcile.imageMirrors }}
+            # Connector images are registered in Airbyte through these
+            # registry mirrors (lib/discover.sh).
+            - name: RECONCILE_IMAGE_MIRRORS
+              value: {{ toJson . | quote }}
+            {{- end }}
             - name: RECONCILE_DEST_CLICKHOUSE_HOST
               value: {{ include "insight.clickhouse.fqdn" . | quote }}
             - name: RECONCILE_DEST_CLICKHOUSE_PORT
