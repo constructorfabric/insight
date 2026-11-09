@@ -14,23 +14,29 @@ const people = vi.hoisted(() => {
   const LEAVER = "01900000-0000-7000-8000-0000000000e0";
   const BOB = "01900000-0000-7000-8000-0000000000b0";
   const DAVE = "01900000-0000-7000-8000-0000000000d0";
+  const FRAN = "01900000-0000-7000-8000-0000000000f0";
   const names: Record<string, string> = {
     [LEAVER]: "Erin Left",
     [BOB]: "Bob Park",
     [DAVE]: "Dave Liu",
+    [FRAN]: "Fran Ortiz",
   };
+  const offRoster = new Set([FRAN]);
 
-  return { ids: { LEAVER, BOB, DAVE }, names };
+  return { ids: { LEAVER, BOB, DAVE, FRAN }, names, offRoster };
 });
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
-  usePersonList: vi.fn(() => ({
+  usePersonList: vi.fn((_q: string, _intent: string, source: string) => ({
     data: {
       pages: [
         {
-          items: Object.entries(people.names).map(
-            ([person_id, display_name]) => ({ person_id, display_name })
-          ),
+          items: Object.entries(people.names)
+            .filter(
+              ([person_id]) =>
+                source !== "roster" || !people.offRoster.has(person_id)
+            )
+            .map(([person_id, display_name]) => ({ person_id, display_name })),
         },
       ],
     },
@@ -62,11 +68,10 @@ import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import * as identityClient from "@/api/identity-client";
-import { usePersonList } from "@/queries/identity-resolution";
 
 import { type Orphan, OrphanedDashboards, TransferOrphan } from "./orphaned";
 
-const { LEAVER, BOB } = people.ids;
+const { LEAVER, BOB, FRAN } = people.ids;
 
 const ORPHANED = {
   id: "dash-1",
@@ -175,15 +180,24 @@ describe("<OrphanedDashboards>", () => {
     ).toBeDisabled();
   });
 
-  // INVARIANT: an administrator need not have a current roster row, and the
-  // service accepts any of them as the new owner.
-  it("searches every person, not only the roster, for the new owner", async () => {
+  it("transfers to an administrator who has no roster row", async () => {
+    vi.mocked(identityClient.listRoleHolders).mockResolvedValue({
+      personIds: new Set([BOB, FRAN]),
+      complete: true,
+    });
     const user = renderWith(<OrphanedDashboards />);
-    await openTransfer(user);
+    const dialog = await openTransfer(user);
 
-    const sources = vi.mocked(usePersonList).mock.calls.map((call) => call[2]);
-    expect(sources).toContain("identities");
-    expect(sources).not.toContain("roster");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Fran Ortiz" })
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Transfer" }));
+
+    expect(customClient.transferOrphan).toHaveBeenCalledWith(
+      "dashboards",
+      "dash-1",
+      FRAN
+    );
   });
 
   it("transfers to the picked administrator and reads the list again", async () => {
