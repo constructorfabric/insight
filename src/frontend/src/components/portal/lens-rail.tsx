@@ -1,5 +1,5 @@
 import { MessageSquare, Settings } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import brandSymbol from "@/assets/brand-symbol.svg";
 
@@ -20,6 +20,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   useSidebar,
 } from "@gears-frontx/ui-kit";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
@@ -57,19 +60,21 @@ export function LensRail() {
             <SidebarMenu>
               {items.map((item) => (
                 <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    tooltip={item.label}
-                    data-planned={item.planned || undefined}
-                    isActive={activeItem === item.id}
-                    className={cn(item.planned && "text-muted-foreground")}
-                    onClick={() => {
-                      selectItem(item);
-                      setOpen(true);
-                    }}
-                  >
-                    <item.icon />
-                    <span>{item.label}</span>
-                  </SidebarMenuButton>
+                  <RailTooltip label={item.label}>
+                    <SidebarMenuButton
+                      aria-label={item.label}
+                      data-planned={item.planned || undefined}
+                      isActive={activeItem === item.id}
+                      className={cn(item.planned && "text-muted-foreground")}
+                      onClick={() => {
+                        selectItem(item);
+                        setOpen(true);
+                      }}
+                    >
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  </RailTooltip>
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
@@ -97,17 +102,19 @@ function FeedbackItem() {
   const label = t("feedback.nav_label");
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton
-        tooltip={label}
-        // The feedback box opens behind the phone drawer.
-        onClick={() => {
-          feedback.openFeedback();
-          setOpenMobile(false);
-        }}
-      >
-        <MessageSquare />
-        <span>{label}</span>
-      </SidebarMenuButton>
+      <RailTooltip label={label}>
+        <SidebarMenuButton
+          aria-label={label}
+          // The feedback box opens behind the phone drawer.
+          onClick={() => {
+            feedback.openFeedback();
+            setOpenMobile(false);
+          }}
+        >
+          <MessageSquare />
+          <span>{label}</span>
+        </SidebarMenuButton>
+      </RailTooltip>
     </SidebarMenuItem>
   );
 }
@@ -119,14 +126,16 @@ function SettingsItem() {
   return (
     <SidebarMenuItem>
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
-          render={
-            <SidebarMenuButton tooltip="Settings">
-              <Settings />
-              <span>Settings</span>
-            </SidebarMenuButton>
-          }
-        />
+        <RailTooltip label="Settings">
+          <PopoverTrigger
+            render={
+              <SidebarMenuButton aria-label="Settings">
+                <Settings />
+                <span>Settings</span>
+              </SidebarMenuButton>
+            }
+          />
+        </RailTooltip>
         <PopoverContent side="right" align="end" className="w-64 gap-0 p-1">
           <AppSidebarFooter
             showFeedback={false}
@@ -138,5 +147,24 @@ function SettingsItem() {
         </PopoverContent>
       </Popover>
     </SidebarMenuItem>
+  );
+}
+
+/**
+ * The rail's labels at every width. The kit's own `tooltip` prop shows only
+ * while the whole sidebar is collapsed, and the rail is visible open or not.
+ */
+function RailTooltip({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
   );
 }

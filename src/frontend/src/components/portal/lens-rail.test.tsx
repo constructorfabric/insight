@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -39,16 +39,23 @@ function OpenState() {
   return <output data-testid="open">{String(useSidebar().open)}</output>;
 }
 
-/** Collapsed to the rail, the way a tablet starts. */
-const collapsedRail = () =>
+/** Collapsed to the rail, the way a tablet starts; open, the way wide starts. */
+const rail = (open: boolean) =>
   render(
-    <SidebarProvider defaultOpen={false}>
+    <SidebarProvider defaultOpen={open}>
       <Sidebar collapsible="icon">
         <LensRail />
       </Sidebar>
       <OpenState />
     </SidebarProvider>,
   );
+const collapsedRail = () => rail(false);
+
+/** A label shown outside the button itself, i.e. in the tooltip popup. */
+const tooltipFor = (label: string) =>
+  screen
+    .queryAllByText(label)
+    .find((node) => !node.closest('[data-testid="lens-rail"]'));
 
 beforeEach(() => {
   mocks.selected = [];
@@ -102,5 +109,30 @@ describe("LensRail", () => {
     await user.click(screen.getByRole("button", { name: "Send feedback" }));
 
     expect(mocks.openFeedback).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["open", true],
+    ["collapsed", false],
+  ])("labels a rail item on hover while the pane is %s", async (_, open) => {
+    const user = userEvent.setup();
+    rail(open);
+    expect(tooltipFor("People")).toBeUndefined();
+
+    await user.hover(screen.getByRole("button", { name: "People" }));
+
+    await waitFor(() => expect(tooltipFor("People")).toBeDefined());
+  });
+
+  it("labels Settings on hover and still opens its menu on a click", async () => {
+    const user = userEvent.setup();
+    rail(true);
+    const settings = screen.getByRole("button", { name: "Settings" });
+
+    await user.hover(settings);
+    await waitFor(() => expect(tooltipFor("Settings")).toBeDefined());
+
+    await user.click(settings);
+    expect(screen.getByRole("button", { name: "Go somewhere" })).toBeInTheDocument();
   });
 });
