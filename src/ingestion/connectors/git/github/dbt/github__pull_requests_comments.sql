@@ -50,7 +50,7 @@ INNER JOIN pull_request_numbers AS p
     AND p.number = c.issue_number
 {% if is_incremental() %}
 WHERE greatest(c._airbyte_extracted_at, p.pull_request_extracted_at)
-    > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+    > {{ instance_incremental_watermark('_airbyte_extracted_at', ['c.tenant_id', 'c.source_id']) }}
 {% endif %}
 
 UNION ALL
@@ -76,5 +76,5 @@ SELECT
     _airbyte_extracted_at
 FROM {{ source('bronze_github', 'pull_request_review_comments') }} FINAL
 {% if is_incremental() %}
-WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at') }}
 {% endif %}

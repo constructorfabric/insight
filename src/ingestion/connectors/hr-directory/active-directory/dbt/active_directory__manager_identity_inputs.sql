@@ -30,7 +30,11 @@ WITH history AS (
     SELECT *
     FROM {{ ref('active_directory__users_fields_history') }}
     {% if is_incremental() %}
-    WHERE updated_at > (SELECT max(_synced_at) FROM {{ this }})
+    WHERE updated_at > {{ instance_incremental_watermark(
+        '_synced_at',
+        ["toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))", "toUUID(UUIDNumToString(sipHash128(coalesce(source_id, ''))))"],
+        ['insight_tenant_id', 'insight_source_id']
+    ) }}
     {% endif %}
 ),
 

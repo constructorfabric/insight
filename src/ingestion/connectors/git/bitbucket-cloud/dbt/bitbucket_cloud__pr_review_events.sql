@@ -89,5 +89,5 @@ LEFT JOIN account_email AS ae
     AND ae.source_id = e.source_id
     AND ae.account_id = e.actor_account_id
 {% if is_incremental() %}
-WHERE e._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE e._airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at', ['e.tenant_id', 'e.source_id']) }}
 {% endif %}

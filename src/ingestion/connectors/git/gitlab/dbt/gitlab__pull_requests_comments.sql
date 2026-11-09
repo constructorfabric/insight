@@ -46,5 +46,5 @@ INNER JOIN projects AS p
     AND p.project_id = n.project_id
 WHERE NOT COALESCE(n.system, false)
 {% if is_incremental() %}
-  AND n._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+  AND n._airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at', ['n.tenant_id', 'n.source_id']) }}
 {% endif %}

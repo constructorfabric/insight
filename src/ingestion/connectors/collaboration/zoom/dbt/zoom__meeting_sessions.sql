@@ -92,7 +92,7 @@ WITH stitched AS (
                   AND _airbyte_extracted_at >= now() - INTERVAL {{ lookback_days }} DAY
                 {% endif %}
                 ORDER BY _airbyte_extracted_at DESC
-                LIMIT 1 BY uuid
+                LIMIT 1 BY tenant_id, source_id, uuid
             ) AS deduped
         ) AS with_dates
         WHERE start_ts IS NOT NULL

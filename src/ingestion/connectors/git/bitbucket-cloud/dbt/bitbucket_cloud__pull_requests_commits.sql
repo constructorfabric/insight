@@ -23,5 +23,5 @@ SELECT
     _airbyte_extracted_at
 FROM {{ source('bronze_bitbucket_cloud', 'pull_request_commits') }} FINAL
 {% if is_incremental() %}
-WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at') }}
 {% endif %}

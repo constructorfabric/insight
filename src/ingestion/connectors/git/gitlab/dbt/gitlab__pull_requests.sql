@@ -126,5 +126,5 @@ WHERE greatest(
     mr._airbyte_extracted_at,
     COALESCE(ds._airbyte_extracted_at, mr._airbyte_extracted_at),
     p._airbyte_extracted_at
-) > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+) > {{ instance_incremental_watermark('_airbyte_extracted_at', ['mr.tenant_id', 'mr.source_id']) }}
 {% endif %}

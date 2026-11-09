@@ -68,7 +68,7 @@ WHERE ma.person_key != ''
   -- INVARIANT: the recent days pick up working-hours changes; any older person-day is
   -- re-derived once a meeting row newer than the one it was derived from arrives.
   AND (
-      ma.date > (SELECT max(day) - INTERVAL 3 DAY FROM {{ this }})
+      ma.date > {{ instance_incremental_watermark('day', ['ma.tenant_id'], ['insight_tenant_id'], '3 DAY') }}
       OR (ma.tenant_id, ma.person_key, ma.date) IN (
           SELECT
               changed.tenant_id,
