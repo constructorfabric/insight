@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -197,4 +197,28 @@ describe("<RangePicker> offers no end past the day after today", () => {
       screen.queryByRole("button", { name: /August 1st, 2026/ })
     ).not.toBeInTheDocument();
   });
+});
+
+describe("<RangePicker> arrow keys inside the calendar stay inside it", () => {
+  it.each(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"])(
+    "%s on the previous-month button keeps focus in the popover",
+    async (key) => {
+      render(
+        <RangePicker
+          offered={["P30D"]}
+          selected="2026-07-01/2026-07-10"
+          onSelect={vi.fn()}
+        />
+      );
+      await userEvent.click(screen.getByRole("button", { name: /2026-07-01/ }));
+      const previous = await screen.findByRole("button", {
+        name: /previous month/i,
+      });
+
+      act(() => previous.focus());
+      await userEvent.keyboard(`{${key}}`);
+
+      expect(document.activeElement, key).toBe(previous);
+    }
+  );
 });

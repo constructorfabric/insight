@@ -13,6 +13,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@gears-frontx/ui-kit";
+import { keepNavigationKeysInside } from "@/lib/keep-navigation-keys-inside";
 import {
   RANGE_PRESETS,
   rangeLabel,
@@ -98,7 +99,11 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
             </ToggleGroupItem>
           }
         />
-        <PopoverContent align="end" className="w-auto gap-0 p-0">
+        <PopoverContent
+          align="end"
+          className="w-auto gap-0 p-0"
+          onKeyDown={keepNavigationKeysInside}
+        >
           <p className="border-b border-border px-4 py-3 text-xs text-muted-foreground">
             The end date is not counted — pick the day after the last one you
             want.
