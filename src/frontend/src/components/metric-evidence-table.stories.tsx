@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
+import { expectNothingOverlaps } from "@/test/storybook/layout";
 
 const meta: Meta<typeof MetricEvidenceTable> = {
   title: "Metrics/MetricEvidenceTable",
@@ -81,5 +82,38 @@ export const TestNumbersAlignRight: Story = {
       Math.abs(verticalCentre(figure) - verticalCentre(cell)),
       "a number sits off its row's line",
     ).toBeLessThanOrEqual(1);
+  },
+};
+
+export const TestFullRecordPushesTheNextRowDown: Story = {
+  tags: ["test"],
+  args: {
+    columns: [
+      { key: "merged", label: "Merged", type: "number", sortable: true },
+      { key: "created", label: "Created", type: "number", sortable: true },
+      { key: "date", label: "Date", type: "date", sortable: true },
+    ],
+    rows: [
+      { values: { merged: 3, created: 4, date: "2026-01-12" } },
+      { values: { merged: 1, created: 2, date: "2026-01-11" } },
+    ],
+    numbered: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const [first] = canvas.getAllByRole("button", { name: "Show full record" });
+    await userEvent.click(first!);
+
+    const record = await waitFor(() => {
+      const list = canvasElement.querySelector("tbody dl");
+      if (!list) throw new Error("the full record never opened");
+      return list;
+    });
+    const next = canvasElement.querySelector('tbody tr[aria-rowindex="3"]');
+
+    await expect(next, "the row after the opened one renders").toBeTruthy();
+    await waitFor(() =>
+      expectNothingOverlaps(record, [next!], () => "the next row"),
+    );
   },
 };
