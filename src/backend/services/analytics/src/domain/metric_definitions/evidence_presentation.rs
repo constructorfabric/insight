@@ -37,6 +37,8 @@ pub struct EvidencePresentation {
     pub show_value: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_parts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_label: Option<String>,
 }
 
 pub(crate) const RECORD_REF_KEY: &str = "ref";
@@ -49,6 +51,7 @@ impl EvidencePresentation {
             detail_columns: Vec::new(),
             show_value: granularity != EvidenceGranularity::Event,
             record_parts: None,
+            value_label: None,
         }
     }
 
@@ -177,6 +180,7 @@ mod tests {
             ],
             show_value: false,
             record_parts: Some("file_extension".to_owned()),
+            value_label: Some("Lines".to_owned()),
         };
         let stored = serde_json::to_string(&declared)
             .unwrap_or_else(|error| panic!("declaration must serialize: {error}"));

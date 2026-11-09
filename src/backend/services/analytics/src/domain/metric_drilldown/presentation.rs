@@ -384,7 +384,13 @@ fn input_label(plan: &EvidencePlan, role: MetricInputRole) -> String {
         .find(|input| input.role == role)
         .map_or_else(
             || humanize_field_name(role.as_db()),
-            |input| humanize_field_name(&input.measure_key),
+            |input| {
+                input
+                    .presentation
+                    .value_label
+                    .clone()
+                    .unwrap_or_else(|| humanize_field_name(&input.measure_key))
+            },
         )
 }
 
@@ -946,6 +952,23 @@ mod tests {
             keys.iter().any(|key| key == "category"),
             "a pinned dimension is shared by every part, so it stays: {keys:?}"
         );
+    }
+
+    #[test]
+    fn a_ratio_column_reads_the_label_its_measure_declares() {
+        let mut plan = ratio_over(commit_input, RatioDenominatorAggregation::Sum);
+        plan.inputs[1].presentation.value_label = Some("Issues closed".to_owned());
+
+        let columns = presentation_columns(&plan, &[], &[], &one_person());
+        let label = |key: &str| {
+            columns
+                .iter()
+                .find(|column| column.key == key)
+                .map(|column| column.label.clone())
+        };
+
+        assert_eq!(label("denominator").as_deref(), Some("Issues closed"));
+        assert_eq!(label("numerator").as_deref(), Some("Focus hours"));
     }
 
     #[test]

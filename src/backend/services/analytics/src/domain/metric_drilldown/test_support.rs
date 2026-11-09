@@ -52,6 +52,7 @@ pub(crate) fn commit_presentation() -> EvidencePresentation {
         ],
         show_value: false,
         record_parts: None,
+        value_label: None,
     }
 }
 

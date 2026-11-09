@@ -764,6 +764,19 @@ mod tests {
     }
 
     #[test]
+    fn closed_issues_of_every_type_read_as_issues_not_tasks() {
+        let label = builtin_sources()
+            .iter()
+            .filter(|builtin_source| builtin_source.source.key == "task")
+            .flat_map(|builtin_source| &builtin_source.measures)
+            .find(|measure| measure.key == "tasks_closed")
+            .and_then(|measure| measure.evidence_presentation.as_ref())
+            .and_then(|presentation| presentation.value_label.as_deref());
+
+        assert_eq!(label, Some("Issues closed"));
+    }
+
+    #[test]
     fn every_git_and_task_metric_drills_down_to_its_source_records() {
         let presentations: HashMap<(&str, &str), Option<&EvidencePresentation>> = builtin_sources()
             .iter()
