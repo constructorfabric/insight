@@ -23,7 +23,7 @@ import {
 } from "@/components/portal/report-builder-metrics";
 import { ReportPreviewDialog } from "@/components/portal/report-builder-preview";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import { metricVisible } from "@/lib/portal/nav-policy";
+import { offeredMetricFilter } from "@/lib/insight/groups";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { byFamily } from "@/lib/reports/families";
@@ -76,14 +76,12 @@ export function ReportBuilderView() {
     () => reportPersonIds(scope.roster, scope.pivotPersonId),
     [scope.roster, scope.pivotPersonId]
   );
-  const catalogue = useMemo(
-    () =>
-      (definitions.data?.metrics ?? []).filter(
-        (metric) =>
-          metric.is_enabled && metricVisible(metric.metric_key, showPlanned)
-      ),
-    [definitions.data, showPlanned]
-  );
+  const catalogue = useMemo(() => {
+    const isOffered = offeredMetricFilter(showPlanned);
+    return (definitions.data?.metrics ?? []).filter(
+      (metric) => metric.is_enabled && isOffered(metric)
+    );
+  }, [definitions.data, showPlanned]);
   const offered = useMemo<OfferedReportMetric[]>(
     () =>
       catalogue
