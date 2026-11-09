@@ -42,6 +42,7 @@ import {
 } from "@/lib/portal/metrics-view-pane";
 import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalNavActions, usePortalScope } from "@/lib/portal/portal-nav";
+import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
@@ -87,12 +88,21 @@ export function MetricsView() {
     [catalog],
   );
 
-  const [picked, setPicked] = useState<string[] | null>(null);
+  const { metrics: metricsParam } = usePortalSearch();
+  const setSearch = useSetPortalSearch();
+  const picked = useMemo(
+    () =>
+      metricsParam == null ? null : metricsParam === "none" ? [] : metricsParam.split(","),
+    [metricsParam],
+  );
+  const setPicked = (next: string[] | null) =>
+    setSearch(
+      { metrics: next == null ? undefined : next.length === 0 ? "none" : next.join(",") },
+      { replace: true },
+    );
   const selected = picked ?? catalogKeys;
   const setSelected = (action: SetStateAction<string[]>) =>
-    setPicked((current) =>
-      typeof action === "function" ? action(current ?? catalogKeys) : action,
-    );
+    setPicked(typeof action === "function" ? action(selected) : action);
   const metricKeys = useMemo(() => {
     const chosen = new Set(selected);
     return catalogKeys.filter((key) => chosen.has(key));
@@ -269,7 +279,11 @@ function MetricsBody({
   loading: boolean;
 }) {
   const { setScope } = usePortalNavActions();
-  const [comparing, setComparing] = useState<string[] | null>(null);
+  const { compare: compareParam } = usePortalSearch();
+  const setSearch = useSetPortalSearch();
+  const comparing = compareParam ? compareParam.split(",") : null;
+  const setComparing = (ids: string[] | null) =>
+    setSearch({ compare: ids?.length ? ids.join(",") : undefined });
   const [sort, setSort] = useState<MetricsSort | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(pivot ? [normalizePersonId(pivot.person_id)] : []),

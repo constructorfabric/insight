@@ -110,6 +110,17 @@ describe("the ingestion drill-down key", () => {
   });
 });
 
+describe("Metrics view links", () => {
+  it.each([
+    ["keeps well-formed metric keys and drops the rest", { metrics: "git.commits,<b>,ai.cost" }, { metrics: "git.commits,ai.cost" }],
+    ["keeps an empty pick", { metrics: "none" }, { metrics: "none" }],
+    ["drops a list with nothing usable", { metrics: ",," }, { metrics: undefined }],
+    ["keeps compared ids, lower-cased", { compare: "AB12-CD,x y" }, { compare: "ab12-cd" }],
+  ])("%s", (_case, raw, expected) => {
+    expect(validatePortalSearch(raw)).toMatchObject(expected);
+  });
+});
+
 describe("applySearchPatch", () => {
   /** The real middleware the portal routes install, over the patched result. */
   function afterRetain(

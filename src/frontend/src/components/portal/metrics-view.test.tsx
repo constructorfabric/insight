@@ -193,7 +193,7 @@ beforeEach(() => {
     ],
   ]);
   act(() => {
-    portalRouter.set({ scope: undefined, direct: false });
+    portalRouter.set({ scope: undefined, direct: false, metrics: undefined, compare: undefined });
     setMetricsViewPaneShown(false);
   });
 });
@@ -522,6 +522,35 @@ describe("MetricsView", () => {
     expect([...mocks.requestedIds].sort()).toEqual(
       [pid("boss"), pid("a"), pid("b"), pid("c")].sort(),
     );
+  });
+
+  it("puts the picked metrics in the link", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
+    await user.click(screen.getByRole("checkbox", { name: "Messages" }));
+
+    expect(portalRouter.search).toMatchObject({ metrics: "git.commits,tasks.closed" });
+  });
+
+  it("opens on the metrics a link names", () => {
+    act(() => portalRouter.set({ metrics: "git.commits" }));
+    render(<MetricsView />);
+
+    expect(mocks.requestedKeys).toEqual(["git.commits"]);
+  });
+
+  it("puts a comparison in the link and opens on one a link names", async () => {
+    const user = userEvent.setup();
+    const first = render(<MetricsView />);
+    await compare(user, ["a", "b"]);
+
+    expect(portalRouter.search).toMatchObject({ compare: `${pid("a")},${pid("b")}` });
+
+    first.unmount();
+    render(<MetricsView />);
+    expect(screen.getByRole("button", { name: "Exit compare" })).toBeInTheDocument();
   });
 
   it("goes back to the table when the comparison is closed", async () => {

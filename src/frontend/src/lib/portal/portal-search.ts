@@ -76,6 +76,8 @@ export interface PortalSearch {
   tag?: string[];
   /** Narrows the dashboard list to those the reader owns, or those shared with them. */
   owned?: OwnedFilter;
+  metrics?: string;
+  compare?: string;
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -94,6 +96,14 @@ function str(v: unknown): string | undefined {
 
 function scalar(v: unknown): string | undefined {
   return typeof v === "number" || typeof v === "boolean" ? String(v) : str(v);
+}
+
+const METRIC_KEY = /^(none|[a-z][a-z0-9_]*\.[a-z0-9_.]+)$/;
+const PERSON_ID = /^[0-9a-z-]+$/;
+
+function list(v: unknown, part: RegExp): string | undefined {
+  const parts = (str(v) ?? "").split(",").filter((value) => part.test(value));
+  return parts.length > 0 ? parts.join(",") : undefined;
 }
 
 function strs(v: unknown): string[] | undefined {
@@ -156,6 +166,8 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     folder: str(raw.folder),
     tag: strs(raw.tag),
     owned: raw.owned === "me" || raw.owned === "shared" ? raw.owned : undefined,
+    metrics: list(raw.metrics, METRIC_KEY),
+    compare: list(str(raw.compare)?.toLowerCase(), PERSON_ID),
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
     ...(custom ? { from, to } : {}),
   };
