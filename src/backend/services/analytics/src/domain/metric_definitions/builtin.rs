@@ -710,11 +710,6 @@ mod tests {
             "git.default_branch_active_days",
             "git.commits_per_active_day",
             "git.default_branch_commits_per_active_day",
-            "tasks.flow_efficiency",
-            "tasks.reopen_rate",
-            "tasks.estimation_accuracy",
-            "tasks.worklog_accuracy",
-            "tasks.stale_in_progress",
         ];
         let presentations: HashMap<(&str, &str), Option<&EvidencePresentation>> = builtin_sources()
             .iter()
