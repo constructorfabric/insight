@@ -72,6 +72,9 @@ export function ContextPane() {
       collapsible={drawer ? "offcanvas" : "none"}
       className={cn(
         "border-e",
+        // WORKAROUND: the kit's phone drawer is a Sheet, whose 24px inset pads
+        // the sidebar inside it; the sidebar's rows carry their own spacing.
+        "[--sheet-inset:0]",
         // INVARIANT: expanded only. A utility outranks the kit's layered
         // off-canvas offset, so applied while collapsed it keeps the pane on screen.
         layout === "narrow" &&
