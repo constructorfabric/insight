@@ -90,11 +90,15 @@ describe("the retired zones", () => {
 
 describe("resolveZoneItem", () => {
   it("keeps an item the zone lists", () => {
-    expect(resolveZoneItem("overview", "trend")).toBe("trend");
+    expect(resolveZoneItem("overview", "by-direction")).toBe("by-direction");
+  });
+
+  it("sends a link to the dropped Overview Trend to At a glance", () => {
+    expect(resolveZoneItem("overview", "trend")).toBe("at-a-glance");
   });
 
   it("falls back for an item that belongs to another zone", () => {
-    expect(resolveZoneItem("people", "trend")).toBe("roster");
+    expect(resolveZoneItem("people", "by-direction")).toBe("roster");
   });
 
   it("falls back when the URL names none", () => {
@@ -103,7 +107,7 @@ describe("resolveZoneItem", () => {
 
   it("keeps a Manage item the URL names, and falls back for one it does not", () => {
     expect(resolveZoneItem("manage", "connector-health")).toBe("connector-health");
-    expect(resolveZoneItem("manage", "trend")).toBe("ai-assistant");
+    expect(resolveZoneItem("manage", "by-direction")).toBe("ai-assistant");
   });
 
   it("stays null for a zone with no catalog items", () => {

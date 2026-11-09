@@ -20,24 +20,10 @@ def test_by_direction_loads(ceo_portal: PortalPage) -> None:
 
 
 @pytest.mark.requires_seed("ceo")
-def test_trend_loads(ceo_portal: PortalPage) -> None:
-    ceo_portal.open_zone("Home")
-    ceo_portal.open_pane_entry("Trend")
-    ceo_portal.verify_page_loaded("page-overview-trend")
-
-
-@pytest.mark.requires_seed("ceo")
 def test_attention_needed_loads(ceo_portal: PortalPage) -> None:
     ceo_portal.open_zone("Home")
     ceo_portal.open_pane_entry("Attention needed")
     ceo_portal.verify_page_loaded("page-overview-attention")
-
-
-@pytest.mark.requires_seed("ceo")
-def test_data_coverage_loads(ceo_portal: PortalPage) -> None:
-    ceo_portal.open_zone("Home")
-    ceo_portal.open_pane_entry("Data coverage")
-    ceo_portal.verify_page_loaded("page-overview-health")
 
 
 @pytest.mark.requires_seed("ceo")

@@ -7,7 +7,6 @@ import {
   Clock,
   Copy,
   DollarSign,
-  Eye,
   FileSpreadsheet,
   FileText,
   Filter,
@@ -265,9 +264,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
       items: [
         { id: "at-a-glance", label: "At a glance", icon: LayoutGrid },
         { id: "by-direction", label: "By direction", icon: Layers },
-        { id: "trend", label: "Trend", icon: TrendingUp },
         { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "health", label: "Data coverage", icon: Eye },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },
