@@ -198,6 +198,7 @@ export function ReportBuilderView() {
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Scope</span>
               <ToggleGroup
+                spacing={0}
                 value={[subject]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;
@@ -216,6 +217,7 @@ export function ReportBuilderView() {
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Granularity</span>
               <ToggleGroup
+                spacing={0}
                 value={[granularity]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;

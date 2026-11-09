@@ -39,6 +39,7 @@ export function TimeseriesPresentationToggle({
 }) {
   return (
     <ToggleGroup
+      spacing={0}
       value={[presentation]}
       onValueChange={(values) => {
         const next = Array.isArray(values) ? values[0] : values;

@@ -111,6 +111,7 @@ function DimensionControls({
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
       {dimensions.length > 1 ? (
         <ToggleGroup
+          spacing={0}
           value={[selectedDimension]}
           onValueChange={(value) => {
             const next = Array.isArray(value) ? value[0] : value;

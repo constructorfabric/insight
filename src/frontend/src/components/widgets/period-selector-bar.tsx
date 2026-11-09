@@ -139,6 +139,7 @@ export function PeriodSelectorBar({
   return (
     <div className="flex items-center gap-2">
       <ToggleGroup
+        spacing={0}
         value={groupValue}
         onValueChange={(values) => {
           const next = Array.isArray(values) ? values[0] : values;

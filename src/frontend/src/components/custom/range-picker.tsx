@@ -56,6 +56,7 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
 
   return (
     <ToggleGroup
+      spacing={0}
       value={[custom ? "custom" : selected]}
       onValueChange={(values) => {
         const next = Array.isArray(values) ? values[0] : values;
