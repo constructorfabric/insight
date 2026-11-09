@@ -284,17 +284,22 @@ sources:
     measures:
       - key: tasks_closed
         evidence_granularity: event
+        evidence_presentation: &issue_typed
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: type, label: Type }
+      - key: bugs_fixed
+        evidence_granularity: event
+        evidence_presentation: *issue_typed
+      - key: closed_task
+        evidence_granularity: event
         evidence_presentation: &issue_counted
           show_value: false
           detail_columns: &issue_columns
             - { key: ref, label: Ref }
             - { key: title, label: Title }
-      - key: bugs_fixed
-        evidence_granularity: event
-        evidence_presentation: *issue_counted
-      - key: closed_task
-        evidence_granularity: event
-        evidence_presentation: *issue_counted
       - key: closed_unknown_type
         evidence_granularity: event
         evidence_presentation: *issue_counted

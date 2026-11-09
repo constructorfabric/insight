@@ -424,7 +424,8 @@ SELECT
     map(
         'source_id', toString(insight_source_id),
         'ref', id_readable,
-        'title', ifNull(title, '')
+        'title', ifNull(title, ''),
+        'type', ifNull(arrayFirst(dimension -> dimension.1 = 'type', type_dimensions).3, '')
     ) AS details
 FROM issue_item_evidence
 WHERE tenant_id IS NOT NULL

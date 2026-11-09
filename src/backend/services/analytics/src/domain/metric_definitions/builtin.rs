@@ -742,6 +742,28 @@ mod tests {
     }
 
     #[test]
+    fn a_bug_share_row_names_the_type_of_its_issue() {
+        let task = builtin_sources()
+            .iter()
+            .find(|builtin_source| builtin_source.source.key == "task")
+            .unwrap_or_else(|| panic!("the task source must be declared"));
+
+        for measure_key in ["bugs_fixed", "tasks_closed"] {
+            let keys: Vec<&str> = task
+                .measures
+                .iter()
+                .find(|measure| measure.key == measure_key)
+                .and_then(|measure| measure.evidence_presentation.as_ref())
+                .map(|presentation| presentation.detail_keys().collect())
+                .unwrap_or_default();
+            assert!(
+                keys.contains(&"type"),
+                "{measure_key} rows should say which kind of issue they are: {keys:?}"
+            );
+        }
+    }
+
+    #[test]
     fn every_git_and_task_metric_drills_down_to_its_source_records() {
         let presentations: HashMap<(&str, &str), Option<&EvidencePresentation>> = builtin_sources()
             .iter()
