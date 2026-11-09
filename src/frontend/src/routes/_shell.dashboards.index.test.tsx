@@ -27,7 +27,7 @@ import * as customClient from "@/api/custom-client";
 import type { DashboardAccess, DashboardListed } from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.index";
+import { Route } from "./_shell.dashboards.index";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

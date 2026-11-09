@@ -21,7 +21,7 @@ import {
 } from "@/test/intersection-observer";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.widgets.index";
+import { Route } from "./_shell.dashboards.widgets.index";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

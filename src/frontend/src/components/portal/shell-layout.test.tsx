@@ -23,7 +23,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   layout: "phone" as "phone" | "narrow" | "wide",
-  zone: { activeZone: "overview", activePerson: "boss@x" },
   isManager: true,
   openFeedback: vi.fn(),
 }));
@@ -34,7 +33,6 @@ vi.mock("@/components/feedback-context", () => ({
 
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mocks.layout === "phone" }));
 vi.mock("@/lib/portal/use-shell-layout", () => ({ useShellLayout: () => mocks.layout }));
-vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => ({ isAdmin: false, isPending: false }),
   useVisibilityPolicy: () => ({
@@ -52,7 +50,6 @@ vi.mock("@/components/mock-banner", () => ({ MockBanner: () => <div /> }));
 vi.mock("@/components/view-as-banner", () => ({
   ViewAsBanner: () => <div data-testid="view-as-banner" />,
 }));
-vi.mock("@/components/portal/zone-content", () => ({ ZoneContent: () => <div /> }));
 vi.mock("@/components/portal/custom-nav", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/components/portal/custom-nav")>()),
   HomeDashboardsGroup: () => null,
@@ -105,10 +102,7 @@ vi.mock("@/components/app-sidebar-footer", () => ({
 }));
 
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import {
-  usePortalItem,
-  usePortalZone,
-} from "@/lib/portal/portal-nav";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { act, renderHook } from "@testing-library/react";
 
 import { ContextPane } from "./context-pane";
@@ -127,11 +121,10 @@ function Shell() {
 
 beforeEach(() => {
   mocks.layout = "phone";
-  mocks.zone = { activeZone: "overview", activePerson: "boss@x" };
   mocks.isManager = true;
   mocks.openFeedback.mockClear();
   act(() => {
-    portalRouter.set({ item: undefined });
+    portalRouter.reset("/home");
   });
   window.matchMedia ??= ((query: string) => ({
     matches: false,
@@ -203,7 +196,7 @@ describe("shell layout: phone", () => {
   it("expands the zone list on demand and re-collapses after a pick", async () => {
     render(<Shell />);
     const user = await openDrawer();
-    const zoneState = renderHook(() => usePortalZone());
+    const zoneState = renderHook(() => useNavLocation().zone);
 
     await user.click(screen.getByRole("button", { name: "Home", expanded: false }));
     const explore = screen.getByRole("button", { name: "Explore" });
@@ -220,7 +213,7 @@ describe("shell layout: phone", () => {
   it("closes the drawer when a section is picked — otherwise it hides the view", async () => {
     render(<Shell />);
     const user = await openDrawer();
-    const itemState = renderHook(() => usePortalItem());
+    const itemState = renderHook(() => useNavLocation().item);
 
     await user.click(screen.getByText("By direction"));
 
@@ -335,7 +328,7 @@ describe("shell layout: narrow (tablet)", () => {
   it("closes the pane after a section pick, same as the phone drawer", async () => {
     const user = userEvent.setup();
     render(<Shell />);
-    const itemState = renderHook(() => usePortalItem());
+    const itemState = renderHook(() => useNavLocation().item);
 
     // The pane starts expanded in this bare harness (no PaneStateForLayout), so
     // the sections are reachable; picking one must collapse it.

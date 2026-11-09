@@ -217,13 +217,26 @@ minified bundle rather than your code.
 
 ## Routes
 
-| Path | Screen | Notes |
-|---|---|---|
-| `/` | Dashboard for the signed-in viewer | Resolves the viewer from the session. |
-| `/ic/$person` | (redirects to `/ic/$person/personal`) | |
-| `/ic/$person/personal` | Dashboard | KPI row, attention list, metric group cards + drilldowns. |
-| `/ic/$person/team` | Team view | Members heatmap, attention list, metric group drilldowns. |
-| `/whats-new` | Release notes | |
+Every page sits under one shell route (`routes/_shell.tsx`), so the rail, the
+pane and the top bar stay mounted while the page changes. The path says where
+the reader is; the query string carries only that page's own settings, plus
+`scope`, `direct`, `slice`, `period`, `from` and `to`, which every page shares.
+
+| Path | Screen |
+|---|---|
+| `/` | Redirects to `/home`, or to the viewer's own page where the install hides Home |
+| `/home`, `/home/directions`, `/home/attention` | Home |
+| `/explore`, `/explore/$dir/$lens` | Directions and their lenses (`?repo=` on a lens) |
+| `/explore/ai`, `/explore/ai/$view` | AI & Cost |
+| `/people` | Redirects to the viewer's own page |
+| `/people/$person`, `/people/$person/$section` | One person, and one of their sections |
+| `/people/$person/team`, `/people/$person/team/roster`, `/people/$person/team/metrics` | That person's team (`?metrics=&compare=` on the metrics view) |
+| `/reports/$view` | Reports |
+| `/manage/$surface`, `/manage/identities/$mode`, `/manage/ingestion/$connector` | Manage |
+| `/dashboards/...` | Dashboards, metrics, widgets, datasets and alerts |
+
+Paths use short names; the zone and item ids the install's `frontend.nav`
+policy is written against are mapped in `src/lib/portal/portal-routes.ts`.
 
 ## Theming
 

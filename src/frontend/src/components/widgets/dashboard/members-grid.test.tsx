@@ -129,7 +129,7 @@ describe("MembersGrid", () => {
     const annLink = within(table).getByRole("link", { name: "Ann" });
     expect(annLink).toHaveAttribute(
       "href",
-      "/ic/ann%40x.com/personal",
+      "/people/ann%40x.com",
     );
     // No issues facet → the Member header is a plain name toggle, no menu,
     // and no issues chip.

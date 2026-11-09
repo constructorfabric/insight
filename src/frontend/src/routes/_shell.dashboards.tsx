@@ -32,10 +32,11 @@ import {
  */
 export const Route = createFileRoute("/_shell/dashboards")({
   validateSearch: validateDashboardListSearch,
+  staticData: { zone: "custom" },
   component: CustomZone,
 });
 
-const MEMBER_ROUTES = new Set(["/dashboards/", "/dashboards/$name"]);
+const MEMBER_ROUTES = new Set(["/_shell/dashboards/", "/_shell/dashboards/$name"]);
 
 function CustomZone() {
   const { isAdmin, isPending, isError, retry } = useIsAdmin();

@@ -29,7 +29,7 @@ import * as customClient from "@/api/custom-client";
 import { datasetNames } from "@/test/catalogue";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.new.$kind";
+import { Route } from "./_shell.dashboards.new.$kind";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

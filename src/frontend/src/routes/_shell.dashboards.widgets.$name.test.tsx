@@ -26,7 +26,7 @@ import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.widgets.$name";
+import { Route } from "./_shell.dashboards.widgets.$name";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

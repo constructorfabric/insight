@@ -9,6 +9,26 @@ import { describe, expect, it } from "vitest";
 import { screenLabel } from "./screen-label";
 
 describe("screenLabel", () => {
+  it.each([
+    ["/home", "Overview"],
+    ["/home/directions", "Overview › By direction"],
+    ["/explore", "Directions"],
+    ["/explore/dev/git-output", "Development › Git output"],
+    ["/explore/ai", "AI & Cost"],
+    ["/explore/ai/seats", "AI & Cost › Idle seats"],
+    ["/people/:id", "Person"],
+    ["/people/:id/git-output", "Person › Git output"],
+    ["/people/:id/team", "People"],
+    ["/people/:id/team/roster", "People › Roster · by role"],
+    ["/reports/builder", "Reports › Report builder"],
+    ["/manage/usage", "Manage › Platform usage"],
+    ["/manage/identities/person", "Manage › Identities · roles & taxonomy › A person and their accounts"],
+    ["/manage/ingestion/bamboohr", "Manage › Ingestion › bamboohr"],
+    ["/dashboards", "Dashboards"],
+  ])("names %s as %s", (path, label) => {
+    expect(screenLabel(path), path).toBe(label);
+  });
+
   it("names a zone and the item inside it", () => {
     expect(screenLabel("/portal/manage/platform-usage")).toBe(
       "Manage › Platform usage",

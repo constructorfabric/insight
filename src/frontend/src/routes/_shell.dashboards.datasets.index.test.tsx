@@ -18,7 +18,7 @@ import { datasetNames } from "@/test/catalogue";
 import { scrollEndOutOfView } from "@/test/intersection-observer";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.datasets.index";
+import { Route } from "./_shell.dashboards.datasets.index";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

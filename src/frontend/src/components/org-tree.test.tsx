@@ -33,12 +33,11 @@ vi.mock("@/queries/visible-roster", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
-  useRouterState: () => "/portal",
+  useParams: () => ({}),
 }));
 vi.mock("@/lib/portal/portal-nav", () => ({
   usePortalNavActions: () => ({ setScope: vi.fn() }),
 }));
-vi.mock("@/lib/metrics/entity", () => ({ personIdFromPath: () => null }));
 // The sidebar primitives need their provider; the tree's own markup is what
 // this file is about, so they stand in as plain elements.
 vi.mock("@/components/ui/sidebar", () => ({

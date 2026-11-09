@@ -19,7 +19,7 @@ def test_all_dashboards_list_loads(ceo_portal: PortalPage) -> None:
 def test_first_dashboard_loads(ceo_portal: PortalPage) -> None:
     ceo_portal.open_zone("Dashboards")
     ceo_portal.open_pane_entry("All dashboards")
-    ceo_portal.open_first_item("All dashboards", "/portal/custom/")
+    ceo_portal.open_first_item("All dashboards", "/dashboards/")
     ceo_portal.verify_page_loaded("page-custom-dashboard")
 
 
@@ -53,7 +53,7 @@ def test_metrics_list_loads(admin_operator_portal: PortalPage) -> None:
 def test_first_metric_loads(admin_operator_portal: PortalPage) -> None:
     admin_operator_portal.open_zone("Dashboards")
     admin_operator_portal.open_pane_entry("Metrics")
-    admin_operator_portal.open_first_item("Metrics", "/portal/custom/metrics/")
+    admin_operator_portal.open_first_item("Metrics", "/dashboards/metrics/")
     admin_operator_portal.verify_page_loaded("page-custom-metric")
 
 
@@ -71,7 +71,7 @@ def test_widgets_list_loads(admin_operator_portal: PortalPage) -> None:
 def test_first_widget_loads(admin_operator_portal: PortalPage) -> None:
     admin_operator_portal.open_zone("Dashboards")
     admin_operator_portal.open_pane_entry("Widgets")
-    admin_operator_portal.open_first_item("Widgets", "/portal/custom/widgets/")
+    admin_operator_portal.open_first_item("Widgets", "/dashboards/widgets/")
     admin_operator_portal.verify_page_loaded("page-custom-widget")
 
 
@@ -89,7 +89,7 @@ def test_datasets_list_loads(admin_operator_portal: PortalPage) -> None:
 def test_first_dataset_loads(admin_operator_portal: PortalPage) -> None:
     admin_operator_portal.open_zone("Dashboards")
     admin_operator_portal.open_pane_entry("Datasets")
-    admin_operator_portal.open_first_item("Datasets", "/portal/custom/datasets/")
+    admin_operator_portal.open_first_item("Datasets", "/dashboards/datasets/")
     admin_operator_portal.verify_page_loaded("page-custom-dataset")
 
 

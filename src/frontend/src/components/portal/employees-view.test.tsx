@@ -112,7 +112,7 @@ describe("EmployeesView", () => {
     render(<EmployeesView />);
     expect(screen.getAllByRole("link")[2]).toHaveAttribute(
       "href",
-      `/ic/${pid("zoe")}/personal`,
+      `/people/${pid("zoe")}`,
     );
   });
 

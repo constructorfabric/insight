@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, User, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/sidebar";
 import { personName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
-import { personIdFromPath } from "@/lib/metrics/entity";
 import {
   filterOrgTree,
   type OrgTreeFilter,
@@ -152,14 +151,7 @@ function RosterList({
   query: string;
   roster: readonly PeopleListItem[];
 }) {
-  const { personId: viewerPersonId } = useViewer();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const activePersonId = useMemo(() => {
-    const fromPath = personIdFromPath(pathname);
-    if (fromPath) return fromPath;
-    if (pathname === "/" && viewerPersonId) return viewerPersonId;
-    return null;
-  }, [pathname, viewerPersonId]);
+  const activePersonId = useRoutePerson();
 
   const listed = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -223,13 +215,7 @@ export function OrgTree({
     () => (viewerPersonId ? rosterTree(roster, viewerPersonId) : null),
     [roster, viewerPersonId]
   );
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const activePersonId = useMemo(() => {
-    const fromPath = personIdFromPath(pathname);
-    if (fromPath) return fromPath;
-    if (pathname === "/" && viewerPersonId) return viewerPersonId;
-    return null;
-  }, [pathname, viewerPersonId]);
+  const activePersonId = useRoutePerson();
   const filter = useMemo(() => filterOrgTree(viewer, query), [viewer, query]);
   const [expansionOverrides, setExpansionOverrides] = useState<
     ReadonlyMap<string, boolean>
@@ -266,4 +252,10 @@ export function OrgTree({
       />
     </SidebarMenu>
   );
+}
+
+/** The person the page on screen is about, or null off a person's pages. */
+function useRoutePerson(): string | null {
+  const { person } = useParams({ strict: false }) as { person?: string };
+  return person ?? null;
 }

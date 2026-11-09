@@ -25,7 +25,7 @@ import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.metrics.$name";
+import { Route } from "./_shell.dashboards.metrics.$name";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

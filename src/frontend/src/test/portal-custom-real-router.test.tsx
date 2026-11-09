@@ -20,7 +20,7 @@ import {
   createMemoryHistory,
   createRouter,
 } from "@tanstack/react-router";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -86,11 +86,12 @@ function renderAt(path: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>
   );
+  return { ...view, router };
 }
 
 beforeEach(() => {
@@ -393,5 +394,28 @@ describe("the /dashboards routes, through the real router", { timeout: 20_000 },
     expect(customClient.fetchMetrics).not.toHaveBeenCalled();
     expect(customClient.fetchOrphanedDashboards).not.toHaveBeenCalled();
     expect(customClient.fetchDefinition).not.toHaveBeenCalled();
+  });
+});
+
+describe("the portal shell, through the real router", { timeout: 20_000 }, () => {
+  it("stays mounted while the reader moves between zones", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
+    vi.mocked(customClient.fetchFolders).mockResolvedValue({ folders: [], unfiled: 1 });
+    vi.mocked(customClient.fetchPins).mockResolvedValue([]);
+    vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: [] });
+    const { router } = renderAt("/dashboards");
+    const rail = await screen.findByTestId("lens-rail", {}, { timeout: 10000 });
+
+    await act(() =>
+      router.navigate({
+        to: "/people/$person/team",
+        params: { person: "aaaaaaaa-1111-4111-8111-111111111111" },
+      }),
+    );
+    await act(() => router.navigate({ to: "/manage/$surface", params: { surface: "news" } }));
+
+    // The same element, not an equal one: a shell rebuilt per page drops what
+    // the reader had open in it — the phone drawer, the pane's state, scroll.
+    expect(screen.getByTestId("lens-rail")).toBe(rail);
   });
 });

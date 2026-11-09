@@ -32,7 +32,7 @@ import { CustomApiError } from "@/api/custom-client";
 import { datasetNames } from "@/test/catalogue";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.edit.$kind.$name";
+import { Route } from "./_shell.dashboards.edit.$kind.$name";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

@@ -79,7 +79,7 @@ import * as customClient from "@/api/custom-client";
 import type { DashboardWidget, Widget } from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.$name";
+import { Route } from "./_shell.dashboards.$name";
 
 /** What every read here carries besides its body. */
 const READ = {

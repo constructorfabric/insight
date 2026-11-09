@@ -176,8 +176,7 @@ beforeEach(() => {
   hooks.sources.isError = false;
   hooks.binding.data = undefined;
   hooks.binding.isLoading = true;
-  portalRouter.reset();
-  portalRouter.set({ zone: "manage", item: "identities", mode: "accounts" });
+  portalRouter.reset("/manage/identities/accounts");
 });
 
 describe("AccountSearchView", () => {

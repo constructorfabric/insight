@@ -8,9 +8,14 @@ import { describe, expect, it } from "vitest";
 import { toISODate } from "@/api/period-to-date-range";
 
 import {
-  PORTAL_SEARCH_KEYS,
+  GLOBAL_SEARCH_KEYS,
   applySearchPatch,
-  validatePortalSearch,
+  validateDashboardListSearch,
+  validateDashboardSearch,
+  validateExploreSearch,
+  validateGlobalSearch,
+  validateIdentitiesSearch,
+  validateMetricsViewSearch,
 } from "./portal-search";
 
 /**
@@ -25,7 +30,7 @@ import {
  * drops therefore has to come back as `undefined`, not be omitted.
  */
 function asMatched(raw: Record<string, unknown>): Record<string, unknown> {
-  return { ...raw, ...validatePortalSearch(raw) };
+  return { ...raw, ...validateGlobalSearch(raw) };
 }
 
 function isoDaysFromToday(days: number): string {
@@ -34,13 +39,13 @@ function isoDaysFromToday(days: number): string {
   return toISODate(d);
 }
 
-describe("validatePortalSearch", () => {
+describe("the identities console keys", () => {
   it("normalises the picked sources and drops an empty list", () => {
-    expect(validatePortalSearch({ src: " gitlab,github,github" }).src).toBe(
+    expect(validateIdentitiesSearch({ src: " gitlab,github,github" }).src).toBe(
       "github,gitlab",
     );
-    expect(validatePortalSearch({ src: ",," }).src).toBeUndefined();
-    expect(validatePortalSearch({ src: 5 }).src).toBeUndefined();
+    expect(validateIdentitiesSearch({ src: ",," }).src).toBeUndefined();
+    expect(validateIdentitiesSearch({ src: 5 }).src).toBeUndefined();
   });
 
   it("degrades an oversized src to at most 20 entries of at most 30 characters", () => {
@@ -48,55 +53,65 @@ describe("validatePortalSearch", () => {
     const long = "x".repeat(31);
     const fits = "y".repeat(30);
 
-    const kept = validatePortalSearch({ src: [...many, long, fits].join(",") }).src?.split(",");
+    const kept = validateIdentitiesSearch({ src: [...many, long, fits].join(",") }).src?.split(",");
 
     expect(kept).toHaveLength(20);
     expect(kept?.every((entry) => entry.length <= 30)).toBe(true);
     expect(kept).not.toContain(long);
-    expect(validatePortalSearch({ src: `${long},${fits}` }).src).toBe(fits);
+    expect(validateIdentitiesSearch({ src: `${long},${fits}` }).src).toBe(fits);
   });
 
-  it("carries src across a route change", () => {
-    expect(PORTAL_SEARCH_KEYS).toContain("src");
+  it("lowercases the person and stays on the console", () => {
+    expect(validateIdentitiesSearch({ person: "AB12" }).person).toBe("ab12");
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("person");
+  });
+});
+
+describe("the repository under inspection", () => {
+  it("keeps a repository by its dimension value and drops an empty one", () => {
+    // By VALUE, so a shared link reproduces the one that was opened even when
+    // two share a display name.
+    expect(validateExploreSearch({ repo: "src-a:acme/api" }).repo).toBe("src-a:acme/api");
+    expect(validateExploreSearch({ repo: "" }).repo).toBeUndefined();
   });
 
-  it("keeps the navigation keys it recognises", () => {
-    expect(
-      validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
-    ).toMatchObject({ zone: "directions", dir: "dev", lens: "Delivery" });
-    // A repository is carried by its dimension VALUE, so a shared link
-    // reproduces the one that was opened even when two share a display name.
-    expect(
-      validatePortalSearch({ lens: "Repositories", repo: "src-a:acme/api" }),
-    ).toMatchObject({ lens: "Repositories", repo: "src-a:acme/api" });
-    expect(validatePortalSearch({ repo: "" }).repo).toBeUndefined();
+  it("stays on the lens it was opened on", () => {
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("repo");
   });
+});
 
+describe("the settings every page shares", () => {
   it("lowercases the scope — an email is case-insensitive but our keys are not", () => {
-    expect(validatePortalSearch({ scope: "Head@X.COM" }).scope).toBe("head@x.com");
+    expect(validateGlobalSearch({ scope: "Head@X.COM" }).scope).toBe("head@x.com");
   });
 
   it("drops empty and non-string values rather than passing them on", () => {
-    const out = validatePortalSearch({ zone: "", item: 42, dir: null });
-    expect(out.zone).toBeUndefined();
-    expect(out.item).toBeUndefined();
-    expect(out.dir).toBeUndefined();
+    const out = validateGlobalSearch({ scope: "", slice: 42, period: null });
+    expect(out.scope).toBeUndefined();
+    expect(out.slice).toBeUndefined();
+    expect(out.period).toBeUndefined();
+  });
+
+  it("are carried across every navigation", () => {
+    expect([...GLOBAL_SEARCH_KEYS].sort()).toEqual(
+      ["direct", "from", "period", "scope", "slice", "to"].sort(),
+    );
   });
 
   it("omits `direct` unless it is truthy — no defaults in a shared URL", () => {
     expect(asMatched({ direct: "false" }).direct).toBeUndefined();
-    expect(validatePortalSearch({}).direct).toBeUndefined();
-    expect(validatePortalSearch({ direct: "true" }).direct).toBe(true);
+    expect(validateGlobalSearch({}).direct).toBeUndefined();
+    expect(validateGlobalSearch({ direct: "true" }).direct).toBe(true);
   });
 
   it("ignores an unknown period preset", () => {
-    expect(validatePortalSearch({ period: "fortnight" }).period).toBeUndefined();
-    expect(validatePortalSearch({ period: "quarter" }).period).toBe("quarter");
+    expect(validateGlobalSearch({ period: "fortnight" }).period).toBeUndefined();
+    expect(validateGlobalSearch({ period: "quarter" }).period).toBe("quarter");
   });
 
   describe("custom range", () => {
     it("keeps a well-formed, correctly ordered pair", () => {
-      const out = validatePortalSearch({ from: "2026-01-01", to: "2026-01-31" });
+      const out = validateGlobalSearch({ from: "2026-01-01", to: "2026-01-31" });
       expect(out).toMatchObject({ from: "2026-01-01", to: "2026-01-31" });
     });
 
@@ -116,28 +131,6 @@ describe("validatePortalSearch", () => {
   });
 });
 
-describe("the ingestion drill-down key", () => {
-  it("keeps a connector slug", () => {
-    expect(validatePortalSearch({ conn: "bamboohr" }).conn).toBe("bamboohr");
-    expect(validatePortalSearch({ conn: "claude_enterprise" }).conn).toBe(
-      "claude_enterprise",
-    );
-  });
-
-  it("drops anything the endpoint would refuse as a scope", () => {
-    // A hand-edited value must degrade to the overview, not reach the API and
-    // come back a 400 the reader cannot act on.
-    for (const raw of ["Jira", "bronze jira", "jira;drop", "jira/../x", ""]) {
-      expect(validatePortalSearch({ conn: raw }).conn, raw).toBeUndefined();
-    }
-  });
-
-  it("is retained across navigation", () => {
-    // Without this the drill-down is lost the moment anything else navigates.
-    expect(PORTAL_SEARCH_KEYS).toContain("conn");
-  });
-});
-
 describe("Metrics view links", () => {
   it.each([
     ["keeps well-formed metric keys and drops the rest", { metrics: "git.commits,<b>,ai.cost" }, { metrics: "git.commits,ai.cost" }],
@@ -145,7 +138,7 @@ describe("Metrics view links", () => {
     ["drops a list with nothing usable", { metrics: ",," }, { metrics: undefined }],
     ["keeps compared ids, lower-cased", { compare: "AB12-CD,x y" }, { compare: "ab12-cd" }],
   ])("%s", (_case, raw, expected) => {
-    expect(validatePortalSearch(raw)).toMatchObject(expected);
+    expect(validateMetricsViewSearch(raw)).toMatchObject(expected);
   });
 });
 
@@ -155,7 +148,7 @@ describe("applySearchPatch", () => {
     prev: Record<string, unknown>,
     patched: Record<string, unknown>
   ): Record<string, unknown> {
-    const middleware = retainSearchParams(PORTAL_SEARCH_KEYS);
+    const middleware = retainSearchParams(GLOBAL_SEARCH_KEYS);
     return middleware({
       search: prev as never,
       next: (() => ({ search: patched, meta: {} })) as never,
@@ -178,15 +171,15 @@ describe("applySearchPatch", () => {
     expect(kept.period).toBe("quarter");
     expect(kept.from).toBeUndefined();
     expect(kept.to).toBeUndefined();
-    expect(validatePortalSearch(kept)).toEqual({ period: "quarter" });
+    expect(validateGlobalSearch(kept)).toEqual({ period: "quarter" });
   });
 
   it("clears a key given an empty string or false, and leaves omitted keys alone", () => {
     const patched = applySearchPatch(
-      { zone: "directions", slice: "division", direct: true },
+      { scope: "ab12", slice: "division", direct: true },
       { slice: "", direct: false }
     );
-    expect(patched.zone).toBe("directions");
+    expect(patched.scope).toBe("ab12");
     expect(patched.slice).toBeUndefined();
     expect(patched.direct).toBeUndefined();
   });
@@ -194,8 +187,8 @@ describe("applySearchPatch", () => {
 
 describe("the picked time range", () => {
   it("keeps a preset and an interval the server would accept", () => {
-    expect(validatePortalSearch({ range: "P30D" }).range).toBe("P30D");
-    expect(validatePortalSearch({ range: "2026-08-01/2026-09-01" }).range).toBe(
+    expect(validateDashboardSearch({ range: "P30D" }).range).toBe("P30D");
+    expect(validateDashboardSearch({ range: "2026-08-01/2026-09-01" }).range).toBe(
       "2026-08-01/2026-09-01",
     );
   });
@@ -208,36 +201,30 @@ describe("the picked time range", () => {
       "2026-09-01/2026-09-02/2026-09-03",
       "",
     ]) {
-      expect(validatePortalSearch({ range }).range, range).toBeUndefined();
+      expect(validateDashboardSearch({ range }).range, range).toBeUndefined();
     }
   });
 
-  it("does not disturb the rest of the search", () => {
-    expect(
-      validatePortalSearch({ range: "nonsense", zone: "custom", item: "x" }),
-    ).toMatchObject({ zone: "custom", item: "x" });
-  });
-
-  it("is carried across a route change like every other portal key", () => {
-    expect(PORTAL_SEARCH_KEYS).toContain("range");
+  it("stays on the dashboard it was picked on", () => {
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("range");
   });
 });
 
 describe("the dashboard folder param", () => {
   it("keeps the folder a link names", () => {
-    expect(validatePortalSearch({ folder: "unfiled" }).folder).toBe("unfiled");
-    expect(validatePortalSearch({ folder: "" }).folder).toBeUndefined();
+    expect(validateDashboardListSearch({ folder: "unfiled" }).folder).toBe("unfiled");
+    expect(validateDashboardListSearch({ folder: "" }).folder).toBeUndefined();
   });
 
   it("rides only on the link that names it, never into another zone", () => {
-    expect(PORTAL_SEARCH_KEYS).not.toContain("folder");
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("folder");
   });
 });
 
 describe("the dashboard tag param", () => {
   it("keeps every tag a link names, one or several", () => {
-    expect(validatePortalSearch({ tag: "Ops" }).tag).toEqual(["Ops"]);
-    expect(validatePortalSearch({ tag: ["Ops", "Platform"] }).tag).toEqual([
+    expect(validateDashboardListSearch({ tag: "Ops" }).tag).toEqual(["Ops"]);
+    expect(validateDashboardListSearch({ tag: ["Ops", "Platform"] }).tag).toEqual([
       "Ops",
       "Platform",
     ]);
@@ -249,7 +236,7 @@ describe("the dashboard tag param", () => {
     ["a list of empty values", ["", ""]],
     ["an object", { name: "Ops" }],
   ])("drops %s", (_case, tag) => {
-    expect(validatePortalSearch({ tag }).tag).toBeUndefined();
+    expect(validateDashboardListSearch({ tag }).tag).toBeUndefined();
   });
 
   it("reads the tags a hand-written link repeats, and the list the router writes", () => {
@@ -258,18 +245,18 @@ describe("the dashboard tag param", () => {
       defaultStringifySearch({ tag: ["Ops", "2026"] }),
     );
 
-    expect(validatePortalSearch(repeated).tag).toEqual(["Ops", "2026"]);
-    expect(validatePortalSearch(written).tag).toEqual(["Ops", "2026"]);
+    expect(validateDashboardListSearch(repeated).tag).toEqual(["Ops", "2026"]);
+    expect(validateDashboardListSearch(written).tag).toEqual(["Ops", "2026"]);
   });
 
   it("rides only on the link that names it, never into another zone", () => {
-    expect(PORTAL_SEARCH_KEYS).not.toContain("tag");
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("tag");
   });
 });
 
 describe("the dashboard ownership param", () => {
   it.each(["me", "shared"])("keeps %s", (owned) => {
-    expect(validatePortalSearch({ owned }).owned).toBe(owned);
+    expect(validateDashboardListSearch({ owned }).owned).toBe(owned);
   });
 
   it.each([
@@ -277,23 +264,23 @@ describe("the dashboard ownership param", () => {
     ["an unknown filter", "everyone"],
     ["a list", ["me"]],
   ])("drops %s", (_case, owned) => {
-    expect(validatePortalSearch({ owned }).owned).toBeUndefined();
+    expect(validateDashboardListSearch({ owned }).owned).toBeUndefined();
   });
 
   it("rides only on the link that names it, never into another zone", () => {
-    expect(PORTAL_SEARCH_KEYS).not.toContain("owned");
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("owned");
   });
 });
 
 describe("the expanded widget", () => {
   it("keeps a widget id and drops an empty one", () => {
-    expect(validatePortalSearch({ widget: "commits_table" }).widget).toBe(
+    expect(validateDashboardSearch({ widget: "commits_table" }).widget).toBe(
       "commits_table",
     );
-    expect(validatePortalSearch({ widget: "" }).widget).toBeUndefined();
+    expect(validateDashboardSearch({ widget: "" }).widget).toBeUndefined();
   });
 
   it("stays on the dashboard it was opened on", () => {
-    expect(PORTAL_SEARCH_KEYS).not.toContain("widget");
+    expect(GLOBAL_SEARCH_KEYS).not.toContain("widget");
   });
 });

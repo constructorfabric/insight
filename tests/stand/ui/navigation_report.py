@@ -16,7 +16,7 @@ def is_dashboard_folder(href: str | None) -> bool:
         return False
     target = urlsplit(href)
     folders = parse_qs(target.query).get("folder", [])
-    return target.path.rstrip("/") == "/portal/custom" and any(
+    return target.path.rstrip("/") == "/dashboards" and any(
         folder != "unfiled" for folder in folders
     )
 

@@ -150,6 +150,14 @@ export function portalRouterMock(): Record<string, unknown> {
         () => portalRouter.search,
         () => portalRouter.search,
       ),
+    useParams: () =>
+      matchesFor(
+        useSyncExternalStore(
+          subscribe,
+          () => portalRouter.pathname,
+          () => portalRouter.pathname,
+        ),
+      )[0]?.params ?? {},
     useMatches: () =>
       matchesFor(
         useSyncExternalStore(

@@ -21,7 +21,7 @@ import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useIsAdmin } from "@/queries/identity-me";
 
-const DASHBOARD_ROUTES = new Set(["/dashboards/", "/dashboards/$name"]);
+const DASHBOARD_ROUTES = new Set(["/_shell/dashboards/", "/_shell/dashboards/$name"]);
 
 export function CustomNav() {
   const showPlanned = usePortalShowPlanned();
