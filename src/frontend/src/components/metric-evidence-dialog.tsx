@@ -188,7 +188,7 @@ export function MetricEvidenceDialog({
           left.label.localeCompare(right.label)
       )
       .map((column) =>
-        column.key === "value" && metricLabel
+        column.key === "value" && column.label === "Value" && metricLabel
           ? { ...column, label: metricLabel }
           : column
       );

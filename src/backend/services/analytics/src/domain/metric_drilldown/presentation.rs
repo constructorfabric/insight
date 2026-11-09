@@ -6,7 +6,9 @@ use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_definitions::definition::MetricInputRole;
-use crate::domain::metric_definitions::{EvidenceColumnType, EvidenceDetailColumn};
+use crate::domain::metric_definitions::{
+    ComputationSpec, EvidenceColumnType, EvidenceDetailColumn,
+};
 
 use super::cursor::encode_cursor;
 use super::dto::{
@@ -188,7 +190,7 @@ pub(super) fn presentation_columns(
             {
                 columns.push(MetricDrilldownColumn {
                     key: "value".to_owned(),
-                    label: "Value".to_owned(),
+                    label: value_label(plan),
                     r#type: MetricDrilldownColumnType::Number,
                     sortable: true,
                 });
@@ -369,6 +371,17 @@ fn presentation_dimensions(
                 .map_err(|_| config_error())
         })
         .collect()
+}
+
+fn value_label(plan: &EvidencePlan) -> String {
+    match plan.definition.spec {
+        ComputationSpec::Median { .. } => format!("{} (median)", plan.definition.base.label),
+        ComputationSpec::Sum { .. }
+        | ComputationSpec::Ratio { .. }
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
+        | ComputationSpec::DistinctCount { .. } => "Value".to_owned(),
+    }
 }
 
 fn records_that_day_label(metric_label: &str) -> String {
@@ -945,6 +958,29 @@ mod tests {
         assert!(
             keys.iter().any(|key| key == "category"),
             "a pinned dimension is shared by every part, so it stays: {keys:?}"
+        );
+    }
+
+    #[test]
+    fn a_median_names_itself_in_the_header_of_the_numbers_it_is_taken_over() {
+        let mut size = commit_input(MetricInputRole::Value, "commit_change_size");
+        size.presentation.show_value = true;
+        let mut median = plan(
+            ComputationSpec::Median {
+                value: input(MetricInputRole::Value, "commit_change_size"),
+            },
+            vec![size],
+        );
+        median.definition.base.label = "Commit size".to_owned();
+
+        let columns = presentation_columns(&median, &[], &[], &one_person());
+
+        assert_eq!(
+            columns
+                .iter()
+                .find(|column| column.key == "value")
+                .map(|column| column.label.as_str()),
+            Some("Commit size (median)")
         );
     }
 

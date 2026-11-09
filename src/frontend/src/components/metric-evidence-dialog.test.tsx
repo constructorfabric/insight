@@ -926,6 +926,42 @@ describe("MetricEvidenceDialog", () => {
     );
   });
 
+  it("keeps a value header that already says how the figure reads", () => {
+    mocks.query = readyQuery({
+      data: {
+        pages: [
+          {
+            selection: ordered,
+            columns: [
+              { key: "ref", label: "Ref", type: "string", sortable: true },
+              {
+                key: "value",
+                label: "Commit size (median)",
+                type: "number",
+                sortable: true,
+              },
+            ],
+            rows: [{ values: { ref: "abc", value: 128 } }],
+            next_cursor: null,
+          },
+        ],
+      },
+    });
+    render(
+      <MetricEvidenceDialog
+        state={state}
+        onMetricChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(
+      (mocks.tableProps?.columns as Array<{ key: string; label: string }>).find(
+        (column) => column.key === "value"
+      )?.label
+    ).toBe("Commit size (median)");
+  });
+
   describe("searching and ordering", () => {
     const threeRows = readyQuery({
       data: {
