@@ -888,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ratio_counting_distinct_days_keeps_the_daily_rollup() {
+    fn a_ratio_counting_distinct_days_lists_the_records_it_counts() {
         let columns = presentation_columns(
             &ratio_over(commit_input, RatioDenominatorAggregation::DistinctCount),
             &[],
@@ -901,7 +901,17 @@ mod tests {
                 .iter()
                 .map(|column| column.key.as_str())
                 .collect::<Vec<_>>(),
-            ["date", "numerator", "denominator"]
+            [
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "lines_added",
+                "lines_removed",
+                "date",
+                "numerator",
+                "denominator"
+            ]
         );
     }
 

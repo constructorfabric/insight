@@ -704,13 +704,45 @@ mod tests {
     }
 
     #[test]
+    fn a_distribution_drilldown_shows_the_number_each_record_contributes() {
+        let shows_value: HashMap<(&str, &str), bool> = builtin_sources()
+            .iter()
+            .flat_map(|builtin_source| {
+                builtin_source.measures.iter().map(|measure| {
+                    let presentation = measure.evidence_presentation.clone().unwrap_or_else(|| {
+                        EvidencePresentation::undeclared(measure.evidence_granularity)
+                    });
+                    (
+                        (builtin_source.source.key.as_str(), measure.key.as_str()),
+                        presentation.show_value,
+                    )
+                })
+            })
+            .collect();
+
+        for metric in builtin_metrics() {
+            let spreads_record_numbers = match metric.computation {
+                SeedComputation::Median
+                | SeedComputation::Percentile { .. }
+                | SeedComputation::Stddev => true,
+                SeedComputation::Sum
+                | SeedComputation::Ratio { .. }
+                | SeedComputation::DistinctCount => false,
+            };
+            for input in metric.inputs.iter().filter(|_| spreads_record_numbers) {
+                assert_eq!(
+                    shows_value.get(&(metric.source_key.as_str(), input.measure_key.as_str())),
+                    Some(&true),
+                    "{}: its drilldown hides the {} each record contributes",
+                    metric.metric_key,
+                    input.measure_key
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_git_and_task_metric_drills_down_to_its_source_records() {
-        const NOT_YET_LINKED: &[&str] = &[
-            "git.active_days",
-            "git.default_branch_active_days",
-            "git.commits_per_active_day",
-            "git.default_branch_commits_per_active_day",
-        ];
         let presentations: HashMap<(&str, &str), Option<&EvidencePresentation>> = builtin_sources()
             .iter()
             .flat_map(|builtin_source| {
@@ -734,14 +766,10 @@ mod tests {
                     .flatten()
                     .is_some_and(EvidencePresentation::names_a_record)
             });
-            let linked = every_input_is_a_record
-                && metric.computation.denominator_aggregation() == RatioDenominatorAggregation::Sum;
-            assert_eq!(
-                linked,
-                !NOT_YET_LINKED.contains(&metric.metric_key.as_str()),
-                "{}: its drilldown {} reach the records it counts",
-                metric.metric_key,
-                if linked { "does" } else { "does not" }
+            assert!(
+                every_input_is_a_record,
+                "{}: its drilldown does not reach the records it counts",
+                metric.metric_key
             );
         }
     }

@@ -1,5 +1,4 @@
 use crate::domain::metric_definitions::ComputationSpec;
-use crate::domain::metric_definitions::definition::RatioDenominatorAggregation;
 
 use super::dto::EvidencePlan;
 
@@ -13,27 +12,21 @@ pub(super) enum RowShape {
 
 impl RowShape {
     pub(super) fn of(plan: &EvidencePlan) -> Self {
-        let ComputationSpec::Ratio {
-            denominator_aggregation,
-            ..
-        } = &plan.definition.spec
-        else {
+        let ComputationSpec::Ratio { .. } = &plan.definition.spec else {
             return if record_parts(plan).is_some() {
                 Self::FoldedRecord
             } else {
                 Self::Record
             };
         };
-        let both_halves_are_records = plan
+        if plan
             .inputs
             .iter()
-            .all(|input| input.presentation.names_a_record());
-        // INVARIANT: a distinct-count denominator counts days, which no single record holds.
-        match denominator_aggregation {
-            RatioDenominatorAggregation::Sum if both_halves_are_records => Self::RecordRatio,
-            RatioDenominatorAggregation::Sum | RatioDenominatorAggregation::DistinctCount => {
-                Self::DailyRatio
-            }
+            .all(|input| input.presentation.names_a_record())
+        {
+            Self::RecordRatio
+        } else {
+            Self::DailyRatio
         }
     }
 }
@@ -47,13 +40,15 @@ pub(super) fn record_parts(plan: &EvidencePlan) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::metric_definitions::definition::MetricInputRole;
+    use crate::domain::metric_definitions::definition::{
+        MetricInputRole, RatioDenominatorAggregation,
+    };
     use crate::domain::metric_drilldown::test_support::{
         commit_input, input, plan, ratio_over, summary_input,
     };
 
     #[test]
-    fn a_ratio_lists_records_only_when_both_halves_are_records_that_sum() {
+    fn a_ratio_lists_records_whenever_both_halves_are_records() {
         for (inputs, aggregation, expected) in [
             (
                 commit_input as fn(MetricInputRole, &str) -> _,
@@ -63,11 +58,16 @@ mod tests {
             (
                 commit_input,
                 RatioDenominatorAggregation::DistinctCount,
-                RowShape::DailyRatio,
+                RowShape::RecordRatio,
             ),
             (
                 summary_input,
                 RatioDenominatorAggregation::Sum,
+                RowShape::DailyRatio,
+            ),
+            (
+                summary_input,
+                RatioDenominatorAggregation::DistinctCount,
                 RowShape::DailyRatio,
             ),
         ] {
