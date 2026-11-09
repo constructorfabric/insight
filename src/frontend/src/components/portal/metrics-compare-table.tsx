@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import {
   MetricHelpTooltip,
   MetricValue,
+  UnitNote,
 } from "@/components/portal/metrics-table";
 import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
@@ -74,7 +75,10 @@ export function MetricsCompareTable({
                     label={result.label}
                     help={helpByKey.get(key) ?? metricHelp(result)}
                   >
-                    <span className="cursor-help">{result.label}</span>
+                    <span className="cursor-help">
+                      {result.label}
+                      <UnitNote result={result} className="ms-1.5 text-xs" />
+                    </span>
                   </MetricHelpTooltip>
                 </th>
                 {people.map((person, index) => {

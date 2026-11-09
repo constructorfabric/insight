@@ -1,5 +1,6 @@
 import type { MetricDefinition } from "@/api/metric-definitions-client";
-import type { MetricDirection } from "@/api/metric-results-client";
+import type { MetricDirection, MetricFormat } from "@/api/metric-results-client";
+import { metricDisplayUnit } from "@/lib/format";
 import {
   personDisplayName,
   type PersonNaming,
@@ -204,4 +205,14 @@ export function formatGap(gap: number | null): string {
   if (gap == null) return "";
   if (gap === 0) return "≈";
   return `${gap > 0 ? "+" : "−"}${Math.abs(gap)}%`;
+}
+
+export function headerUnit(
+  label: string,
+  format: MetricFormat,
+  unit: string | null,
+): string | null {
+  const shown = metricDisplayUnit(format, unit);
+  if (!shown) return null;
+  return label.toLocaleLowerCase().includes(shown.toLocaleLowerCase()) ? null : shown;
 }

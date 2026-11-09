@@ -6,10 +6,11 @@ import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
-import { formatMetricValue } from "@/lib/format";
+import { formatMetricFigure, formatMetricValue } from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
   finiteValue,
+  headerUnit,
   type MetricGroup,
   type MetricsRow,
   type SortDirection,
@@ -104,7 +105,10 @@ export function MetricsTable({
                       onClick={() => onSort(key)}
                       className="flex w-full cursor-pointer items-end justify-end gap-1 text-end text-xs leading-tight font-semibold hover:text-primary"
                     >
-                      <span className="whitespace-normal">{label}</span>
+                      <span className="whitespace-normal">
+                        {label}
+                        <UnitNote result={result} className="block" />
+                      </span>
                       {direction === "descending" ? (
                         <ArrowDown className="size-3 shrink-0" aria-hidden />
                       ) : direction === "ascending" ? (
@@ -226,7 +230,8 @@ export function MetricValue({
     return <span className="text-muted-foreground">—</span>;
   }
 
-  const text = formatMetricValue(value, result.format, result.unit);
+  const text = formatMetricFigure(value, result.format, result.unit);
+  const fullText = formatMetricValue(value, result.format, result.unit);
   const selection = result.drilldown
     ? evidenceSelection(result.selection, entityId)
     : null;
@@ -235,7 +240,7 @@ export function MetricValue({
   return (
     <button
       type="button"
-      aria-label={`${personName} — ${result.label}: ${text}`}
+      aria-label={`${personName} — ${result.label}: ${fullText}`}
       onClick={() =>
         evidence.openEvidenceTargets([{ selection, label: result.label }], {
           activeMetricKey: selection.metric_key,
@@ -246,4 +251,16 @@ export function MetricValue({
       {text}
     </button>
   );
+}
+
+export function UnitNote({
+  result,
+  className,
+}: {
+  result: NormalizedMetricResult | undefined;
+  className: string;
+}) {
+  const unit = result ? headerUnit(result.label, result.format, result.unit) : null;
+  if (!unit) return null;
+  return <span className={cn("font-normal text-muted-foreground", className)}>{unit}</span>;
 }

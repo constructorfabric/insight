@@ -9,6 +9,7 @@ import {
   chunkKeys,
   compareGaps,
   formatGap,
+  headerUnit,
   keysWithData,
   metricGroups,
   metricsRows,
@@ -262,5 +263,17 @@ describe("formatGap", () => {
     [-47, "−47%"],
   ] as const)("writes a gap of %s as %j", (gap, text) => {
     expect(formatGap(gap)).toBe(text);
+  });
+});
+
+describe("headerUnit", () => {
+  it.each([
+    ["a count unit the title does not name", "PR size", "integer", "lines", "lines"],
+    ["a count unit the title already names", "Commits per PR", "decimal", "commits", null],
+    ["hours, which each cell writes as a duration", "Cycle time", "decimal", "h", null],
+    ["a percent, which each cell carries", "Merge rate", "percent", null, null],
+    ["no unit", "Commits", "integer", null, null],
+  ] as const)("header unit for %s", (_case, label, format, unit, shown) => {
+    expect(headerUnit(label, format, unit)).toBe(shown);
   });
 });

@@ -245,6 +245,42 @@ describe("MetricsView", () => {
     ).toEqual(["20", "6"]);
   });
 
+  it("writes a count unit once, in its header, and only the number in each cell", () => {
+    mocks.definitions.push(definition("git.pr_size", "PR size"));
+    mocks.data.byKey.set(
+      "git.pr_size",
+      result("git.pr_size", "PR size", [[pid("b"), 237]], { unit: "lines" }),
+    );
+    render(<MetricsView />);
+
+    const header = screen.getByRole("columnheader", { name: /PR size/ });
+    const rowOfB = screen
+      .getAllByRole("rowheader")
+      .find((cell) => cell.textContent === "b")!
+      .closest("tr")!;
+
+    expect(header).toHaveTextContent("PR sizelines");
+    expect(within(rowOfB).getAllByRole("cell").map((cell) => cell.textContent)).toContain("237");
+  });
+
+  it("keeps a duration's units in each cell", () => {
+    mocks.definitions.push(definition("git.cycle", "Cycle time"));
+    mocks.data.byKey.set(
+      "git.cycle",
+      result("git.cycle", "Cycle time", [[pid("b"), 2.25]], { unit: "h", format: "decimal" }),
+    );
+    render(<MetricsView />);
+
+    const rowOfB = screen
+      .getAllByRole("rowheader")
+      .find((cell) => cell.textContent === "b")!
+      .closest("tr")!;
+
+    expect(within(rowOfB).getAllByRole("cell").map((cell) => cell.textContent)).toContain(
+      "2 h 15 min",
+    );
+  });
+
   it("asks for every person-level metric, in family order", () => {
     render(<MetricsView />);
 
