@@ -236,7 +236,7 @@ describe("sectionMetricKeys — Overview section kinds", () => {
       title: "t",
       sections: [{ kind: "direction-cards", variant: "full" }],
     });
-    expect(keys).toContain("git.default_branch_commits");
+    expect(keys).toContain("git.default_branch_prs_merged");
     expect(keys).toContain("collab.messages_sent");
     expect(keys).toContain("wiki.pages_created");
   });
@@ -351,5 +351,46 @@ describe("visibleSections", () => {
     const gated = visibleSections(config, true, gate(["metric:ai.*"]));
 
     expect(gated.sections).toEqual(config.sections);
+  });
+});
+
+describe("commit counts lead nothing", () => {
+  const COMMITS = "git.default_branch_commits";
+
+  function leadMetric(section: SectionSpec): string | undefined {
+    switch (section.kind) {
+      case "headline":
+      case "trend":
+      case "concentration":
+        return section.metrics[0];
+      case "distribution":
+        return section.metric;
+      default:
+        return undefined;
+    }
+  }
+
+  const pages: Array<[string, readonly SectionSpec[]]> = [
+    ...Object.entries(OVERVIEW_ITEMS)
+      .filter(([item]) => item !== "contribution")
+      .map(([item, config]) => [`overview ${item}`, config.sections] as [string, readonly SectionSpec[]]),
+    ...Object.entries(DIRECTION_LENSES).flatMap(([dir, lenses]) =>
+      Object.entries(lenses).flatMap(([lens, entry]): Array<[string, readonly SectionSpec[]]> => {
+        if ("comingSoon" in entry || "entity" in entry) return [];
+        if (dir === "dev" && lens === IN_FLIGHT_LENS) return [];
+        const drilldown: Array<[string, readonly SectionSpec[]]> = entry.drilldown
+          ? [[`${dir} ${lens} drilldown`, entry.drilldown.sections]]
+          : [];
+        return [[`${dir} ${lens}`, entry.sections], ...drilldown];
+      }),
+    ),
+  ];
+
+  it("on any headline, trend, bus factor or distribution outside work in flight and the contribution breakdown", () => {
+    for (const [page, sections] of pages) {
+      for (const section of sections) {
+        expect(leadMetric(section), `${page} ${section.kind}`).not.toBe(COMMITS);
+      }
+    }
   });
 });

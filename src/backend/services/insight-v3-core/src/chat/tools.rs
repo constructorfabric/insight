@@ -105,6 +105,10 @@ fn metric_field_schema() -> Value {
                 "type": "boolean",
                 "description": "Read that division as a percentage.",
             },
+            "exact": {
+                "type": "boolean",
+                "description": "Show this field's numbers with every digit in the rows behind a widget. Left out, a fraction is rounded to two decimals.",
+            },
         },
     })
 }

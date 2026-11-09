@@ -14,9 +14,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Spinner,
+  ToggleGroup,
+  ToggleGroupItem,
 } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ChartEmpty } from "@/components/widgets/metric-views/chart-empty";
 import { MetricTimeseriesChart } from "@/components/widgets/metric-views/metric-timeseries-chart";
@@ -38,6 +39,7 @@ export function TimeseriesPresentationToggle({
 }) {
   return (
     <ToggleGroup
+      spacing={0}
       value={[presentation]}
       onValueChange={(values) => {
         const next = Array.isArray(values) ? values[0] : values;

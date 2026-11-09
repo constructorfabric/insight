@@ -1247,12 +1247,11 @@ describe("direction-cards / attention sections", () => {
   });
 
   it("compares a direction card's per-person figure, not the team total", () => {
-    // Same 40-commit total both periods; two people carried it before, four now.
     mocks.grid.byKey = new Map([
-      ["git.default_branch_commits", metric("git.default_branch_commits", IDS.map((id) => [id, 10] as [string, number]))],
+      ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", IDS.map((id) => [id, 10] as [string, number]))],
     ]);
     mocks.grid.previousByKey = new Map([
-      ["git.default_branch_commits", metric("git.default_branch_commits", [[pid("a"), 20], [pid("b"), 20], [pid("c"), 0], [pid("d"), 0]])],
+      ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", [[pid("a"), 20], [pid("b"), 20], [pid("c"), 0], [pid("d"), 0]])],
     ]);
     render(
       <DomainLensView

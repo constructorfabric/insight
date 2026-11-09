@@ -1,6 +1,6 @@
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";

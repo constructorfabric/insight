@@ -539,23 +539,24 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "headline",
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
+          "git.pr_size",
           "git.default_branch_lines_added",
+          "git.reviews_performed",
         ],
       },
       {
         kind: "stat-tiles",
         title: "Typical values (median)",
-        metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.default_branch_merge_rate"],
+        metrics: ["git.pr_cycle_time_h", "git.default_branch_merge_rate"],
       },
       {
         kind: "trend",
-        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
+        metrics: ["git.default_branch_prs_created", "git.default_branch_prs_merged"],
       },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
       },
       {
@@ -578,27 +579,27 @@ const DEV: Record<string, LensEntry> = {
         kind: "headline",
         labelSource: "short",
         metrics: [
-          "git.default_branch_commits",
-          "git.default_branch_prs_created",
           "git.default_branch_prs_merged",
+          "git.pr_size",
           "git.default_branch_code_lines",
+          "git.default_branch_commits",
         ],
       },
       {
         kind: "trend",
-        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
+        metrics: ["git.default_branch_prs_created", "git.default_branch_prs_merged"],
       },
       {
         kind: "distribution",
-        metric: "git.default_branch_commits",
-        title: "How many commits people made",
+        metric: "git.default_branch_prs_merged",
+        title: "How many PRs people merged",
         caption:
-          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
-        unitLabel: "commits per person",
+          "How many people fall in each merged-PR band — when the bars stretch far to the right, a few people account for most of it.",
+        unitLabel: "PRs merged per person",
       },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
       },
       {

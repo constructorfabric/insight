@@ -7,12 +7,13 @@ import type {
 } from "@/api/reports-client";
 import { MAX_REPORT_PEOPLE } from "@/api/reports-client";
 import { Card, CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
+  Spinner,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  ToggleGroup,
+  ToggleGroupItem,
 } from "@gears-frontx/ui-kit";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
@@ -200,6 +201,7 @@ export function ReportBuilderView() {
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Scope</span>
               <ToggleGroup
+                spacing={0}
                 value={[subject]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;
@@ -218,6 +220,7 @@ export function ReportBuilderView() {
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Granularity</span>
               <ToggleGroup
+                spacing={0}
                 value={[granularity]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;

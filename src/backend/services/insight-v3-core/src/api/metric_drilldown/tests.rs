@@ -195,8 +195,8 @@ async fn a_first_page_is_ordered_by_the_warehouse_typed_and_cut_one_short_of_wha
     assert_eq!(
         body["columns"],
         json!([
-            { "key": "day", "label": "day", "type": "string", "sortable": true, "percent": false },
-            { "key": "total", "label": "total", "type": "number", "sortable": true, "percent": false }
+            { "key": "day", "label": "day", "type": "string", "sortable": true, "percent": false, "exact": false },
+            { "key": "total", "label": "total", "type": "number", "sortable": true, "percent": false, "exact": false }
         ])
     );
     assert_eq!(
@@ -221,6 +221,23 @@ async fn a_first_page_is_ordered_by_the_warehouse_typed_and_cut_one_short_of_wha
         ),
         "{sql}"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_column_the_metric_marks_exact_says_so() -> R {
+    let (url, _) = upstream().await;
+    let harness = TestHarness::new(&url);
+    let mut metric = lines_per_day();
+    metric["fields"][1]["exact"] = json!(true);
+    harness.store("lines_per_day", metric).await;
+
+    let (status, body) = harness.page("lines_per_day", json!({ "limit": 2 })).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["columns"][0]["exact"], json!(false), "{body}");
+    assert_eq!(body["columns"][1]["exact"], json!(true), "{body}");
 
     Ok(())
 }

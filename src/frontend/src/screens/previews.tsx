@@ -8,17 +8,20 @@ import { useState } from "react";
 
 import type { Experiment } from "@/api/previews-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button, Input, Label } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
 import {
+  Alert,
+  AlertDescription,
+  Button,
+  Input,
+  Label,
+  Spinner,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import {
   useCreateExperiment,
   useDeleteExperiment,
