@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 from dataclasses import dataclass
@@ -218,8 +216,7 @@ def snapshot(root: Path, destination: Path, revision: str | None) -> None:
         return
 
     archive = subprocess.run(["git", "archive", revision, *map(str, INPUTS)], cwd=root, check=True, capture_output=True)
-    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as bundle:
-        bundle.extractall(destination, filter="data")
+    subprocess.run(["tar", "-xf", "-", "-C", str(destination)], input=archive.stdout, check=True)
 
 
 def parse_snapshot(directory: Path, dbt: str) -> Manifest:
