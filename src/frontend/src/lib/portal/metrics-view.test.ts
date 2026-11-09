@@ -94,7 +94,7 @@ describe("metricsViewCatalog", () => {
   it("leaves out a metric the instance hides", () => {
     const offered = metricsViewCatalog(
       [definition("git.commits"), definition("ai.cost")],
-      (key) => key !== "ai.cost",
+      (metric) => metric.metric_key !== "ai.cost",
     );
 
     expect(offered.map((m) => m.metric_key)).toEqual(["git.commits"]);

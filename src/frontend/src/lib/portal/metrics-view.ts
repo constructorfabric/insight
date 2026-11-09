@@ -36,14 +36,14 @@ function servesData(metric: MetricDefinition): boolean {
 
 export function metricsViewCatalog(
   definitions: readonly MetricDefinition[],
-  isVisible: (metricKey: string) => boolean,
+  isOffered: (metric: MetricDefinition) => boolean,
 ): MetricDefinition[] {
   const offered = definitions.filter(
     (metric) =>
       metric.entity_type === "person" &&
       metric.is_enabled &&
       servesData(metric) &&
-      isVisible(metric.metric_key),
+      isOffered(metric),
   );
 
   return byFamily(offered).flatMap((family) => family.metrics);

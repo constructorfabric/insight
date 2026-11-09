@@ -23,7 +23,7 @@ import {
 } from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { visibleGroups } from "@/lib/insight/groups";
+import { offeredMetricFilter } from "@/lib/insight/groups";
 import { flattenSubordinates } from "@/lib/insight/identity-tree";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
@@ -59,14 +59,11 @@ export function MetricsView() {
   const definitions = useMetricDefinitionsResponse();
   const showPlanned = usePortalShowPlanned();
 
-  const catalog = useMemo(() => {
-    const shown = new Set(
-      visibleGroups(showPlanned).flatMap((group) =>
-        group.collection.metrics.map((metric) => metric.key),
-      ),
-    );
-    return metricsViewCatalog(definitions.data?.metrics ?? [], (key) => shown.has(key));
-  }, [definitions.data, showPlanned]);
+  const catalog = useMemo(
+    () =>
+      metricsViewCatalog(definitions.data?.metrics ?? [], offeredMetricFilter(showPlanned)),
+    [definitions.data, showPlanned],
+  );
   const catalogKeys = useMemo(
     () => catalog.map((metric) => metric.metric_key),
     [catalog],

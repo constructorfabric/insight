@@ -1,3 +1,4 @@
+import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type {
   MetricCollectionConfig,
   MetricTimeseriesGroupLimitConfig,
@@ -716,4 +717,21 @@ export function visibleGroups(
     });
   }
   return kept;
+}
+
+export function offeredMetricFilter(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): (metric: Pick<MetricDefinition, "metric_key" | "entity_type" | "origin">) => boolean {
+  const shown = new Set(
+    visibleGroups(showPlanned, policy).flatMap((group) =>
+      group.collection.metrics.map((m) => m.key)
+    )
+  );
+
+  return (metric) => {
+    if (!metricVisible(metric.metric_key, showPlanned, policy)) return false;
+    if (metric.origin === "custom" || metric.entity_type !== "person") return true;
+    return shown.has(metric.metric_key);
+  };
 }

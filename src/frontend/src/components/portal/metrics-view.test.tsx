@@ -342,6 +342,16 @@ describe("MetricsView", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps a custom metric no person section shows", () => {
+    mocks.definitions.push(
+      definition("custom.velocity", "Velocity", { origin: "custom", last_observed_date: null }),
+    );
+
+    render(<MetricsView />);
+
+    expect(mocks.requestedKeys).toContain("custom.velocity");
+  });
+
   it("leaves out the metrics of a person section this install plans", () => {
     mocks.policy = parseNavPolicy({ planned: ["zone:person/section:collaboration"] });
 

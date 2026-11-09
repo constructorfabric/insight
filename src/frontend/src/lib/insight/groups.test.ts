@@ -5,6 +5,7 @@ import {
   KPI_ROW_COLLECTION,
   GROUPS,
   groupIdForMetricKey,
+  offeredMetricFilter,
   visibleGroups,
   type DrilldownBlock,
   type GroupId,
@@ -180,6 +181,65 @@ describe("visibleGroups", () => {
     );
 
     expect(groups).toEqual(GROUPS);
+  });
+});
+
+describe("offeredMetricFilter", () => {
+  const gate = (planned: string[], hide: string[] = []) => ({
+    hide: parseNavPaths(hide, "hide"),
+    planned: parseNavPaths(planned, "planned"),
+  });
+  const builtinPerson = (metric_key: string) => ({
+    metric_key,
+    entity_type: "person" as const,
+    origin: "builtin" as const,
+  });
+
+  it("offers a built-in person metric a shown section reads", () => {
+    const offered = offeredMetricFilter(false, gate([]));
+
+    expect(offered(builtinPerson("git.default_branch_prs_created"))).toBe(true);
+  });
+
+  it("withholds a built-in person metric no section reads", () => {
+    const offered = offeredMetricFilter(false, gate([]));
+
+    expect(offered(builtinPerson("git.prs_created"))).toBe(false);
+  });
+
+  it("withholds the metrics of a section the install marks planned", () => {
+    const planned = gate(["zone:person/section:collaboration"]);
+
+    expect(offeredMetricFilter(false, planned)(builtinPerson("collab.messages_sent"))).toBe(
+      false
+    );
+    expect(offeredMetricFilter(true, planned)(builtinPerson("collab.messages_sent"))).toBe(
+      true
+    );
+  });
+
+  it("offers a custom person metric no section reads", () => {
+    const offered = offeredMetricFilter(false, gate([]));
+
+    expect(
+      offered({ metric_key: "custom.velocity", entity_type: "person", origin: "custom" })
+    ).toBe(true);
+  });
+
+  it("withholds a custom metric the install hides", () => {
+    const offered = offeredMetricFilter(false, gate([], ["metric:custom.velocity"]));
+
+    expect(
+      offered({ metric_key: "custom.velocity", entity_type: "person", origin: "custom" })
+    ).toBe(false);
+  });
+
+  it("offers a tenant metric the install does not gate", () => {
+    const offered = offeredMetricFilter(false, gate([]));
+
+    expect(offered({ metric_key: "ci.runs", entity_type: "tenant", origin: "builtin" })).toBe(
+      true
+    );
   });
 });
 
