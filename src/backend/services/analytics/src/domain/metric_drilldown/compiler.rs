@@ -224,7 +224,8 @@ fn parts_expr(dimension: &str) -> String {
 fn record_key_expr() -> String {
     format!(
         "concat(evidence.record_kind, ':', evidence.details['source_id'], ':', \
-                evidence.details['repository'], ':', evidence.details[{reference}])",
+                arrayFirst(dimension -> dimension.1 = 'repository', evidence.dimensions).2, ':', \
+                evidence.details[{reference}])",
         reference = sql_string_literal(RECORD_REF_KEY),
     )
 }
@@ -1416,6 +1417,28 @@ mod tests {
 
         assert!(sql.contains("' · p75'"), "the p75 record is marked: {sql}");
         assert!(!sql.contains("' · median'"));
+    }
+
+    #[test]
+    fn a_record_is_keyed_by_its_repository_value_not_its_label() {
+        let key = "concat(evidence.record_kind, ':', evidence.details['source_id'], ':', \
+                   arrayFirst(dimension -> dimension.1 = 'repository', evidence.dimensions).2, ':', \
+                   evidence.details['ref'])";
+        for plan in [
+            folded_plan(MetricDrilldownEntity::Person {
+                id: TEST_PERSON.to_string(),
+            }),
+            record_ratio_plan(RatioDenominatorAggregation::Sum),
+        ] {
+            let (sql, _) =
+                compile_query(&plan).unwrap_or_else(|error| panic!("query must compile: {error}"));
+            assert!(
+                sql.split_whitespace()
+                    .collect::<String>()
+                    .contains(&key.split_whitespace().collect::<String>()),
+                "two repositories sharing a label stay two records: {sql}"
+            );
+        }
     }
 
     #[test]

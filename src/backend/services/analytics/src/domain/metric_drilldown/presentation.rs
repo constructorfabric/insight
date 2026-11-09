@@ -127,7 +127,11 @@ pub(super) fn presentation_columns(
     // Both sources of dimension columns drop together for a ratio: the outer
     // aggregate carries no cell the query can order or search, so a column
     // rendered from it would answer neither.
-    let display_dimensions: &[String] = if ratio { &[] } else { display_dimensions };
+    let display_dimensions: &[String] = if ratio || shape == RowShape::FoldedRecord {
+        &[]
+    } else {
+        display_dimensions
+    };
     let filters: &[MetricDrilldownFilter] = if ratio { &[] } else { filters };
 
     let mut columns = Vec::new();
@@ -914,6 +918,43 @@ mod tests {
         assert!(columns.iter().all(|column| column.sortable));
         assert_eq!(rows[0].values["ref"], "abc123");
         assert_eq!(rows[0].values["numerator"], 1.0);
+    }
+
+    #[test]
+    fn a_folded_record_shows_no_dimension_its_parts_may_split() {
+        let mut lines = commit_input(MetricInputRole::Value, "code_lines_added");
+        lines.presentation.record_parts = Some("file_extension".to_owned());
+        let folded = plan(
+            ComputationSpec::Sum {
+                value: input(MetricInputRole::Value, "code_lines_added"),
+            },
+            vec![lines],
+        );
+        let filters = [MetricDrilldownFilter {
+            dimension: "category".to_owned(),
+            values: vec!["code".to_owned()],
+        }];
+
+        let keys: Vec<String> = presentation_columns(
+            &folded,
+            &filters,
+            &["file_extension".to_owned(), "change_type".to_owned()],
+            &one_person(),
+        )
+        .into_iter()
+        .map(|column| column.key)
+        .collect();
+
+        assert!(
+            !keys
+                .iter()
+                .any(|key| key == "file_extension" || key == "change_type"),
+            "a dimension one part of a record holds is blank on the folded row: {keys:?}"
+        );
+        assert!(
+            keys.iter().any(|key| key == "category"),
+            "a pinned dimension is shared by every part, so it stays: {keys:?}"
+        );
     }
 
     #[test]
