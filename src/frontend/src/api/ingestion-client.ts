@@ -3,7 +3,7 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 import { lookbackFrom } from "@/lib/ingestion-chart";
 
 const BASE =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
+  (import.meta.env.VITE_CONNECTORS_BASE as string | undefined) ?? "/api/connectors/v1";
 
 /** Bucket widths the server will answer. The set is closed there too. */
 export type IngestionGrain = "15m" | "1s";

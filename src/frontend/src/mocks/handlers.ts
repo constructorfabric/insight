@@ -919,7 +919,7 @@ const BRONZE_SLUG = /^bronze_[a-z0-9_]{1,120}$/;
 
 function ingestionHandlers() {
   return [
-    http.get("/api/analytics/v1/ingestion/intensity", ({ request }) => {
+    http.get("/api/connectors/v1/ingestion/intensity", ({ request }) => {
       const params = new URL(request.url).searchParams;
       const grain = params.get("grain") ?? "15m";
       const series = params.get("series");
@@ -1128,7 +1128,7 @@ function connectorHealthHandlers() {
   });
 
   return [
-    http.get("/api/analytics/v1/connector-health", () => {
+    http.get("/api/connectors/v1/connector-health", () => {
       const now = new Date();
       return HttpResponse.json({
         as_of: now.toISOString(),
@@ -1165,7 +1165,7 @@ function connectorHealthHandlers() {
         ],
       });
     }),
-    http.get("/api/analytics/v1/connector-health/:connector/syncs", ({ params }) => {
+    http.get("/api/connectors/v1/connector-health/:connector/syncs", ({ params }) => {
       const connector = String(params.connector);
       return HttpResponse.json({
         connector,

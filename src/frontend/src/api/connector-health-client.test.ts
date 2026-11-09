@@ -36,7 +36,7 @@ describe("getConnectorHealth", () => {
     mockFetch.mockResolvedValueOnce(response(summary));
 
     await expect(getConnectorHealth()).resolves.toEqual(summary);
-    expect(mockFetch).toHaveBeenCalledWith("/api/analytics/v1/connector-health");
+    expect(mockFetch).toHaveBeenCalledWith("/api/connectors/v1/connector-health");
   });
 
   it("surfaces a refusal as an API error rather than an empty page", async () => {
@@ -55,7 +55,7 @@ describe("getConnectorSyncs", () => {
 
     await expect(getConnectorSyncs({ connector: "example-tracker" })).resolves.toEqual(history);
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/analytics/v1/connector-health/example-tracker/syncs",
+      "/api/connectors/v1/connector-health/example-tracker/syncs",
     );
   });
 
@@ -67,7 +67,7 @@ describe("getConnectorSyncs", () => {
     await getConnectorSyncs({ connector: "a/b?c" });
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/analytics/v1/connector-health/a%2Fb%3Fc/syncs",
+      "/api/connectors/v1/connector-health/a%2Fb%3Fc/syncs",
     );
   });
 
@@ -83,7 +83,7 @@ describe("getConnectorSyncs", () => {
     });
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/analytics/v1/connector-health/claude-team/syncs" +
+      "/api/connectors/v1/connector-health/claude-team/syncs" +
         "?tenant_id=acme&source_id=claude-team-second",
     );
   });
@@ -99,7 +99,7 @@ describe("getConnectorSyncs", () => {
     await getConnectorSyncs({ connector: "claude-team", source_id: "main" });
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/analytics/v1/connector-health/claude-team/syncs",
+      "/api/connectors/v1/connector-health/claude-team/syncs",
     );
   });
 
