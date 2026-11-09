@@ -18,6 +18,9 @@ on:
       - "docs/components/backend/*/openapi.json"
       - "src/frontend/**"
       - "src/ingestion/connectors/**"
+      - "src/ingestion/dbt/**"
+      - "src/ingestion/silver/**"
+      - "src/ingestion/gold/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
       # The rust matrix boots live_ch entries' ClickHouse through this script.
@@ -42,6 +45,9 @@ on:
       - "docs/components/backend/*/openapi.json"
       - "src/frontend/**"
       - "src/ingestion/connectors/**"
+      - "src/ingestion/dbt/**"
+      - "src/ingestion/silver/**"
+      - "src/ingestion/gold/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
       - ".github/workflows/scripts/start-clickhouse.sh"
@@ -142,6 +148,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.98.1"
@@ -150,6 +157,20 @@ jobs:
           python-version: "3.12"
       - name: Install PyYAML and pytest
         run: python3 -m pip install --quiet pyyaml pytest
+
+      - name: Install pinned dbt for transform version checks
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+        run: |
+          set -euo pipefail
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          python3 -m pip install --quiet "dbt-core==${DBT_CORE_VERSION:?}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION:?}"
+
+      - name: Changed dbt definitions raise their transform version
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci/transform_versions.py --compare-ref "${BASE_REF:?}" --head-ref "${HEAD_REF:?}" --dbt dbt
 
       # The jsonwebtoken crypto-provider invariant: >1 backend active makes
       # verify() panic on every call (#1725, #1727). cargo tree only reads the

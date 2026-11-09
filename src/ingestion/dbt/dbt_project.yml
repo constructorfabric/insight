@@ -128,6 +128,8 @@ vars:
 
 models:
   ingestion:
+    +meta:
+      transform_version: 1
     # The engine of a model that configures none. It cannot live in the profile
     # (dbt-clickhouse resolves `engine` from the model config alone, dropping a
     # profile-level key) nor read `insight_engine` (dbt renders this file before
