@@ -156,6 +156,13 @@ fn record_url(
                 base,
                 repository?.iter().copied().chain(["pull", record_ref]),
             ),
+            "ci_run" => append_segments(
+                base,
+                repository?
+                    .iter()
+                    .copied()
+                    .chain(["actions", "runs", record_ref]),
+            ),
             "issue" => issue_url(base, &["issues"], record_ref),
             _ => None,
         },
@@ -173,6 +180,13 @@ fn record_url(
                     .iter()
                     .copied()
                     .chain(["-", "merge_requests", record_ref]),
+            ),
+            "ci_run" => append_segments(
+                base,
+                repository?
+                    .iter()
+                    .copied()
+                    .chain(["-", "pipelines", record_ref]),
             ),
             "issue" => issue_url(base, &["-", "issues"], record_ref),
             _ => None,
@@ -397,6 +411,54 @@ mod tests {
         ] {
             let links =
                 registry.evidence_links(provider, source_id, kind, repository, Some(reference));
+
+            assert_eq!(
+                links.record.as_deref(),
+                Some(expected),
+                "should resolve: {provider}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_ci_runs_to_the_provider_run_page() -> anyhow::Result<()> {
+        let registry = ExternalSourceRegistry::new(&[
+            ExternalSourceConfig {
+                id: "github-source".to_owned(),
+                provider: ExternalSourceProvider::Github,
+                web_base_url: "https://github.example.test".to_owned(),
+            },
+            ExternalSourceConfig {
+                id: "gitlab-source".to_owned(),
+                provider: ExternalSourceProvider::Gitlab,
+                web_base_url: "https://gitlab.example.test".to_owned(),
+            },
+        ])?;
+
+        for (provider, source_id, repository, run_id, expected) in [
+            (
+                "github",
+                "github-source",
+                "group/repository",
+                "9000000001",
+                "https://github.example.test/group/repository/actions/runs/9000000001",
+            ),
+            (
+                "gitlab",
+                "gitlab-source",
+                "group/subgroup/repository",
+                "7001",
+                "https://gitlab.example.test/group/subgroup/repository/-/pipelines/7001",
+            ),
+        ] {
+            let links = registry.evidence_links(
+                provider,
+                source_id,
+                "ci_run",
+                Some(repository),
+                Some(run_id),
+            );
 
             assert_eq!(
                 links.record.as_deref(),

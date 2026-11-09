@@ -54,6 +54,24 @@ def test_dedups_gates_and_counts_merge_queue_and_retried_runs_in_the_gate(spec: 
     )
 
 
+def test_drilldown_lists_one_row_per_gate_run_named_by_its_run_id(spec: SpecRun) -> None:
+    r = spec.call(
+        {
+            "url": "/v1/metric-drilldown",
+            "method": "POST",
+            "body": {
+                "metric_key": "ci.gate_pass_rate",
+                "entity": {"type": "tenant"},
+                "period": {"from": "2026-03-01", "to": "2026-03-07"},
+            },
+        }
+    )
+    assert r.status == 200, r.payload
+
+    refs = sorted((str(row["values"].get("ref")) for row in r.payload["rows"]), key=int)
+    assert refs == ["1", "2", "3", "4", "5", "10", "11", "12"], f"drilldown refs: {refs}"
+
+
 def test_gate_pass_rate_empty_window_is_null_not_zero(spec: SpecRun) -> None:
     """A window with no runs serves an honest null, not a zero."""
     r = spec.call(
