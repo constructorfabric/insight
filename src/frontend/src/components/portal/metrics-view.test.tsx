@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   definitions: [] as MetricDefinition[],
   requestedKeys: [] as readonly string[],
   requestedIds: [] as readonly string[],
+  definitionsError: false,
+  refetchDefinitions: vi.fn(),
   data: {
     byKey: new Map<string, NormalizedMetricResult>(),
     isPending: false,
@@ -54,7 +56,8 @@ vi.mock("@/queries/metric-definitions", () => ({
   useMetricDefinitionsResponse: () => ({
     data: { metrics: mocks.definitions },
     isPending: false,
-    isError: false,
+    isError: mocks.definitionsError,
+    refetch: mocks.refetchDefinitions,
   }),
 }));
 vi.mock("@/queries/metrics-view", () => ({
@@ -141,6 +144,8 @@ beforeEach(() => {
   ]);
   mocks.personId = pid("boss");
   mocks.layout = "wide";
+  mocks.definitionsError = false;
+  mocks.refetchDefinitions.mockReset();
   mocks.roster = peopleFromIdentityTree(tree);
   mocks.definitions = [
     definition("collab.messages", "Messages"),
@@ -296,6 +301,15 @@ describe("MetricsView", () => {
     await compare(user, ["a", "b"]);
 
     expect(screen.getByRole("columnheader", { name: /^b/ })).toHaveTextContent("Software Engineer");
+  });
+
+  it("asks for the metric catalog again when Retry is pressed after it failed", async () => {
+    mocks.definitionsError = true;
+    render(<MetricsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(mocks.refetchDefinitions).toHaveBeenCalled();
   });
 
   it("asks for every person-level metric, in family order", () => {

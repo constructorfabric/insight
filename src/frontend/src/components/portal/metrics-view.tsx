@@ -140,6 +140,7 @@ export function MetricsView() {
     emptyLabel: "No people in the current scope.",
     onRetry: () => {
       orgScope.refetch();
+      void definitions.refetch();
       data.refetch();
     },
   });
