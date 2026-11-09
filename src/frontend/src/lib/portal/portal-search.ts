@@ -164,11 +164,12 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
     // email) resolves to nothing and the scope falls back to the viewer.
     scope: str(raw.scope)?.toLowerCase(),
-    // Omit rather than serialise `false`: a default has no business in a URL
+    // `undefined` rather than `false`: a default has no business in a URL
     // people read and share.
-    ...(raw.direct === true || raw.direct === "true" || raw.direct === 1
-      ? { direct: true as const }
-      : {}),
+    direct:
+      raw.direct === true || raw.direct === "true" || raw.direct === 1
+        ? true
+        : undefined,
     slice: str(raw.slice),
     // The same check the run endpoint makes, so a hand-edited token
     // degrades to the board's default.
@@ -180,7 +181,10 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     metrics: list(raw.metrics, METRIC_KEY),
     compare: list(str(raw.compare)?.toLowerCase(), PERSON_ID),
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
-    ...(custom ? { from, to } : {}),
+    // INVARIANT: every key is present, `undefined` when dropped — the router
+    // spreads this over the root route's raw query, so an omitted key leaks.
+    from: custom ? from : undefined,
+    to: custom ? to : undefined,
   };
 }
 
