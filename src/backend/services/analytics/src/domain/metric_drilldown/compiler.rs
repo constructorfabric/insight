@@ -20,6 +20,8 @@ use super::sort::{
     dimension_text, empty_flag,
 };
 
+const NAMED_RECORD_PARTS: usize = 3;
+
 const RATIO_TIEBREAKERS: &[&str] = &[
     "role",
     "metric_date",
@@ -186,9 +188,14 @@ fn parts_expr(dimension: &str) -> String {
         "arrayFilter(part -> part.2 != 0, arrayZip(tupleElement({totals}, 1), tupleElement({totals}, 2)))"
     );
     let largest_first = format!("arrayReverseSort(part -> part.2, {nonzero})");
+    let rest = format!("arraySlice({largest_first}, {first_unnamed})", first_unnamed = NAMED_RECORD_PARTS + 1);
     format!(
-        "arrayStringConcat(arrayMap(part -> concat(part.1, ' ', toString(round(part.2, 2))), \
-                                    {largest_first}), ' · ')"
+        "arrayStringConcat(arrayConcat(\
+             arrayMap(part -> concat(part.1, ' ', toString(round(part.2, 2))), \
+                      arraySlice({largest_first}, 1, {NAMED_RECORD_PARTS})), \
+             if(empty({rest}), [], \
+                [concat('+', toString(length({rest})), ' more ', \
+                        toString(round(arraySum(part -> part.2, {rest}), 2)))])), ' · ')"
     )
 }
 
@@ -1287,6 +1294,23 @@ mod tests {
                 "repository",
                 "org/repo",
             ]
+        );
+    }
+
+    #[test]
+    fn a_record_split_into_many_parts_names_the_largest_three_and_totals_the_rest() {
+        let (sql, _) = compile_query(&folded_plan(MetricDrilldownEntity::Person {
+            id: TEST_PERSON.to_string(),
+        }))
+        .unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(
+            sql.contains(", 1, 3)"),
+            "only the three largest parts are named: {sql}"
+        );
+        assert!(
+            sql.contains("concat('+', toString(length(") && sql.contains("' more '"),
+            "the parts beyond them collapse into one remainder: {sql}"
         );
     }
 

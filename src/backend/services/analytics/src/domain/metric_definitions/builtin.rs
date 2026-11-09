@@ -704,6 +704,42 @@ mod tests {
     }
 
     #[test]
+    fn a_distribution_drilldown_shows_the_number_each_record_contributes() {
+        let shows_value: HashMap<(&str, &str), bool> = builtin_sources()
+            .iter()
+            .flat_map(|builtin_source| {
+                builtin_source.measures.iter().map(|measure| {
+                    let presentation = measure.evidence_presentation.clone().unwrap_or_else(|| {
+                        EvidencePresentation::undeclared(measure.evidence_granularity)
+                    });
+                    (
+                        (builtin_source.source.key.as_str(), measure.key.as_str()),
+                        presentation.show_value,
+                    )
+                })
+            })
+            .collect();
+
+        for metric in builtin_metrics() {
+            let spreads_record_numbers = match metric.computation {
+                SeedComputation::Median | SeedComputation::Percentile { .. } | SeedComputation::Stddev => true,
+                SeedComputation::Sum | SeedComputation::Ratio { .. } | SeedComputation::DistinctCount => {
+                    false
+                }
+            };
+            for input in metric.inputs.iter().filter(|_| spreads_record_numbers) {
+                assert_eq!(
+                    shows_value.get(&(metric.source_key.as_str(), input.measure_key.as_str())),
+                    Some(&true),
+                    "{}: its drilldown hides the {} each record contributes",
+                    metric.metric_key,
+                    input.measure_key
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_git_and_task_metric_drills_down_to_its_source_records() {
         const NOT_YET_LINKED: &[&str] = &[
             "git.active_days",

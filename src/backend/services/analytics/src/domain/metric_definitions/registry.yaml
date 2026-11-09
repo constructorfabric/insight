@@ -63,7 +63,16 @@ sources:
         alias_collapse: max
       - key: commit_change_size
         evidence_granularity: event
-        evidence_presentation: *commit_row
+        evidence_presentation:
+          show_value: true
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
+            - { key: lines_added, label: Lines added, type: number }
+            - { key: lines_removed, label: Lines removed, type: number }
       - key: code_lines_added
         evidence_granularity: event
         evidence_presentation: &commit_lines_row
