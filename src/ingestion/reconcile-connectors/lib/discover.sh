@@ -34,7 +34,7 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # cdk_image goes through RECONCILE_IMAGE_MIRRORS (JSON {"<registry>": "<mirror>"},
 # chart value ingestion.reconcile.imageMirrors) before it is emitted, so an
 # install that may only pull from its own registry registers the mirrored
-# reference in Airbyte. Airbyte's own JOB_KUBE_CONNECTOR_IMAGE_REGISTRY leaves
+# reference in Airbyte (python/mirror_image_ref.py). Airbyte's own JOB_KUBE_CONNECTOR_IMAGE_REGISTRY leaves
 # a reference that already names a registry untouched, so it cannot do this.
 # This is the single bash-side reader of descriptor.yaml — every other lib /
 # python helper consumes values via this TSV rather than re-reading the file.
@@ -46,16 +46,11 @@ disc_load_descriptors() {
   while IFS= read -r -d '' desc; do
     local connector_dir
     connector_dir="$(dirname "${desc}")"
-    python3 - "${desc}" "${connector_dir}" <<'PY'
-import json, os, sys, yaml
+    python3 - "${desc}" "${connector_dir}" "${_DISC_LIB_DIR}/../python" <<'PY'
+import sys, yaml
 path, connector_dir = sys.argv[1], sys.argv[2]
-
-def mirror(ref, mirrors):
-    """`ghcr.io/org/img:tag` -> `<mirror>/org/img:tag` when ghcr.io is mapped."""
-    registry, sep, rest = ref.partition("/")
-    target = mirrors.get(registry)
-    return f"{target.rstrip('/')}/{rest}" if sep and target else ref
-
+sys.path.insert(0, sys.argv[3])
+from mirror_image_ref import mirror, mirrors_from_env
 try:
     with open(path) as f:
         d = yaml.safe_load(f) or {}
@@ -69,7 +64,7 @@ ctype = d.get("type", "nocode")
 images = d.get("images") or {}
 cdk_entry = images.get("cdk") or {}
 cdk_image = (cdk_entry.get("image") or "") if isinstance(cdk_entry, dict) else ""
-cdk_image = mirror(cdk_image, json.loads(os.environ.get("RECONCILE_IMAGE_MIRRORS") or "{}"))
+cdk_image = mirror(cdk_image, mirrors_from_env())
 dbt_select = d.get("dbt_select", "") or ""
 # The connector's ClickHouse namespace, read here because the file is already
 # open. No `bronze_<slug>` fallback: a hyphenated slug would name a database
