@@ -18,7 +18,7 @@ const people = vi.hoisted(() => {
 });
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
-  usePersonList: () => ({
+  usePersonList: vi.fn(() => ({
     data: {
       pages: [
         {
@@ -34,7 +34,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
     isError: false,
     hasNextPage: false,
     fetchNextPage: vi.fn(),
-  }),
+  })),
 }));
 const admin = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("@/queries/identity-me", async (importOriginal) => ({
@@ -59,6 +59,7 @@ import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { toast } from "@gears-frontx/ui-kit";
 import { foldersQuery } from "@/queries/custom";
+import { usePersonList } from "@/queries/identity-resolution";
 
 import { CreateFolderDialog } from "./create-folder-dialog";
 import { toastsOf } from "@/test/toast";
@@ -183,6 +184,21 @@ describe("<CreateFolderDialog>", () => {
       CAROL,
       "viewer"
     );
+  });
+
+  it("searches the tenant roster, not the identity journal, for people to share with", async () => {
+    const { user } = renderDialog();
+
+    await user.click(
+      screen.getByRole("radio", { name: /^Shared with people/ })
+    );
+
+    expect(vi.mocked(usePersonList).mock.calls.map((call) => call[2])).toEqual(
+      expect.arrayContaining(["roster"])
+    );
+    expect(
+      vi.mocked(usePersonList).mock.calls.map((call) => call[2])
+    ).not.toContain("identities");
   });
 
   it("says why a name was refused, keeping the dialog and the name", async () => {

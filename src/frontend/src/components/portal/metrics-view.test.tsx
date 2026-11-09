@@ -219,6 +219,22 @@ describe("MetricsView", () => {
     expect(rowHeaders()).toEqual(["boss", "a", "b"]);
   });
 
+  it("counts the people in view above the table, and nothing else", () => {
+    render(<MetricsView />);
+
+    expect(screen.getByText(/^\d+ people$/)).toBeInTheDocument();
+    expect(screen.queryByText(/metrics with data/)).toBeNull();
+  });
+
+  it("counts only the people compared above a comparison", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await compare(user, ["a", "b"]);
+
+    expect(screen.getByText("Comparing 2 people")).toBeInTheDocument();
+  });
+
   it("shows a manager's reports once expanded", async () => {
     render(<MetricsView />);
 

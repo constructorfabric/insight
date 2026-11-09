@@ -2212,7 +2212,7 @@ metrics:
     label: Files shared, internal
     short_label: Files (int)
     description: Files shared inside the organization
-    explanation: Files a person shared with people inside the organization, counted once per file per day.
+    explanation: Files a person shared with people inside the organization, counted once per file per day and summed over the period, so a file shared on several days counts once for each of those days. A share with a group counts as inside even when the group has outside members.
     unit: files
     format: integer
     direction: neutral
@@ -2230,7 +2230,7 @@ metrics:
     label: Files shared, external
     short_label: Files (ext)
     description: Files shared outside the organization
-    explanation: Files a person shared with people outside the organization, counted once per file per day.
+    explanation: Files a person shared with people outside the organization, counted once per file per day and summed over the period, so a file shared on several days counts once for each of those days.
     unit: files
     format: integer
     direction: neutral
@@ -2248,7 +2248,7 @@ metrics:
     label: Files shared
     short_label: Files shared
     description: Files shared with any recipient
-    explanation: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
+    explanation: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope and summed over the period, so a file shared on several days counts once for each of those days. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
     unit: files
     format: integer
     direction: neutral

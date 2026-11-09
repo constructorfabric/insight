@@ -23,7 +23,7 @@ const people = vi.hoisted(() => {
 });
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
-  usePersonList: () => ({
+  usePersonList: vi.fn(() => ({
     data: {
       pages: [
         {
@@ -39,7 +39,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
     isError: false,
     hasNextPage: false,
     fetchNextPage: vi.fn(),
-  }),
+  })),
 }));
 vi.mock("@/queries/person-name", () => ({
   usePersonName: (personId: string | null) => ({
@@ -65,6 +65,7 @@ import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError, type GrantTarget } from "@/api/custom-client";
 import { toast } from "@gears-frontx/ui-kit";
+import { usePersonList } from "@/queries/identity-resolution";
 
 import { ShareDialog } from "./share-dialog";
 import { toastsOf } from "@/test/toast";
@@ -188,6 +189,19 @@ describe.each(TARGETS)("<ShareDialog> for %s", (_label, target) => {
     await user.click(screen.getByRole("button", { name: "Bob Park" }));
 
     expect(customClient.putGrant).toHaveBeenCalledWith(target, BOB, "editor");
+  });
+
+  it("searches the tenant roster, not the identity journal, for someone to share with", async () => {
+    vi.mocked(customClient.fetchGrants).mockResolvedValue([]);
+    renderDialog(target);
+    await within(sharedWith()).findByText("No one");
+
+    expect(vi.mocked(usePersonList).mock.calls.map((call) => call[2])).toEqual(
+      expect.arrayContaining(["roster"])
+    );
+    expect(
+      vi.mocked(usePersonList).mock.calls.map((call) => call[2])
+    ).not.toContain("identities");
   });
 
   it("shares with everyone at the chosen level, once", async () => {

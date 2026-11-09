@@ -164,6 +164,7 @@ export function ShareDialog({
         </div>
         <PersonPicker
           excludeIds={excluded}
+          source="roster"
           onPick={(person) => grant(person.person_id, level)}
         />
 

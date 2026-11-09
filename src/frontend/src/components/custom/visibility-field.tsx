@@ -119,6 +119,7 @@ function NamedPeople({
       ) : null}
       <PersonPicker
         excludeIds={people.map((person) => person.person_id)}
+        source="roster"
         onPick={onAdd}
       />
     </div>

@@ -530,7 +530,7 @@ export function MetricEvidenceTable({
                     // INVARIANT: selecting text here must not reach the row's
                     // expand toggle.
                     onClick={(event) => event.stopPropagation()}
-                    className="cursor-auto border-t bg-muted/40 px-3 py-3"
+                    className="h-auto cursor-auto border-t bg-muted/40 px-3 py-3"
                     // The record entire, under the row it belongs to: a track
                     // of its own across every column.
                     style={{ gridColumn: "1 / -1" }}

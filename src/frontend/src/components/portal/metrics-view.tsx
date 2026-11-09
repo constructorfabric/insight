@@ -317,8 +317,8 @@ function MetricsBody({
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-muted-foreground">
           {comparing
-            ? `Comparing ${inView.length} people · ${columns.length} metrics with data`
-            : `${inView.length} people · ${columns.length} metrics with data`}
+            ? `Comparing ${inView.length} people`
+            : `${inView.length} people`}
         </p>
         {allManagers.length > 0 && !sort && !comparing ? (
           <Button
