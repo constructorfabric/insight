@@ -24,7 +24,6 @@ DAY = "2026-02-03"
 
 WORKLOGS_TABLE = "silver.class_task_worklogs"
 USERS_TABLE = "silver.class_task_users"
-HISTORY_TABLE = "silver.class_task_field_history"
 
 
 def user(account: str, email: str | None) -> dict[str, Any]:
@@ -62,8 +61,10 @@ def worklog(worklog_id: str, author: str, seconds: int) -> dict[str, Any]:
 def logged_hours(warehouse: Warehouse) -> dict[str, float]:
     warehouse.build("+jira__task_worklogs")
     warehouse.build("class_task_worklogs")
-    for table in (WORKLOGS_TABLE, USERS_TABLE, HISTORY_TABLE):
-        warehouse.execute(f"DELETE FROM {table} WHERE insight_source_id = {{src:String}}", {"src": SOURCE})
+    scope = {"src": SOURCE}
+    warehouse.execute("DELETE FROM silver.class_task_worklogs WHERE insight_source_id = {src:String}", scope)
+    warehouse.execute("DELETE FROM silver.class_task_users WHERE insight_source_id = {src:String}", scope)
+    warehouse.execute("DELETE FROM silver.class_task_field_history WHERE insight_source_id = {src:String}", scope)
     warehouse.insert(USERS_TABLE, [user("first-acct", SHARED_EMAIL), user("second-acct", SHARED_EMAIL)])
     warehouse.insert(WORKLOGS_TABLE, [worklog("1", "first-acct", 3 * 3600), worklog("2", "second-acct", 3600)])
 
