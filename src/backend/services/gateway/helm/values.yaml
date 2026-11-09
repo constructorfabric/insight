@@ -4,6 +4,8 @@ global:
   mcp:
     enabled: false
     publicUrl: ""
+  connectors:
+    enabled: true
   previews:
     enabled: true
 
@@ -78,6 +80,11 @@ gateway:
       timeoutMs: 40000
       mcpOnly: true
       v3Only: true
+    - prefix: /api/connectors
+      upstream: 'http://{{ .Release.Name }}-connectors:8088'
+      timeoutMs: 135000
+      stripPrefix: true
+      connectorsOnly: true
     - prefix: /api/analytics
       upstream: 'http://{{ .Release.Name }}-analytics:8081'
       timeoutMs: 135000

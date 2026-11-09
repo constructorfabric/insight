@@ -17,6 +17,7 @@ from conftest import TENANT, UMBRELLA, UMBRELLA_BASE, render
 
 GEARS_SERVICES = {
     "analytics",
+    "connectors",
     "authenticator",
     "gitCliProxy",
     "identityResolution",

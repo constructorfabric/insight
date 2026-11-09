@@ -428,6 +428,49 @@ services:
   # definition tables. The server never migrates them itself — compose must
   # run `migrate` first, exactly like analytics/identity-resolution above.
   # Exits 0 and stays exited; the server gates on it.
+  connectors-migrate:
+    !!merge <<: *backend-common
+    image: ${CONNECTORS_IMAGE:-insight-connectors:dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-insight}-connectors-migrate
+    build:
+      context: src/backend
+      dockerfile: Dockerfile
+      target: connectors
+    depends_on:
+      mariadb: {condition: service_healthy, required: false}
+    environment:
+      APP__gears__connectors__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/connectors"
+    volumes:
+      - ./deploy/compose/connectors-fullauth.yaml:/app/config/insight.yaml:ro
+    command: ["/app/connectors", "--", "/app/connectors", "-c", "/app/config/insight.yaml", "migrate"]
+
+  connectors:
+    !!merge <<: *backend-common
+    image: ${CONNECTORS_IMAGE:-insight-connectors:dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-insight}-connectors
+    build:
+      context: src/backend
+      dockerfile: Dockerfile
+      target: connectors
+    depends_on:
+      mariadb: {condition: service_healthy, required: false}
+      clickhouse: {condition: service_healthy, required: false}
+      connectors-migrate: {condition: service_completed_successfully}
+    environment:
+      !!merge <<: *backend-env
+      APP__gears__connectors__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/connectors"
+      APP__gears__connectors__config__clickhouse_url: "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+      APP__gears__connectors__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
+      APP__gears__connectors__config__clickhouse_user: "presentation"
+      APP__gears__connectors__config__clickhouse_password: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
+      APP__gears__connectors__config__identity_url: "http://identity-resolution:8082"
+    volumes:
+      - ./deploy/compose/connectors-fullauth.yaml:/app/config/insight.yaml:ro
+      - ./deploy/compose/certs:/certs:ro
+    command: ["/app/connectors", "--", "/app/connectors", "-c", "/app/config/insight.yaml", "run"]
+    ports:
+      - "127.0.0.1:${CONNECTORS_PORT:-8088}:8088"
+
   insight-v3-core-migrate:
     # backend-common supplies the insight network (without it the migrator lands
     # on the default network, can't resolve `clickhouse`, and the server blocks
@@ -686,6 +729,7 @@ services:
     depends_on:
       authenticator: {condition: service_started}
       analytics: {condition: service_started}
+      connectors: {condition: service_started}
       identity-resolution: {condition: service_started}
       insight-v3-core: {condition: service_started}
     environment:

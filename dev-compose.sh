@@ -464,6 +464,16 @@ create_warehouse_databases() {
   return 1
 }
 
+create_connectors_database() {
+  [[ "${MARIADB_EXTERNAL:-false}" == "true" ]] && return 0
+  "$@" up -d --wait mariadb || return 1
+
+  local db_user="${MARIADB_USER:-insight}"
+  db_user="${db_user//\`/\`\`}"
+  printf 'CREATE DATABASE IF NOT EXISTS connectors CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON connectors.* TO `%s`@`%%`;\n' "$db_user" |
+    "$@" exec -T -e "MYSQL_PWD=${MARIADB_ROOT_PASSWORD:-root-local}" mariadb mariadb -uroot
+}
+
 cmd_up() {
   local env_file=".env.compose"
   local seed_target_override=""
@@ -570,7 +580,7 @@ cmd_up() {
   # ── Resolve which services go to ghcr ────────────────────────────
   # The legacy Rust api-gateway is gone; the nginx `gateway` is the sole :8080
   # entry doing full auth via the authenticator (NGINX_BFF #1583 step 09).
-  local all_backend="analytics identity-resolution authenticator gateway"
+  local all_backend="analytics identity-resolution authenticator gateway connectors"
   local watchable_services="analytics"
   local ghcr_list=""
   local watch_list=""
@@ -579,6 +589,7 @@ cmd_up() {
   [[ -n "${ANALYTICS_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics)
   [[ -n "${IDENTITY_RESOLUTION_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" identity-resolution)
   [[ -n "${AUTHENTICATOR_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" authenticator)
+  [[ -n "${CONNECTORS_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" connectors)
   [[ -n "${GATEWAY_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" gateway)
 
   if [[ -n "$from_ghcr_csv" ]]; then
@@ -622,6 +633,7 @@ cmd_up() {
   contains "$ghcr_list" analytics && [[ -z "${ANALYTICS_IMAGE:-}" ]] && export ANALYTICS_IMAGE="ghcr.io/constructorfabric/insight-analytics:${ANALYTICS_GHCR_TAG:-latest}"
   contains "$ghcr_list" identity-resolution && [[ -z "${IDENTITY_RESOLUTION_IMAGE:-}" ]] && export IDENTITY_RESOLUTION_IMAGE="ghcr.io/constructorfabric/insight-identity-resolution:${IDENTITY_RESOLUTION_GHCR_TAG:-latest}"
   contains "$ghcr_list" authenticator && [[ -z "${AUTHENTICATOR_IMAGE:-}" ]] && export AUTHENTICATOR_IMAGE="ghcr.io/constructorfabric/insight-authenticator:${AUTHENTICATOR_GHCR_TAG:-latest}"
+  contains "$ghcr_list" connectors && [[ -z "${CONNECTORS_IMAGE:-}" ]] && export CONNECTORS_IMAGE="ghcr.io/constructorfabric/insight-connectors:${CONNECTORS_GHCR_TAG:-latest}"
   contains "$ghcr_list" gateway && [[ -z "${GATEWAY_IMAGE:-}" ]] && export GATEWAY_IMAGE="ghcr.io/constructorfabric/insight-gateway:${GATEWAY_GHCR_TAG:-latest}"
   true
 
@@ -658,7 +670,7 @@ cmd_up() {
     platform: linux/amd64
 $(ghcr_volumes_block "$svc")
 YML
-          if [[ "$svc" == "analytics" || "$svc" == "identity-resolution" ]]; then
+          if [[ "$svc" == "analytics" || "$svc" == "identity-resolution" || "$svc" == "connectors" ]]; then
             # The one-shot migrate companion must flip to the ghcr image too:
             # left alone it keeps the build + local-binary bind mount (which
             # was intentionally not built in ghcr mode), never starts, and the
@@ -857,6 +869,9 @@ YML
           fi
         "
     fi
+    if ! contains "$ghcr_list" connectors; then
+      "${compose_cmd[@]}" build connectors
+    fi
     if [[ "$no_frontend" != "true" && "$FRONTEND_MODE" == "built" ]]; then
       echo "--- Frontend: pnpm build"
       "${compose_cmd[@]}" --profile build run --rm build-frontend
@@ -892,6 +907,7 @@ YML
   with_retries "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} pull --quiet --ignore-buildable ||
     echo "WARNING: pulling images failed three times; up will try once more." >&2
 
+  create_connectors_database "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} || return 1
   create_warehouse_databases "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} || return 1
 
   echo "=== docker compose up ==="
@@ -1140,6 +1156,7 @@ Targets:
   analytics            Rust analytics binary only.
   authenticator        Rust authenticator binary only.
   identity-resolution  Rust identity-resolution binary only.
+  connectors           connectors image.
   insight-v3-core      insight-v3-core image (it runs from an image, not a
                        bind-mounted binary like the three above).
   frontend             pnpm build → dist/.
@@ -1204,16 +1221,17 @@ cmd_build() {
 
   # Accept MULTIPLE targets, e.g. `build authenticator identity-resolution`.
   # Rust bins are batched into one build; frontend runs once if requested.
-  local rust_bins="" want_frontend=false want_v3_image=false t
+  local rust_bins="" want_frontend=false want_v3_image=false want_connectors_image=false t
   for t in "$@"; do
     case "$t" in
       analytics)           rust_bins="$rust_bins analytics" ;;
       authenticator)       rust_bins="$rust_bins authenticator" ;;
       identity-resolution) rust_bins="$rust_bins identity-resolution" ;;
       insight-v3-core)     want_v3_image=true ;;
-      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true ;;
+      connectors)          want_connectors_image=true ;;
+      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true; want_connectors_image=true ;;
       frontend)            want_frontend=true ;;
-      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true; want_frontend=true ;;
+      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true; want_connectors_image=true; want_frontend=true ;;
       *) echo "ERROR: unknown target: $t" >&2; cmd_build_help; return 2 ;;
     esac
   done
@@ -1222,6 +1240,7 @@ cmd_build() {
   [[ -n "$rust_bins" ]] && build_rust_bins $rust_bins
   # insight-v3-core runs from its image (unlike the bind-mounted binaries
   # above), so rebuilding it is a compose image build.
+  [[ "$want_connectors_image" == true ]] && "${compose_cmd[@]}" build connectors
   [[ "$want_v3_image" == true ]] && "${compose_cmd[@]}" build insight-v3-core
   [[ "$want_frontend" == true ]] && "${compose_cmd[@]}" run --rm build-frontend
   echo "Done. If a runtime container has ENABLE_AUTO_RELOAD=true it will restart automatically."
@@ -1598,6 +1617,7 @@ TEST_STAND_PUBLISHED_PORTS=(
   KEYCLOAK_PORT=8085
   IDENTITY_RESOLUTION_PORT=8086
   INSIGHT_V3_CORE_PORT=8087
+  CONNECTORS_PORT=8088
   FRONTEND_PORT=3000
   MARIADB_PORT=3306
   REDIS_PORT=6379
@@ -1805,6 +1825,7 @@ test_stand_frontend_image() {
 # stand's wall-clock went. test_stand_assert_no_source_bakes catches a backend
 # service missing from this list before `up` starts compiling it.
 TEST_STAND_PINNED_BACKENDS=(
+  "CONNECTORS_IMAGE|src/backend/services/connectors/helm/Chart.yaml|connectors"
   "ANALYTICS_IMAGE|src/backend/services/analytics/helm/Chart.yaml|analytics"
   "AUTHENTICATOR_IMAGE|src/backend/services/authenticator/helm/Chart.yaml|authenticator"
   "IDENTITY_RESOLUTION_IMAGE|src/backend/services/identity-resolution/helm/Chart.yaml|identity-resolution"
@@ -1850,7 +1871,7 @@ test_stand_prime_dev_images() {
   for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
     IFS='|' read -r var chart name <<<"$entry"
     case "$name" in
-      gateway|v3-core)
+      gateway|v3-core|connectors)
         # INVARIANT: cmd_up sources the env file over the process env, so a
         # caller-supplied image only reaches compose written into the file.
         image="${!var:-}"
@@ -2110,6 +2131,7 @@ test_stand_table_ready() {
 # Every service the data path is read through. All four answer the framework's
 # /health, so one path covers them.
 TEST_STAND_SERVICE_PROBES=(
+  "connectors|CONNECTORS_PORT"
   "gateway|GATEWAY_PORT"
   "analytics|ANALYTICS_PORT"
   "authenticator|AUTHENTICATOR_PORT"

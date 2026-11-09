@@ -7,6 +7,7 @@ members = [
     "libs/insight-openapi",
     "libs/authenticator-sdk",
     "services/analytics",
+    "services/connectors",
     "services/git-cli-proxy",
     "services/insight-v3-core",
     "services/identity-resolution",

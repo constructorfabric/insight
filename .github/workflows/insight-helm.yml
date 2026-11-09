@@ -32,6 +32,7 @@ jobs:
         run: pip install --quiet pytest pyyaml
       - name: Helm lint
         run: |
+          helm lint src/backend/services/connectors/helm
           helm lint src/backend/services/identity-resolution/helm
           helm dependency update charts/insight
           helm lint charts/insight
@@ -41,4 +42,5 @@ jobs:
           python -m pytest
           charts/insight/tests/
           src/backend/services/identity-resolution/helm/tests/
+          src/backend/services/connectors/helm/tests/
           -q

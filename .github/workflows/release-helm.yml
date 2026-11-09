@@ -45,6 +45,7 @@ jobs:
       && (fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'success' || fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'skipped')
       && (fromJSON(inputs.build_results).merge-insight-v3-core.result == 'success' || fromJSON(inputs.build_results).merge-insight-v3-core.result == 'skipped')
       && (fromJSON(inputs.build_results).merge-previews.result      == 'success' || fromJSON(inputs.build_results).merge-previews.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-connectors.result      == 'success' || fromJSON(inputs.build_results).merge-connectors.result      == 'skipped')
       && (fromJSON(inputs.build_results).merge-frontend.result      == 'success' || fromJSON(inputs.build_results).merge-frontend.result      == 'skipped')
       && (fromJSON(inputs.build_results).merge-toolbox.result       == 'success' || fromJSON(inputs.build_results).merge-toolbox.result       == 'skipped')
       && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
@@ -63,6 +64,7 @@ jobs:
         || fromJSON(inputs.build_results).changes.outputs.insight_v3_core == 'true'
         || fromJSON(inputs.build_results).changes.outputs.git_cli_proxy == 'true'
         || fromJSON(inputs.build_results).changes.outputs.previews     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.connectors     == 'true'
         || fromJSON(inputs.build_results).changes.outputs.frontend     == 'true'
         || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
         || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
@@ -135,6 +137,7 @@ jobs:
           INSIGHT_V3_CORE: ${{ fromJSON(inputs.build_results).changes.outputs.insight_v3_core }}
           GIT_CLI_PROXY: ${{ fromJSON(inputs.build_results).changes.outputs.git_cli_proxy }}
           PREVIEWS: ${{ fromJSON(inputs.build_results).changes.outputs.previews }}
+          CONNECTORS: ${{ fromJSON(inputs.build_results).changes.outputs.connectors }}
           FRONTEND: ${{ fromJSON(inputs.build_results).changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -195,6 +198,7 @@ jobs:
             src/backend/services/insight-v3-core/helm/Chart.yaml \
             src/backend/services/git-cli-proxy/helm/Chart.yaml \
             src/backend/services/previews/helm/Chart.yaml \
+            src/backend/services/connectors/helm/Chart.yaml \
             src/frontend/helm/Chart.yaml \
             | grep -Ev '^(---|null)$' \
             | sort -V | tail -1)
@@ -509,6 +513,7 @@ jobs:
       && (fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'success' || fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'skipped')
       && (fromJSON(inputs.build_results).merge-insight-v3-core.result == 'success' || fromJSON(inputs.build_results).merge-insight-v3-core.result == 'skipped')
       && (fromJSON(inputs.build_results).merge-previews.result      == 'success' || fromJSON(inputs.build_results).merge-previews.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-connectors.result      == 'success' || fromJSON(inputs.build_results).merge-connectors.result      == 'skipped')
       && (fromJSON(inputs.build_results).merge-frontend.result      == 'success' || fromJSON(inputs.build_results).merge-frontend.result      == 'skipped')
       && (fromJSON(inputs.build_results).merge-toolbox.result       == 'success' || fromJSON(inputs.build_results).merge-toolbox.result       == 'skipped')
       && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
@@ -527,6 +532,7 @@ jobs:
         || fromJSON(inputs.build_results).changes.outputs.insight_v3_core == 'true'
         || fromJSON(inputs.build_results).changes.outputs.git_cli_proxy == 'true'
         || fromJSON(inputs.build_results).changes.outputs.previews     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.connectors     == 'true'
         || fromJSON(inputs.build_results).changes.outputs.frontend     == 'true'
         || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
         || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
@@ -608,6 +614,7 @@ jobs:
           INSIGHT_V3_CORE: ${{ fromJSON(inputs.build_results).changes.outputs.insight_v3_core }}
           GIT_CLI_PROXY: ${{ fromJSON(inputs.build_results).changes.outputs.git_cli_proxy }}
           PREVIEWS: ${{ fromJSON(inputs.build_results).changes.outputs.previews }}
+          CONNECTORS: ${{ fromJSON(inputs.build_results).changes.outputs.connectors }}
           FRONTEND: ${{ fromJSON(inputs.build_results).changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -666,6 +673,7 @@ jobs:
             src/backend/services/insight-v3-core/helm/Chart.yaml \
             src/backend/services/git-cli-proxy/helm/Chart.yaml \
             src/backend/services/previews/helm/Chart.yaml \
+            src/backend/services/connectors/helm/Chart.yaml \
             src/frontend/helm/Chart.yaml \
             | grep -Ev '^(---|null)$' \
             | sort -V | tail -1)
@@ -780,6 +788,7 @@ jobs:
                   src/backend/services/insight-v3-core/helm/Chart.yaml \
                   src/backend/services/git-cli-proxy/helm/Chart.yaml \
                   src/backend/services/previews/helm/Chart.yaml \
+                  src/backend/services/connectors/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml \
                   deploy/gitops/.insight-version
           # Sample gitops starter under docs/deploy — pin moves with the

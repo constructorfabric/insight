@@ -138,6 +138,19 @@ COMPONENTS = [
         # own component); `triggered_by` is the registry's co-trigger for this.
         "triggered_by": ["insight-clickhouse", "insight-migration"],
     },
+    {
+        "name": "connectors",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "connectors",
+        "live_db": True,
+        "live_db_name": "connectors",
+        "live_ch": True,
+        "cover": False,
+        "drift_test": True,
+        "paths": ["src/backend/services/connectors", "docs/components/backend/connectors/openapi.json"],
+        "triggered_by": ["insight-clickhouse", "insight-migration"],
+    },
     # cover=False (mirrors identity-resolution): the crate is a thin HTTP
     # shell over the Kubernetes API — the pure domain (object builders,
     # slug/tag validation, TTL/status rules) is unit-tested, but the kube I/O

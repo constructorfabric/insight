@@ -2011,6 +2011,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "connectors"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "cf-gears-api-gateway",
+ "cf-gears-authn-resolver",
+ "cf-gears-authz-resolver",
+ "cf-gears-grpc-hub",
+ "cf-gears-oidc-authn-plugin",
+ "cf-gears-service-discovery",
+ "cf-gears-single-tenant-tr-plugin",
+ "cf-gears-static-authz-plugin",
+ "cf-gears-tenant-resolver",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-canonical-errors",
+ "cf-gears-toolkit-security",
+ "cf-gears-types-registry",
+ "clap",
+ "clickhouse",
+ "insight-clickhouse",
+ "insight-http-metrics",
+ "insight-log-context",
+ "insight-migration",
+ "insight-openapi",
+ "reqwest 0.12.28",
+ "sea-orm",
+ "sea-orm-migration",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

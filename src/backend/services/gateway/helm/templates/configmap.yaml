@@ -24,7 +24,8 @@ data:
       {{- $sqlApiOk := or (not (.sqlApiOnly | default false)) $.Values.global.sqlApi.enabled }}
       {{- $previewsOk := or (not (.previewsOnly | default false)) $.Values.global.previews.enabled }}
       {{- $v3Ok := or (not (.v3Only | default false)) ((($.Values.global).insightV3Core).deploy) }}
-      {{- if and $mcpOk $sqlApiOk $previewsOk $v3Ok }}
+      {{- $connectorsOk := or (not (.connectorsOnly | default false)) $.Values.global.connectors.enabled }}
+      {{- if and $mcpOk $sqlApiOk $previewsOk $v3Ok $connectorsOk }}
       - prefix: {{ .prefix }}
         upstream: {{ tpl .upstream $ | quote }}
         {{- with .auth }}

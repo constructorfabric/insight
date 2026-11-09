@@ -9,6 +9,7 @@ from pathlib import Path
 FILES = {"source-sha", "version", "release.patch", "values.json"}
 COMPOSE_IMAGES = {
     "analytics": "ANALYTICS_IMAGE",
+    "connectors": "CONNECTORS_IMAGE",
     "authenticator": "AUTHENTICATOR_IMAGE",
     "identityResolution": "IDENTITY_RESOLUTION_IMAGE",
     "gateway": "GATEWAY_IMAGE",

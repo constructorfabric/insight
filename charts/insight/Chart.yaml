@@ -131,3 +131,8 @@ dependencies:
     version: "0.1.0"
     repository: "file://../../src/frontend/helm"
     condition: frontend.deploy
+  - name: insight-connectors
+    alias: connectors
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/connectors/helm"
+    condition: global.connectors.enabled

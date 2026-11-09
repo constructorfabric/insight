@@ -3,7 +3,7 @@
 #   cd src/backend && docker build --target analytics -t insight-analytics:dev .
 #
 # Targets: analytics, authenticator, identity-resolution, insight-v3-core,
-# git-cli-proxy, previews.
+# git-cli-proxy, previews, connectors.
 
 # ─── toolchain ──────────────────────────────────────────────────────────────
 ARG TARGETARCH
@@ -95,6 +95,11 @@ FROM cooker AS build-previews
 COPY . .
 RUN cargo build --release --locked --bin previews && \
     install -D "target/${CARGO_BUILD_TARGET}/release/previews" /build/out/previews
+
+FROM cooker AS build-connectors
+COPY . .
+RUN cargo build --release --locked --bin connectors && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/connectors" /build/out/connectors
 
 # ─── watchexec, the compose auto-reload wrapper ─────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS watchexec
@@ -194,3 +199,9 @@ COPY --from=build-previews --chown=1000:1000 /build/out/previews /app/previews
 COPY --from=build-previews --chown=1000:1000 /build/services/previews/config/ /app/config/
 EXPOSE 8085
 CMD ["/app/previews", "--", "/app/previews", "-c", "/app/config/insight.yaml"]
+
+FROM runtime AS connectors
+COPY --from=build-connectors --chown=1000:1000 /build/out/connectors /app/connectors
+COPY --from=build-connectors --chown=1000:1000 /build/services/connectors/config/ /app/config/
+EXPOSE 8088
+CMD ["/app/connectors", "--", "/app/connectors", "-c", "/app/config/insight.yaml", "run"]

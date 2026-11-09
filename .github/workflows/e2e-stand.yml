@@ -101,6 +101,7 @@ jobs:
       analytics: ${{ steps.filter.outputs.analytics }}
       authenticator: ${{ steps.filter.outputs.authenticator }}
       identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
+      connectors: ${{ steps.filter.outputs.connectors }}
       gateway: ${{ steps.filter.outputs.gateway }}
       gateway_checks: ${{ steps.filter.outputs.gateway_checks }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -116,11 +117,11 @@ jobs:
         run: |
           set -euo pipefail
           emit() {
-            printf 'relevant=%s\nbackend=%s\nfrontend=%s\nbackend_artifacts=%s\nanalytics=%s\nauthenticator=%s\nidentity_resolution=%s\ngateway=%s\ngateway_checks=%s\n' \
+            printf 'relevant=%s\nbackend=%s\nfrontend=%s\nbackend_artifacts=%s\nanalytics=%s\nauthenticator=%s\nidentity_resolution=%s\nconnectors=%s\ngateway=%s\ngateway_checks=%s\n' \
               "$relevant" "$backend" "$frontend" "$backend_artifacts" \
-              "$analytics" "$authenticator" "$identity_resolution" "$gateway" "$gateway_checks" >> "$GITHUB_OUTPUT"
+              "$analytics" "$authenticator" "$identity_resolution" "$connectors" "$gateway" "$gateway_checks" >> "$GITHUB_OUTPUT"
             echo "relevant=$relevant backend=$backend frontend=$frontend backend_artifacts=$backend_artifacts"
-            echo "analytics=$analytics authenticator=$authenticator identity_resolution=$identity_resolution gateway=$gateway"
+            echo "analytics=$analytics authenticator=$authenticator identity_resolution=$identity_resolution connectors=$connectors gateway=$gateway"
           }
           # Match pull_request path-filter semantics: compare the branch from
           # its merge base, not from the current base-branch tip. A two-dot diff
@@ -148,6 +149,7 @@ jobs:
             analytics=false
             authenticator=false
             identity_resolution=false
+            connectors=false
             gateway=false
             gateway_checks=false
             emit
@@ -177,6 +179,7 @@ jobs:
           analytics=false
           authenticator=false
           identity_resolution=false
+          connectors=false
           gateway=false
           gateway_checks=false
           if echo "$changes_to_test" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/(build-images|e2e-stand)\.yml|\.github/workflows/scripts/redact-playwright-trace\.py|scripts/ci/prebuilt_images\.py)'; then
@@ -194,10 +197,11 @@ jobs:
           # diff, not the stand's filtered list.
           if echo "$changed" | grep -qE '^(src/backend/services/authenticator/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then authenticator=true; fi
           if echo "$changes_to_test" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
+          if echo "$changes_to_test" | grep -qE '^(src/backend/services/connectors/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/(insight-clickhouse|insight-migration|insight-http-metrics|insight-log-context|insight-openapi)/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then connectors=true; fi
           if echo "$changed" | grep -qE '^(src/backend/services/gateway/|src/backend/tools/routegen/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then gateway=true; fi
           if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
           if [[ "$GITHUB_EVENT_NAME" == merge_group ]] && \
-             [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$gateway" == true ]]; then
+             [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$connectors" == true || "$gateway" == true ]]; then
             backend_artifacts=true
           fi
           emit
@@ -305,6 +309,7 @@ jobs:
           ANALYTICS_POLICY: ${{ needs.changes.outputs.analytics == 'true' && 'required' || 'unchanged' }}
           AUTHENTICATOR_POLICY: ${{ needs.changes.outputs.authenticator == 'true' && 'required' || 'unchanged' }}
           IDENTITY_POLICY: ${{ needs.changes.outputs.identity_resolution == 'true' && 'required' || 'unchanged' }}
+          CONNECTORS_POLICY: ${{ needs.changes.outputs.connectors == 'true' && 'required' || 'unchanged' }}
           GATEWAY_POLICY: ${{ needs.changes.outputs.gateway == 'true' && 'required' || 'unchanged' }}
         run: |
           python3 scripts/ci/prebuilt_images.py \
@@ -313,6 +318,7 @@ jobs:
             --image "insight-analytics:${ANALYTICS_POLICY}" \
             --image "insight-authenticator:${AUTHENTICATOR_POLICY}" \
             --image "insight-identity-resolution:${IDENTITY_POLICY}" \
+            --image "insight-connectors:${CONNECTORS_POLICY}" \
             --image "insight-gateway:${GATEWAY_POLICY}" \
             --image "insight-v3-core:unchanged" # build-images exports no insight-v3-core artifact — always the published image
 
@@ -368,6 +374,7 @@ jobs:
           ANALYTICS_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-analytics:e2e-prebuilt' || '' }}
           AUTHENTICATOR_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-authenticator:e2e-prebuilt' || '' }}
           IDENTITY_RESOLUTION_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
+          CONNECTORS_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-connectors:e2e-prebuilt' || '' }}
           GATEWAY_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-gateway:e2e-prebuilt' || '' }}
           INSIGHT_V3_CORE_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-v3-core:e2e-prebuilt' || '' }}
         run: |

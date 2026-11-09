@@ -1,0 +1,113 @@
+{{- define "insight-connectors.configmap" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insight-connectors.fullname" . }}-gears-config
+  labels:
+    {{- include "insight-connectors.labels" . | nindent 4 }}
+data:
+  insight.yaml: |
+    server:
+      home_dir: "/app/data"
+
+    logging:
+      default:
+        console_level: {{ ((((.Values.global).observability).logs).level) | default "info" }}
+        console_format: {{ ((((.Values.global).observability).logs).format) | default "json" }}
+
+    opentelemetry:
+      resource:
+        service_name: "insight-connectors"
+        attributes:
+          service.version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+      exporter:
+        kind: {{ .Values.opentelemetry.exporter.kind }}
+        {{- with .Values.opentelemetry.exporter.endpoint }}
+        endpoint: {{ . | quote }}
+        {{- end }}
+      tracing:
+        enabled: {{ .Values.opentelemetry.tracing.enabled }}
+      metrics:
+        enabled: {{ .Values.opentelemetry.metrics.enabled }}
+
+    gears:
+      api-gateway:
+        config:
+          metrics:
+            prefix: "host"
+          bind_addr: "0.0.0.0:{{ .Values.service.port }}"
+          auth_disabled: false
+          cors_enabled: false
+          enable_docs: false
+          openapi:
+            title: "Insight Connectors API"
+            version: "1.0.0"
+            description: "Connectors service"
+
+      service-discovery:
+        config: {}
+
+      grpc-hub:
+        config:
+          listen_addr: "uds:///tmp/connectors-grpc"
+
+      authn-resolver:
+        config:
+          vendor: "hyperspot"
+
+      oidc-authn-plugin:
+        config:
+          vendor: "hyperspot"
+          priority: 50
+          jwt:
+            supported_algorithms: ["ES256"]
+            clock_skew_leeway: 60s
+            require_audience: true
+            expected_audience:
+              - {{ .Values.gateway.audience | default "internal-services" | quote }}
+            trusted_issuers:
+              - issuer: {{ tpl (.Values.gateway.issuer | default "") . | quote }}
+                {{- with .Values.gateway.discoveryUrl }}
+                discovery_url: {{ tpl . $ | quote }}
+                {{- end }}
+            claim_mapping:
+              subject_id: "sub"
+              subject_tenant_id: "tenant_id"
+              subject_type: "sub_type"
+              token_scopes: "roles"
+            required_claims: []
+          http_client:
+            request_timeout: 5s
+            {{- with .Values.gateway.caCertPaths }}
+            custom_ca_certificate_paths:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+          s2s_oauth:
+            discovery_url: {{ tpl (.Values.gateway.issuer | default "") . | quote }}
+            default_subject_type: "service"
+            token_cache:
+              ttl: 300s
+              max_entries: 100
+
+      authz-resolver:
+        config:
+          vendor: "hyperspot"
+
+      static-authz-plugin:
+        config:
+          vendor: "hyperspot"
+          priority: 100
+
+      tenant-resolver:
+        config:
+          vendor: "hyperspot"
+
+      single-tenant-tr-plugin:
+        config:
+          vendor: "hyperspot"
+          priority: 20
+
+      connectors:
+        config: {}
+{{- end }}
+{{ include "insight-connectors.configmap" . }}

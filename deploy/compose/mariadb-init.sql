@@ -5,8 +5,11 @@ CREATE DATABASE IF NOT EXISTS identity  CHARACTER SET utf8mb4 COLLATE utf8mb4_un
 CREATE DATABASE IF NOT EXISTS analytics CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS insight_v3 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+CREATE DATABASE IF NOT EXISTS connectors CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 CREATE USER IF NOT EXISTS 'insight'@'%' IDENTIFIED BY 'insight-local';
 GRANT ALL PRIVILEGES ON identity.*  TO 'insight'@'%';
 GRANT ALL PRIVILEGES ON analytics.* TO 'insight'@'%';
 GRANT ALL PRIVILEGES ON insight_v3.* TO 'insight'@'%';
+GRANT ALL PRIVILEGES ON connectors.* TO 'insight'@'%';
 FLUSH PRIVILEGES;

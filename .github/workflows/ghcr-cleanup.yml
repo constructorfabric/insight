@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 env:
-  SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-git-cli-proxy insight-identity-resolution insight-previews insight-seed insight-toolbox"
+  SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-git-cli-proxy insight-identity-resolution insight-connectors insight-previews insight-seed insight-toolbox"
   CONNECTOR_IMAGES: "source-active-directory-insight source-bamboohr-insight source-claude-team-invoices-insight source-hubspot-insight source-slack-insight"
 
 # Routing: .github/runners/README.md.

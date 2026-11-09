@@ -37,6 +37,7 @@ jobs:
       matrix:
         image:
           # Rust / C# services
+          - insight-connectors
           - insight-analytics
           - insight-authenticator
           - insight-gateway

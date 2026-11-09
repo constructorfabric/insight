@@ -1,0 +1,111 @@
+{{- define "insight-connectors.deployment" -}}
+{{- if ne (toString .Values.replicaCount) "1" }}
+{{- fail "connectors.replicaCount must be exactly 1" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-connectors.fullname" . }}
+  labels:
+    {{- include "insight-connectors.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "insight-connectors.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-connectors.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "insight-connectors.configmap" . | sha256sum }}
+        checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "insight-connectors.fullname" . }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: connectors
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/connectors"]
+          args: ["-c", "/app/config/insight.yaml"]
+          volumeMounts:
+            - name: connectors-config
+              mountPath: /app/config/insight.yaml
+              subPath: insight.yaml
+              readOnly: true
+            {{- if .Values.gateway.caCertSecret }}
+            - name: authn-ca
+              mountPath: /etc/insight/authn-ca
+              readOnly: true
+            {{- end }}
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
+            {{- with .Values.existingSecret }}
+            - secretRef:
+                name: {{ . | quote }}
+            {{- end }}
+          env:
+            {{- include "insight-connectors.databaseEnv" . | nindent 12 }}
+            {{- include "insight-connectors.readEnv" . | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: connectors-config
+          configMap:
+            name: {{ include "insight-connectors.fullname" . }}-gears-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.gateway.caCertSecret }}
+        - name: authn-ca
+          secret:
+            secretName: {{ .Values.gateway.caCertSecret | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+{{- end }}
+{{- if not .Values.infraFromUmbrella }}
+{{ include "insight-connectors.deployment" . }}
+{{- end }}
