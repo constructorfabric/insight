@@ -255,6 +255,20 @@ worklog_flow AS (
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM {{ ref('task_worklog_flow') }}
 ),
+-- Account grain, not the person-day of worklog_flow: a sum needs no gate, so
+-- each account's hours keep its key and resolve account-first.
+logged_work AS (
+    SELECT
+        tenant_id,
+        entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
+        metric_date,
+        worklog_seconds,
+        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+    FROM ({{ task_worklog_per_account_day() }})
+),
 stale AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
@@ -305,7 +319,7 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('logged_hours', 'worklog_flow', 'worklog_seconds / 3600.0', 'no_dimensions', where='worklog_seconds > 0', keys=account_keys) }}
+    {{ sum_measure('logged_hours', 'logged_work', 'worklog_seconds / 3600.0', 'no_dimensions', where='worklog_seconds > 0', keys=account_keys) }}
 
     UNION ALL
 

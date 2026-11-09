@@ -19,23 +19,6 @@
 -- meet wherever the old email grain met them.
 
 WITH
--- Same reads as task_issue_state: the tenant comes from the source, and the
--- author joins LEFT with no email filter, so an author with no email or no
--- directory row still owns the worklog through the account.
-source_tenants AS (
-    SELECT
-        insight_source_id,
-        min(tenant_id) AS tenant_id
-    FROM {{ ref('class_task_users') }} FINAL
-    GROUP BY insight_source_id
-),
-task_users AS (
-    SELECT
-        insight_source_id,
-        user_id,
-        if(email LIKE '%@%', {{ normalized_email('email') }}, '') AS email
-    FROM {{ ref('class_task_users') }} FINAL
-),
 in_progress_per_account_day AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
@@ -61,27 +44,9 @@ in_progress_per_account_day AS (
     GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id, day
 ),
 -- in_progress_per_account_day inherits the availability filter through its
--- task_issue_state join; worklogs aggregate per person without touching
--- issues, so deletion awareness comes from the class contract's is_deleted
--- (worklog tombstones + deleted parent issue).
+-- task_issue_state join; worklogs carry their own deletion state.
 worklog_per_account_day AS (
-    SELECT
-        t.tenant_id                                                          AS tenant_id,
-        coalesce(u.email, '')                                                AS entity_id,
-        {{ task_account_source_type('w.data_source') }}                      AS account_source_type,
-        w.insight_source_id                                                  AS account_source_id,
-        w.author_id                                                          AS account_id,
-        toDate(w.work_date)                                                  AS metric_date,
-        sum(ifNull(w.duration_seconds, 0))                                   AS worklog_seconds
-    FROM {{ ref('class_task_worklogs') }} AS w FINAL
-    INNER JOIN source_tenants AS t
-        ON t.insight_source_id = w.insight_source_id
-    LEFT JOIN task_users AS u
-        ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
-    WHERE w.work_date IS NOT NULL
-      AND ifNull(w.is_deleted, 0) = 0
-      AND coalesce(w.author_id, '') != ''
-    GROUP BY t.tenant_id, entity_id, account_source_type, account_source_id, account_id, metric_date
+    {{ task_worklog_per_account_day() }}
 ),
 account_days AS (
     SELECT
