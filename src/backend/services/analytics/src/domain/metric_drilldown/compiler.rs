@@ -188,7 +188,10 @@ fn parts_expr(dimension: &str) -> String {
         "arrayFilter(part -> part.2 != 0, arrayZip(tupleElement({totals}, 1), tupleElement({totals}, 2)))"
     );
     let largest_first = format!("arrayReverseSort(part -> part.2, {nonzero})");
-    let rest = format!("arraySlice({largest_first}, {first_unnamed})", first_unnamed = NAMED_RECORD_PARTS + 1);
+    let rest = format!(
+        "arraySlice({largest_first}, {first_unnamed})",
+        first_unnamed = NAMED_RECORD_PARTS + 1
+    );
     format!(
         "arrayStringConcat(arrayConcat(\
              arrayMap(part -> concat(part.1, ' ', toString(round(part.2, 2))), \

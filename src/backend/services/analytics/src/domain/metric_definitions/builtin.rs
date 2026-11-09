@@ -722,10 +722,12 @@ mod tests {
 
         for metric in builtin_metrics() {
             let spreads_record_numbers = match metric.computation {
-                SeedComputation::Median | SeedComputation::Percentile { .. } | SeedComputation::Stddev => true,
-                SeedComputation::Sum | SeedComputation::Ratio { .. } | SeedComputation::DistinctCount => {
-                    false
-                }
+                SeedComputation::Median
+                | SeedComputation::Percentile { .. }
+                | SeedComputation::Stddev => true,
+                SeedComputation::Sum
+                | SeedComputation::Ratio { .. }
+                | SeedComputation::DistinctCount => false,
             };
             for input in metric.inputs.iter().filter(|_| spreads_record_numbers) {
                 assert_eq!(
