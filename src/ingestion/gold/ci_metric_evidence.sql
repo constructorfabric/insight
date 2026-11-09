@@ -21,6 +21,7 @@ runs AS (
     SELECT
         tenant_id,
         source_id,
+        replaceOne(data_source, 'insight_', '') AS source_value,
         repo_full_name,
         pipeline_key,
         pipeline_name,
@@ -53,6 +54,7 @@ run_rows AS (
     SELECT
         tenant_id,
         source_id,
+        source_value,
         metric_date,
         repo_full_name,
         pipeline_key,
@@ -80,7 +82,8 @@ run_rows AS (
                     'hour_block',
                     {{ hour_block_value('started_at') }},
                     toNullable({{ hour_block_label('started_at') }})
-                )
+                ),
+                tuple('source', source_value, toNullable({{ git_source_label('source_value') }}))
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS run_dimensions
     FROM runs
@@ -104,6 +107,7 @@ deployment_rows AS (
     SELECT
         d.tenant_id AS tenant_id,
         d.source_id AS source_id,
+        replaceOne(d.data_source, 'insight_', '') AS source_value,
         toDate(d.created_at) AS metric_date,
         d.repo_full_name AS repo_full_name,
         d.deployment_id AS deployment_id,
@@ -126,7 +130,8 @@ deployment_rows AS (
                     'env_kind',
                     multiIf(d.is_production = 1, 'production', d.is_transient = 1, 'preview', 'static'),
                     toNullable(multiIf(d.is_production = 1, 'production', d.is_transient = 1, 'preview', 'static'))
-                )
+                ),
+                tuple('source', source_value, toNullable({{ git_source_label('source_value') }}))
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS deployment_dimensions
     FROM (
@@ -138,7 +143,8 @@ deployment_rows AS (
             environment,
             is_production,
             is_transient,
-            created_at
+            created_at,
+            data_source
         FROM {{ ref('class_git_deployments') }} FINAL
         WHERE created_at IS NOT NULL
     ) AS d
@@ -170,6 +176,8 @@ SELECT
     CAST(NULL AS Nullable(String)) AS subject_key,
     run_dimensions AS dimensions,
     map(
+        'source_id', coalesce(toString(source_id), ''),
+        'ref', toString(run_id),
         'repository', repo_full_name,
         'pipeline', pipeline_key,
         'branch', branch,
@@ -217,6 +225,7 @@ SELECT
     CAST(NULL AS Nullable(String)) AS subject_key,
     deployment_dimensions AS dimensions,
     map(
+        'source_id', coalesce(toString(source_id), ''),
         'repository', repo_full_name,
         'environment', environment,
         'outcome', outcome,
@@ -253,14 +262,20 @@ SELECT
     concat(project_key, '/', repo_slug, ' ', substring(commit_hash, 1, 10)) AS record_label,
     toNullable(toFloat64(1)) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
-    CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions,
+    CAST(
+        [tuple('source', source_value, toNullable({{ git_source_label('source_value') }}))]
+        AS Array(Tuple(key String, value String, label Nullable(String)))
+    ) AS dimensions,
     map(
+        'source_id', coalesce(toString(source_id), ''),
+        'ref', commit_hash,
         'repository', concat(project_key, '/', repo_slug)
     ) AS details
 FROM (
     SELECT
         tenant_id,
         source_id,
+        replaceOne(data_source, 'insight_', '') AS source_value,
         project_key,
         repo_slug,
         commit_hash,

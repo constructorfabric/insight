@@ -415,6 +415,7 @@ sources:
         evidence_presentation: &ci_run_counted
           show_value: false
           detail_columns: &ci_run_columns
+            - { key: ref, label: Run }
             - { key: repository, label: Repository }
             - { key: pipeline, label: Pipeline }
             - { key: branch, label: Branch }
@@ -456,6 +457,7 @@ sources:
         evidence_presentation:
           show_value: false
           detail_columns:
+            - { key: ref, label: Ref }
             - { key: repository, label: Repository }
     dimensions:
       - repository

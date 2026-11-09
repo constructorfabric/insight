@@ -487,7 +487,7 @@ mod tests {
                 .iter()
                 .map(|column| column.key.as_str())
                 .collect::<Vec<_>>(),
-            ["repository", "pipeline", "branch", "outcome"]
+            ["ref", "repository", "pipeline", "branch", "outcome"]
         );
         assert!(!runs.show_value, "a counted run needs no value column");
 
@@ -704,8 +704,9 @@ mod tests {
     }
 
     #[test]
-    fn every_git_and_task_metric_drills_down_to_its_source_records() {
+    fn every_git_task_and_ci_metric_drills_down_to_its_source_records() {
         const NOT_YET_LINKED: &[&str] = &[
+            "ci.deployments",
             "git.active_days",
             "git.default_branch_active_days",
             "git.commits_per_active_day",
@@ -730,7 +731,7 @@ mod tests {
 
         for metric in builtin_metrics()
             .iter()
-            .filter(|metric| ["git", "task"].contains(&metric.source_key.as_str()))
+            .filter(|metric| ["git", "task", "ci"].contains(&metric.source_key.as_str()))
         {
             let every_input_is_a_record = metric.inputs.iter().all(|input| {
                 presentations
