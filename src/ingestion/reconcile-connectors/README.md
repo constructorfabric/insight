@@ -77,8 +77,13 @@ Spec: `docs/components/backend/analytics/specs/connector-health`.
 
 ## The transform planner
 
-After connector work and the sync-history sweep, each reconcile pass runs
-`python3 -m transform_plan`. It parses the image's dbt project with a temporary
+The `<fullname>-transform-plan` CronWorkflow runs `transform-plan.sh`, which
+executes `python3 -m transform_plan`, on its own UTC schedule (every 15 minutes
+by default, configured by `ingestion.transformPlan.schedule` and gated by
+`ingestion.templates.enabled` and `ingestion.transformPlan.enabled`). This keeps
+planning independent of connector Secret reads and Airbyte availability.
+It takes no reconcile mutex and uses the `argo-workflow` ServiceAccount.
+It parses the image's dbt project with a temporary
 profile from `scripts/dbt_profiles.py`, then compares effective
 `meta.transform_version` values with the latest rows in
 `ingestion_history.transform_versions`. The table is append-only, migration-owned,
@@ -88,7 +93,7 @@ version, optional release, application time and application identity.
 
 An empty table receives one `applied_by=baseline` row per deployed model, with
 no rebuild planned. The release comes from `INSIGHT_VERSION`, set to
-`.Chart.Version` by the reconcile container; an unset variable is recorded as
+`.Chart.Version` by the transform planner container; an unset variable is recorded as
 NULL. Subsequent passes report version differences in
 either direction, new and removed models, and the changed/new models plus their
 model descendants. Removed models are reported only. Models whose effective
@@ -101,10 +106,11 @@ the declaring connector directory's descriptor `name`. Other sources, including
 
 The shared Python logger emits one `transform.planned` event with names and
 counts for `baseline`, `changed`, `new`, `removed`, `rebuild`, `incremental_only`
-and `connectors`, correlated by `RECONCILE_RUN_ID`. Dry runs report without
+and `connectors`, correlated by `RECONCILE_RUN_ID` set to the Workflow name.
+`transform-plan.sh --dry-run` reports without
 writing a baseline. Planning reuses the sweep's ClickHouse transport and existing
 `RECONCILE_DEST_CLICKHOUSE_*` credentials and consistency settings. Failures emit
-`transform.failed` and an error from the shell wrapper, and never fail reconcile.
+`transform.failed` and fail the planner Workflow with the planner's exit code.
 This planner submits no Workflow, runs no `dbt run`, and writes only a baseline.
 
 ## Environment variables

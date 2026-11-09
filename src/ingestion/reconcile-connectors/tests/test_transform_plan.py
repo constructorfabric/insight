@@ -229,8 +229,9 @@ def environment(tmp_path: Path, warehouse: Warehouse) -> dict[str, str]:
 def test_only_first_adoption_writes_current_baseline_rows(
     environment: dict[str, str], warehouse: Warehouse, dry_run: bool
 ) -> None:
-    script = f'source "{ROOT}/lib/transform-plan.sh"; transform_plan_run {int(dry_run)}'
-    args = ["bash", "-c", script]
+    args = ["bash", str(ROOT / "transform-plan.sh")]
+    if dry_run:
+        args.append("--dry-run")
     result = subprocess.run(args, env=environment, text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
@@ -298,16 +299,26 @@ def test_existing_history_is_read_without_any_write(
     assert event["fields"]["counts"]["rebuild"] == 3
 
 
-def test_clickhouse_read_failure_logs_error_and_reconcile_continues(
+def test_clickhouse_read_failure_fails_the_planner_without_affecting_reconcile(
     environment: dict[str, str], warehouse: Warehouse
 ) -> None:
     warehouse.fail_read = True
     warehouse.prepare()
+    result = subprocess.run(
+        ["bash", str(ROOT / "transform-plan.sh")], env=environment, text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 1, result.stderr
+    assert result.stdout == ""
+    event = json.loads(result.stderr)
+    assert event["level"] == "ERROR"
+    assert event["fields"]["event"] == "transform.failed"
+    assert "synthetic read failure" in event["fields"]["error"]
+    assert len(warehouse.requests) == 1
+
     script = f'''
 set -euo pipefail
 export AIRBYTE_URL=http://127.0.0.1:1
 source "{ROOT}/lib/reconcile.sh"
-source "{ROOT}/lib/transform-plan.sh"
 log_line() {{ printf '%s %s\\n' "$1" "$2"; }}
 log_init() {{ :; }}
 log_close() {{ :; }}
@@ -321,12 +332,9 @@ printf 'reconcile continued\\n'
 '''
     result = subprocess.run(["bash", "-c", script], env=environment, text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert "ERROR transform planner failed" in result.stdout
-    assert result.stdout.index("sweep completed") < result.stdout.index("ERROR transform planner failed")
+    assert "ERROR transform planner failed" not in result.stdout
+    assert result.stdout.index("sweep completed") < result.stdout.index("summary 0 0")
     assert "summary 0 0" in result.stdout
     assert result.stdout.endswith("reconcile continued\n")
-    event = json.loads(result.stderr)
-    assert event["level"] == "ERROR"
-    assert event["fields"]["event"] == "transform.failed"
-    assert "synthetic read failure" in event["fields"]["error"]
+    assert result.stderr == ""
     assert len(warehouse.requests) == 1

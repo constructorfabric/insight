@@ -40,7 +40,6 @@ source "${SCRIPT_DIR}/lib/reconcile.sh"
 source "${SCRIPT_DIR}/lib/adopt.sh"
 # shellcheck source=lib/sweep.sh
 source "${SCRIPT_DIR}/lib/sweep.sh"
-source "${SCRIPT_DIR}/lib/transform-plan.sh"
 
 # ---------------------------------------------------------------------------
 # usage — print CLI help and exit. Called for -h/--help and on bad args.
