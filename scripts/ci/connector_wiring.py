@@ -29,7 +29,7 @@ Checks
                   built only of lowercase letters, digits and hyphens, and must
                   neither start nor end with a hyphen. That is the vocabulary
                   the connector-health route's own parser accepts
-                  (`domain/connector_health/name.rs`), and it parses the name
+                  (`src/backend/services/connectors/src/domain/connector_health/name.rs`), and it parses the name
                   out of a URL path — so a name outside it makes that
                   connector's sync history unreachable behind a row the page
                   has already drawn. (The hyphen-only shape also keeps the
@@ -105,9 +105,7 @@ def _name_complaints(name: str) -> list[str]:
     bad = sorted({c for c in name if not (c.isascii() and (c.islower() or c.isdigit()) or c == "-")})
     if bad:
         spelled = ", ".join(repr(c) for c in bad)
-        complaints.append(
-            f"carries {spelled} — use lowercase letters, digits and hyphens only"
-        )
+        complaints.append(f"carries {spelled} — use lowercase letters, digits and hyphens only")
     return complaints
 
 

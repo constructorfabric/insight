@@ -73,7 +73,7 @@ the page its freshness and costs reconciliation nothing. It adds no environment
 of its own, reusing the `RECONCILE_DEST_CLICKHOUSE_*` credentials the Bronze
 destination already needs.
 
-Spec: `docs/components/backend/analytics/specs/connector-health`.
+Spec: `docs/components/backend/connectors/specs/connector-health`.
 
 ## Environment variables
 

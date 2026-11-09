@@ -22,7 +22,7 @@
 -- can be resolved: rows recorded before the identity was carried whose
 -- connector is no longer configured, so nothing states which instance they are.
 --
--- Spec: docs/components/backend/analytics/specs/connector-health.
+-- Spec: docs/components/backend/connectors/specs/connector-health.
 
 
 CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (

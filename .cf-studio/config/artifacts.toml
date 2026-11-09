@@ -209,13 +209,13 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/backend/analytics/specs/connector-health/PRD.md"
+path = "docs/components/backend/connectors/specs/connector-health/PRD.md"
 name = "Connector Health PRD"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/backend/analytics/specs/connector-health/DESIGN.md"
+path = "docs/components/backend/connectors/specs/connector-health/DESIGN.md"
 name = "Connector Health Design"
 traceability = "DOCS-ONLY"
 

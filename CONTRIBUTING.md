@@ -444,10 +444,10 @@ docker run -d --rm --name ch-live -p 18123:8123 \
   echo "CREATE DATABASE IF NOT EXISTS ingestion_history" | run_ch
   for f in src/ingestion/scripts/migrations/*connector-sync-history*.sql; do run_ch < "$f"; done )
 
-# Analytics (Rust): the live tests are #[ignore]d and apply their own migrations
+# Connectors (Rust): the live tests are #[ignore]d and apply their own migrations
 INTEGRATION_TESTS_CLICKHOUSE_URL=http://localhost:18123 \
 INTEGRATION_TESTS_CLICKHOUSE_USER=insight INTEGRATION_TESTS_CLICKHOUSE_PASSWORD=insight \
-  cargo test --manifest-path src/backend/Cargo.toml -p analytics -- --ignored
+  cargo test --manifest-path src/backend/Cargo.toml -p connectors -- --ignored
 
 # Reconcile sweep (Python)
 SWEEP_TEST_CH_URL=http://localhost:18123 SWEEP_TEST_CH_USER=insight SWEEP_TEST_CH_PASSWORD=insight \

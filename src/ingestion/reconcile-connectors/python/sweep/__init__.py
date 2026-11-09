@@ -6,5 +6,5 @@ tick, which already authenticates to the mover, and copies that account into
 `ingestion_history.sync_events` so the connector health page can answer from
 one relation while everything above it is down.
 
-Spec: docs/components/backend/analytics/specs/connector-health.
+Spec: docs/components/backend/connectors/specs/connector-health.
 """
