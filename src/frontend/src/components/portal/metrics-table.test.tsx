@@ -156,7 +156,9 @@ async function drill(metric: TimeMetric) {
     />,
     { wrapper: Providers }
   );
-  const cell = screen.getByRole("button", { name: new RegExp(label(metric)) });
+  const cell = screen.getByRole("button", {
+    name: (name) => name.includes(label(metric)),
+  });
   const cellText = cell.textContent ?? "";
   await user.click(cell);
   const dialog = await screen.findByRole("dialog");
