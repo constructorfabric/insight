@@ -28,16 +28,14 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
-import {
+  Spinner,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import {
   cellText,
   evidenceRowKeys,
@@ -420,7 +418,7 @@ export function MetricEvidenceTable({
                       type="button"
                       onClick={() => onSortChange(column.key)}
                       className={cn(
-                        "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                        "group/sort flex min-w-0 items-center gap-1 rounded-sm [text-transform:inherit] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                         numeric && "flex-row-reverse",
                         state && "text-foreground"
                       )}
@@ -498,7 +496,10 @@ export function MetricEvidenceTable({
                       role="cell"
                       key={column.key}
                       className={cn(
-                        "h-11 min-w-0 px-3 py-3 tabular-nums",
+                        "h-11 min-w-0 px-3 tabular-nums",
+                        column.key === "ref" && value != null
+                          ? "flex items-center py-0"
+                          : "py-3",
                         column.type === "number" && "text-right"
                       )}
                     >

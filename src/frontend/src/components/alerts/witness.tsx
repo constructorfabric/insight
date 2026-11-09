@@ -6,7 +6,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { conditionColumns } from "@/lib/alerts/condition";
 import { cellText, matchedText } from "@/lib/alerts/describe";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";

@@ -2,8 +2,12 @@ import { UserRoundSearch } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { signIn, useAuth } from "@/auth";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@gears-frontx/ui-kit";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Button,
+} from "@gears-frontx/ui-kit";
 
 /**
  * The "viewing as" indicator for a `__override` view-as session
@@ -19,7 +23,7 @@ export function ViewAsBanner(): React.ReactElement | null {
   if (!session?.impersonatorEmail) return null;
 
   return (
-    <Alert variant="warning" className="rounded-none border-0 border-b">
+    <Alert className="rounded-none border-0 border-b">
       <UserRoundSearch />
       <AlertTitle>
         {t("view_as_banner.title", { email: session.email })}

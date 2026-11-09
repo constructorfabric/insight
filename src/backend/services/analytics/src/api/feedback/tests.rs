@@ -4,6 +4,7 @@ use sea_orm::{DbBackend, QueryTrait};
 use toolkit_canonical_errors::Problem;
 
 use super::*;
+use crate::infra::identity::RosterPerson;
 
 fn request(message: &str) -> FeedbackRequest {
     FeedbackRequest {
@@ -152,7 +153,7 @@ fn a_sender_the_identity_rows_name_is_named_in_the_listing() {
     let mut names = HashMap::new();
     names.insert(person, PersonName::named("Alice Example", "alice"));
 
-    let row = entry(stored(person, "the chart is empty"), &names);
+    let row = entry(stored(person, "the chart is empty"), &names, &Roster::new());
 
     assert_eq!(row.display_name, "Alice Example");
     assert_eq!(row.username, "alice");
@@ -162,7 +163,11 @@ fn a_sender_the_identity_rows_name_is_named_in_the_listing() {
 
 #[test]
 fn a_sender_the_mirror_does_not_carry_is_still_listed() {
-    let row = entry(stored(Uuid::now_v7(), "a note"), &HashMap::new());
+    let row = entry(
+        stored(Uuid::now_v7(), "a note"),
+        &HashMap::new(),
+        &Roster::new(),
+    );
 
     assert_eq!(row.display_name, "");
     assert_eq!(row.username, "");
@@ -174,7 +179,11 @@ fn a_sender_the_mirror_does_not_carry_is_still_listed() {
 
 #[test]
 fn the_listing_timestamp_is_a_whole_second_in_utc() {
-    let row = entry(stored(Uuid::now_v7(), "a note"), &HashMap::new());
+    let row = entry(
+        stored(Uuid::now_v7(), "a note"),
+        &HashMap::new(),
+        &Roster::new(),
+    );
 
     assert_eq!(row.ts.len(), "2026-08-22 05:31:59".len());
     assert!(row.ts.contains(':'), "{}", row.ts);
@@ -294,4 +303,26 @@ fn a_refused_direction_names_the_parameter() -> Result<(), serde_json::Error> {
         "direction"
     );
     Ok(())
+}
+
+#[test]
+fn a_sender_the_roster_lists_is_named_as_people_names_them() {
+    let person = Uuid::now_v7();
+    let mut names = HashMap::new();
+    names.insert(person, PersonName::named("alice", "alice"));
+    let mut roster = Roster::new();
+    roster.insert(
+        person,
+        RosterPerson {
+            person_id: person,
+            display_name: Some("Alice Example".to_owned()),
+            username: None,
+            email: Some("alice@example.com".to_owned()),
+        },
+    );
+
+    let row = entry(stored(person, "a note"), &names, &roster);
+
+    assert_eq!(row.display_name, "Alice Example");
+    assert_eq!(row.email.as_deref(), Some("alice@example.com"));
 }

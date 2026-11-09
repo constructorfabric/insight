@@ -187,8 +187,9 @@ describe("the pane prints what it was served", () => {
     const trigger = within(row).getByRole("button");
     expect(trigger).toHaveTextContent(/^Suspended$/);
     const user = userEvent.setup();
-    await user.tab();
-    await user.tab();
+    for (let stop = 0; stop < 5 && document.activeElement !== trigger; stop++) {
+      await user.tab();
+    }
     expect(trigger).toHaveFocus();
     const tooltip = await screen.findByRole("tooltip");
     expectTooltipLines(tooltip, [
@@ -278,8 +279,9 @@ describe("the pane prints what it was served", () => {
     if (gesture === "hover") {
       await user.hover(trigger);
     } else {
-      await user.tab();
-      await user.tab();
+      for (let stop = 0; stop < 5 && document.activeElement !== trigger; stop++) {
+        await user.tab();
+      }
       expect(trigger).toHaveFocus();
     }
 

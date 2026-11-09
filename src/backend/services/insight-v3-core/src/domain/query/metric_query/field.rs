@@ -74,6 +74,8 @@ pub(super) struct Field {
     /// Whether that division reads as a percentage.
     #[serde(default)]
     pub(super) percent: bool,
+    #[serde(default)]
+    pub(super) exact: bool,
 }
 
 impl Field {

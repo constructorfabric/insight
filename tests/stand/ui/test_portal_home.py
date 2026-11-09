@@ -20,17 +20,10 @@ def test_by_direction_loads(ceo_portal: PortalPage) -> None:
 
 
 @pytest.mark.requires_seed("ceo")
-def test_attention_needed_loads(ceo_portal: PortalPage) -> None:
+def test_worth_a_look_loads(ceo_portal: PortalPage) -> None:
     ceo_portal.open_zone("Home")
-    ceo_portal.open_pane_entry("Attention needed")
+    ceo_portal.open_pane_entry("Worth a look")
     ceo_portal.verify_page_loaded("page-overview-attention")
-
-
-@pytest.mark.requires_seed("ceo")
-def test_contribution_breakdown_loads(ceo_portal: PortalPage) -> None:
-    ceo_portal.open_zone("Home")
-    ceo_portal.open_pane_entry("Contribution breakdown")
-    ceo_portal.verify_page_loaded("page-overview-contribution")
 
 
 @pytest.mark.requires_seed("admin_operator")

@@ -54,6 +54,7 @@ describe("listPeople", () => {
             email: null,
             attributes: { department: "Engineering" },
             manager_person_id: null,
+            manager_name: null,
           },
         ],
         next_cursor: "next-page",
@@ -95,6 +96,31 @@ describe("listPeople", () => {
       body: { error: "malformed_roster" },
     });
   });
+
+  it("rejects a roster row whose manager name is not text", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        items: [
+          {
+            person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9",
+            display_name: null,
+            first_name: null,
+            last_name: null,
+            username: "example-user",
+            email: null,
+            attributes: {},
+            manager_person_id: null,
+            manager_name: 42,
+          },
+        ],
+        next_cursor: null,
+      })
+    );
+
+    await expect(listPeople()).rejects.toMatchObject({
+      body: { error: "malformed_roster" },
+    });
+  });
 });
 
 describe("getPerson", () => {
@@ -112,6 +138,7 @@ describe("getPerson", () => {
           job_title: "Lead",
         },
         manager_person_id: "019e27bc-dec0-7626-81a9-c5524662a6aa",
+        manager_name: null,
       })
     );
 

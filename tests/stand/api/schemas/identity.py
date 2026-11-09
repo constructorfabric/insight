@@ -171,6 +171,7 @@ class PeopleListItemResponse(BaseModel):
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
+    manager_name: str | None = None
     manager_person_id: UUID | None = None
     person_id: UUID
     username: str | None = None

@@ -402,7 +402,6 @@ SELECT
     ) AS details
 FROM issue_facts
 ARRAY JOIN arrayConcat(
-    if(ifNull(dev_seconds, 0) > 0, [tuple('dev_time_hours', toFloat64(dev_seconds / 3600.0))], []),
     if(ifNull(lead_seconds, 0) > 0, [tuple('resolution_days', toFloat64(lead_seconds / 86400.0))], []),
     if(pickup_seconds IS NOT NULL, [tuple('pickup_days', toFloat64(pickup_seconds / 86400.0))], [])
 ) AS duration_measure

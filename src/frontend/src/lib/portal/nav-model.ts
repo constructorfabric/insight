@@ -1,12 +1,12 @@
 import {
   Activity,
-  AlertTriangle,
   BarChart3,
   BookOpen,
   Bot,
   Clock,
   Copy,
   DollarSign,
+  Eye,
   FileSpreadsheet,
   FileText,
   Filter,
@@ -27,11 +27,14 @@ import {
   Share2,
   Sparkles,
   Star,
+  Table2,
   Ticket,
   TrendingUp,
   Users,
   type LucideIcon,
 } from "lucide-react";
+
+import type { DisplayText } from "@/i18n/localized-text";
 
 import {
   itemHidden,
@@ -81,10 +84,11 @@ export const ZONES: readonly Zone[] = [
   { id: "manage", label: "Manage", kind: "manage" },
 ];
 
-/** Zones every viewer may open: Home, their own page and Dashboards. */
+/** Zones every viewer may open: Home, their own page, Reports and Dashboards. */
 export const ZONES_FOR_EVERYONE: ReadonlySet<string> = new Set([
   "overview",
   "person",
+  "reports",
   "custom",
 ]);
 
@@ -179,7 +183,7 @@ export const DIRECTIONS: readonly Direction[] = [
 
 export interface PaneItem {
   id: string;
-  label: string;
+  label: DisplayText;
   icon: LucideIcon;
   badge?: { text: string; tone: "warn" | "new" | "error" };
   readiness?: Readiness;
@@ -264,8 +268,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
       items: [
         { id: "at-a-glance", label: "At a glance", icon: LayoutGrid },
         { id: "by-direction", label: "By direction", icon: Layers },
-        { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "contribution", label: "Contribution breakdown", icon: Users },
+        { id: "attention", label: { key: "worth_a_look.title" }, icon: Eye },
       ],
     },
   ],
@@ -333,6 +336,7 @@ export const STARTER_DASHBOARDS: PaneItem = {
 export const PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "roster", label: "My team", icon: Users },
   { id: "employees", label: "Roster · by role", icon: List },
+  { id: "metrics", label: "Metrics view", icon: Table2 },
 ];
 
 /**
@@ -345,6 +349,7 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
 const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "roster", label: "Overview", icon: LayoutGrid },
   { id: "employees", label: "Roster", icon: Users },
+  { id: "metrics", label: "Metrics view", icon: Table2 },
 ];
 
 export function peopleItemsFor(

@@ -67,9 +67,7 @@ function giveGeometry(
     >
   >
 ): HTMLElement & { scrollBy: ReturnType<typeof vi.fn> } {
-  const el = container.querySelector<HTMLElement>(
-    '[data-slot="table-container"]'
-  )!;
+  const el = container.querySelector("table")!.parentElement!;
   for (const [key, value] of Object.entries(box)) {
     Object.defineProperty(el, key, { value, configurable: true });
   }

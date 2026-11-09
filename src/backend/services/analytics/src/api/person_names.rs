@@ -10,9 +10,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 /// A `person_id → display_name / username` relation for one tenant, taking one
-/// bound tenant parameter. Names come from the mirrored rows: a per-caller
-/// profile lookup answers only for the caller's visible set, and these surfaces
-/// are org-wide.
+/// bound tenant parameter.
 pub(crate) fn named_persons() -> String {
     format!("({})", aggregate(""))
 }

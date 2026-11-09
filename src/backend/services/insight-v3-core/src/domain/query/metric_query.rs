@@ -385,6 +385,7 @@ pub(crate) struct CompiledQuery {
     column_types: HashMap<String, FieldType>,
     /// The columns whose numbers are percentages, so a reader can say so.
     percents: Vec<String>,
+    exacts: Vec<String>,
     /// Columns the query carries for its own reasons, which no reader is
     /// shown.
     hidden: Vec<String>,
@@ -404,6 +405,10 @@ impl CompiledQuery {
 
     pub(crate) fn percents(&self) -> &[String] {
         &self.percents
+    }
+
+    pub(crate) fn exacts(&self) -> &[String] {
+        &self.exacts
     }
 
     pub(crate) fn hidden(&self) -> &[String] {

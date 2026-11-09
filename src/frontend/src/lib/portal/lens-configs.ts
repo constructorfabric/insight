@@ -1,3 +1,4 @@
+import type { DisplayText } from "@/i18n/localized-text";
 import { evidenceCarriers } from "@/lib/metrics/evidence-via";
 import {
   directionHidden,
@@ -22,7 +23,7 @@ import {
  * note naming what would enable it (design D1, rule 9).
  *
  * Metric MEANING stays server-owned; configs carry keys + section composition
- * only. No named individuals anywhere (design D4/rule 10).
+ * only.
  */
 
 export type ConcentrationFraming = "bus-factor" | "load-balance";
@@ -98,10 +99,6 @@ export type SectionSpec =
       dimension: string;
       title: string;
     }
-  // The people who carried one dimension value, ranked, with the leader's
-  // share called out. Only ever rendered inside a drilldown, where the value
-  // is already the subject — a leaderboard of the whole roster is a different
-  // thing and this is not it.
   | {
       kind: "contributors";
       metric: string;
@@ -128,7 +125,7 @@ export type SectionSpec =
   | { kind: "direction-cards"; variant: "compact" | "full" };
 
 export interface LensConfig {
-  title: string;
+  title: DisplayText;
   /** Subtitle tail after "N people · " (defaults to "trend & balance"). */
   tagline?: string;
   sections: readonly SectionSpec[];
@@ -538,23 +535,24 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "headline",
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
+          "git.pr_size",
           "git.default_branch_lines_added",
+          "git.reviews_performed",
         ],
       },
       {
         kind: "stat-tiles",
         title: "Typical values (median)",
-        metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.default_branch_merge_rate"],
+        metrics: ["git.pr_cycle_time_h", "git.default_branch_merge_rate"],
       },
       {
         kind: "trend",
-        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
+        metrics: ["git.default_branch_prs_created", "git.default_branch_prs_merged"],
       },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
       },
       {
@@ -577,28 +575,26 @@ const DEV: Record<string, LensEntry> = {
         kind: "headline",
         labelSource: "short",
         metrics: [
-          "git.default_branch_commits",
-          "git.default_branch_prs_created",
           "git.default_branch_prs_merged",
+          "git.default_branch_prs_created",
+          "git.pr_size",
           "git.default_branch_code_lines",
         ],
       },
       {
         kind: "trend",
-        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
-      },
-      {
-        kind: "distribution",
-        metric: "git.default_branch_commits",
-        title: "How many commits people made",
-        caption:
-          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
-        unitLabel: "commits per person",
+        metrics: ["git.default_branch_prs_merged"],
       },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
+      },
+      {
+        kind: "contributors",
+        metric: "git.default_branch_prs_merged",
+        title: "PRs merged per person",
+        limit: Infinity,
       },
       {
         kind: "composition",
@@ -675,11 +671,7 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "stat-tiles",
         title: "Typical task times (median)",
-        metrics: [
-          "tasks.resolution_time",
-          "tasks.pickup_time",
-          "tasks.dev_time",
-        ],
+        metrics: ["tasks.resolution_time", "tasks.pickup_time"],
       },
       { kind: "trend", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {

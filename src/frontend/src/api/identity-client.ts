@@ -459,6 +459,7 @@ export interface PeopleListItem {
   email: string | null;
   attributes: Record<string, string>;
   manager_person_id: string | null;
+  manager_name: string | null;
 }
 
 export interface PeopleListResponse {
@@ -487,7 +488,8 @@ function isPeopleListItem(value: unknown): value is PeopleListItem {
     Object.values(attributes).every(
       (attribute) => typeof attribute === "string"
     ) &&
-    isNullableString(person.manager_person_id)
+    isNullableString(person.manager_person_id) &&
+    isNullableString(person.manager_name)
   );
 }
 

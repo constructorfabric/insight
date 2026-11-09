@@ -115,6 +115,7 @@ function rosterRows(
         ...(root.status ? { status: root.status } : {}),
       },
       manager_person_id: managerPersonId,
+      manager_name: null,
     },
     ...root.subordinates.flatMap((report) =>
       rosterRows(report, root.person_id),

@@ -570,6 +570,27 @@ fn a_ratio_can_read_as_a_percentage() {
 }
 
 #[test]
+fn a_field_marked_exact_is_named_so_its_digits_are_drawn_unrounded() {
+    let metric = query(json!({
+        "table": "events",
+        "fields": [
+            { "column": "day", "type": "string", "as_name": "day" },
+            { "column": "value", "type": "float", "agg": "sum", "as_name": "rounded" },
+            { "column": "value", "type": "float", "agg": "sum", "as_name": "spent",
+              "exact": true }
+        ],
+        "group_by": ["day"],
+        "filters": []
+    }));
+
+    let compiled = metric
+        .compile(&people())
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+    assert_eq!(compiled.exacts, ["spent"]);
+}
+
+#[test]
 fn a_ratio_naming_a_field_that_is_not_there_is_refused() {
     let metric = query(json!({
         "table": "events",

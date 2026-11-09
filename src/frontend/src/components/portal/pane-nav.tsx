@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
@@ -9,6 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { resolveText, type DisplayText } from "@/i18n/localized-text";
 import {
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
@@ -59,6 +61,11 @@ export function ItemBadge({ item }: { item: PaneItem }) {
   );
 }
 
+function ItemLabel({ text }: { text: DisplayText }) {
+  const { t } = useTranslation();
+  return <span>{resolveText(t, text)}</span>;
+}
+
 export function UnbuiltRow({ item }: { item: PaneItem }) {
   const Icon = item.icon;
   return (
@@ -69,7 +76,7 @@ export function UnbuiltRow({ item }: { item: PaneItem }) {
         className="text-muted-foreground aria-disabled:opacity-100"
       >
         <Icon />
-        <span>{item.label}</span>
+        <ItemLabel text={item.label} />
       </SidebarMenuButton>
       <SidebarMenuBadge className="font-normal text-muted-foreground">
         {PLANNED_GROUP_LABEL}
@@ -105,7 +112,7 @@ export function ItemButton({
         className={item.readiness != null ? "text-muted-foreground" : undefined}
       >
         <Icon />
-        <span>{item.label}</span>
+        <ItemLabel text={item.label} />
         <ItemBadge item={item} />
       </SidebarMenuButton>
     </SidebarMenuItem>

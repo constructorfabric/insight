@@ -72,6 +72,19 @@ it("filters the canonical people mock before paging", async () => {
   ]);
 });
 
+it("names each person's manager in the people mock", async () => {
+  const response = await fetch(
+    new URL("/api/identity/v1/people?q=bob", window.location.href)
+  );
+  const body = (await response.json()) as {
+    items: Array<{ display_name: string; manager_name: string | null }>;
+  };
+
+  expect(body.items).toContainEqual(
+    expect.objectContaining({ display_name: "Bob Park", manager_name: "Carol Chen" })
+  );
+});
+
 it("returns canonical person detail from the people mock", async () => {
   const response = await fetch(
     new URL(

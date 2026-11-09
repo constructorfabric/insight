@@ -44,6 +44,7 @@ function person(id: string, managerPersonId: string | null = null): PeopleListIt
     username: null,
     attributes: {},
     manager_person_id: managerPersonId,
+    manager_name: null,
   };
 }
 

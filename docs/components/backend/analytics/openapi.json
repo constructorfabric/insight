@@ -703,8 +703,15 @@
       "FeedbackEntry": {
         "properties": {
           "display_name": {
-            "description": "Empty when the sender has not been mirrored into the identity rows yet.",
+            "description": "The roster's name when it lists the sender, as People shows it; else\nthe identity rows', empty when they hold none.",
             "type": "string"
+          },
+          "email": {
+            "description": "The roster's address; null for a sender the roster does not list.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "feedback_id": {
             "type": "string"
@@ -722,7 +729,7 @@
             "type": "string"
           },
           "username": {
-            "description": "The account handle, empty when no identity row carries one.",
+            "description": "The roster's handle when it lists the sender; else the identity rows',\nempty when they hold none.",
             "type": "string"
           }
         },
@@ -3401,8 +3408,15 @@
       "UsagePerson": {
         "properties": {
           "display_name": {
-            "description": "Empty when the visitor has not been mirrored into the identity rows yet.",
+            "description": "The roster's name when it lists the visitor, as People shows it; else\nthe identity rows', empty when they hold none.",
             "type": "string"
+          },
+          "email": {
+            "description": "The roster's address; null for a visitor the roster does not list.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "last_seen": {
             "type": "string"
@@ -3416,7 +3430,7 @@
             "type": "string"
           },
           "username": {
-            "description": "The account handle, empty when no identity row carries one.",
+            "description": "The roster's handle when it lists the visitor; else the identity rows',\nempty when they hold none.",
             "type": "string"
           },
           "visits": {

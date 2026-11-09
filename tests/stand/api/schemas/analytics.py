@@ -192,13 +192,14 @@ class FeedbackEntry(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_name: str = Field(..., description='Empty when the sender has not been mirrored into the identity rows yet.')
+    display_name: str = Field(..., description="The roster's name when it lists the sender, as People shows it; else\nthe identity rows', empty when they hold none.")
+    email: str | None = Field(None, description="The roster's address; null for a sender the roster does not list.")
     feedback_id: str
     message: str
     path: str
     person_id: str
     ts: str
-    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+    username: str = Field(..., description="The roster's handle when it lists the sender; else the identity rows',\nempty when they hold none.")
 
 
 class FeedbackListResponse(BaseModel):
@@ -1079,11 +1080,12 @@ class UsagePerson(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_name: str = Field(..., description='Empty when the visitor has not been mirrored into the identity rows yet.')
+    display_name: str = Field(..., description="The roster's name when it lists the visitor, as People shows it; else\nthe identity rows', empty when they hold none.")
+    email: str | None = Field(None, description="The roster's address; null for a visitor the roster does not list.")
     last_seen: str
     page_views: int = Field(..., ge=0)
     person_id: str
-    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+    username: str = Field(..., description="The roster's handle when it lists the visitor; else the identity rows',\nempty when they hold none.")
     visits: int = Field(..., ge=0)
 
 

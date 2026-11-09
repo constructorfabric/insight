@@ -97,6 +97,10 @@ describe("resolveZoneItem", () => {
     expect(resolveZoneItem("overview", "trend")).toBe("at-a-glance");
   });
 
+  it("sends a link to the dropped Contribution breakdown to At a glance", () => {
+    expect(resolveZoneItem("overview", "contribution")).toBe("at-a-glance");
+  });
+
   it("falls back for an item that belongs to another zone", () => {
     expect(resolveZoneItem("people", "by-direction")).toBe("roster");
   });
@@ -203,14 +207,14 @@ describe("peopleItemsFor", () => {
   it("names the team views for an organisation with reporting lines", () => {
     const items = peopleItemsFor(false);
 
-    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
-    expect(items.map((item) => item.label)).toEqual(["My team", "Roster · by role"]);
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees", "metrics"]);
+    expect(items.map((item) => item.label)).toEqual(["My team", "Roster · by role", "Metrics view"]);
   });
 
   it("names the same views for an organisation with no reporting lines", () => {
     const items = peopleItemsFor(true);
 
-    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
-    expect(items.map((item) => item.label)).toEqual(["Overview", "Roster"]);
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees", "metrics"]);
+    expect(items.map((item) => item.label)).toEqual(["Overview", "Roster", "Metrics view"]);
   });
 });

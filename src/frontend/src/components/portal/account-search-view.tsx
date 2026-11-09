@@ -23,8 +23,7 @@ import {
 import { CaseDialog, type CaseRow } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { SourceFilter } from "@/components/portal/source-filter";
-import { Badge, Input } from "@gears-frontx/ui-kit";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, Badge, Input, Spinner } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Empty,
@@ -33,7 +32,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";

@@ -808,9 +808,8 @@ models:
       Source measure observations for the unified metrics runtime, task-delivery
       family. Reconstructs per-issue lifecycle (status pivot, spans, close/reopen
       transitions) from the task class contracts. Day-grain sum measures emit one
-      row per (tenant, entity, day, measure); event measures (dev_time_hours,
-      resolution_days, pickup_days) emit one row per closed issue for query-time
-      median. No distinct-count measure, so subject_key is NULL on every row. The
+      row per (tenant, entity, day, measure); event measures (resolution_days,
+      pickup_days) emit one row per closed issue for query-time median. No distinct-count measure, so subject_key is NULL on every row. The
       column set is the same published contract the analytics service schema
       validator probes (`OBSERVATION_COLUMNS`); changing it requires a
       coordinated backend change.
@@ -893,7 +892,6 @@ models:
                   - worklog_seconds
                   - in_progress_seconds
                   - stale_in_progress
-                  - dev_time_hours
                   - resolution_days
                   - pickup_days
       - name: value

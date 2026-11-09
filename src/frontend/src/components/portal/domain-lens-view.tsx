@@ -1,6 +1,8 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
+import { resolveText } from "@/i18n/localized-text";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
@@ -20,8 +22,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -166,6 +166,7 @@ export function DomainLensView({
    */
   gridKeys?: readonly string[];
 }) {
+  const { t } = useTranslation();
   const { dateRange, compareTo } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
@@ -196,6 +197,7 @@ export function DomainLensView({
       ),
     [declared, showPlanned, scoped]
   );
+  const title = resolveText(t, config.title);
   // Every request the screen makes carries this, so no section can forget it
   // and quietly answer about the whole tenant instead.
   const scopeFilters = useMemo(
@@ -538,7 +540,7 @@ export function DomainLensView({
       <Pending
         label={
           config.notIngested ??
-          `${config.title} — this data source is not connected yet.`
+          `${title} — this data source is not connected yet.`
         }
       />
     );
@@ -633,7 +635,7 @@ export function DomainLensView({
             onClick={() => openRepository("")}
             className="cursor-pointer text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
-            {declared.title}
+            {title}
           </button>
           <span aria-hidden className="text-muted-foreground">
             ›
@@ -644,7 +646,7 @@ export function DomainLensView({
       {!embedded ? <div className="relative flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
-            {scoped ? (scopedLabel ?? scoped) : config.title}
+            {scoped ? (scopedLabel ?? scoped) : title}
           </h1>
           <p className="text-sm text-muted-foreground">
             {personId
@@ -657,7 +659,7 @@ export function DomainLensView({
           <ExplainWithAi
             className="static"
             snapshot={trendSnapshot(drawable, {
-              title: config.title,
+              title,
               bucket: trendBucket,
               since: dateRange.from,
               until: dateRange.to,
@@ -899,6 +901,7 @@ function Section({
           grid={grid}
           memberIds={memberIds}
           nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
         />
       );
     case "heatmap-hours":
@@ -1740,12 +1743,20 @@ function ConcentrationSection({
   );
 }
 
+const CONCENTRATION_NAMES = 5;
+
+function concentrationNames(people: EvidencePeopleView): string {
+  const names = people.rows.map((row) => row.name);
+  const shown = names.slice(0, CONCENTRATION_NAMES).join(", ");
+  const rest = names.length - CONCENTRATION_NAMES;
+  return rest > 0 ? `${shown} +${rest} more` : shown;
+}
+
 /**
  * One concentration figure, and who the busiest tenth actually is.
  *
  * The card opens that subset rather than the roster: a list of everyone would
- * answer a different question from the one the card raises. Names stay inside
- * the dialog — the card itself still says nothing about any individual.
+ * answer a different question from the one the card raises.
  */
 function ConcentrationCard({
   card,
@@ -1770,6 +1781,9 @@ function ConcentrationCard({
       <div className="text-xs text-muted-foreground">
         carried by the {c.subset} · {note}
       </div>
+      {c.people.rows.length ? (
+        <div className="mt-2 text-sm">{concentrationNames(c.people)}</div>
+      ) : null}
     </CardContent>
   );
 
@@ -1922,31 +1936,40 @@ function CompositionSection({
   );
 }
 
-/* ── contributors + heatmap-hours (inside a drilldown) ───────────────── */
+/* ── contributors + heatmap-hours ────────────────────────────────────── */
 
 const CONTRIBUTOR_ROWS = 8;
 
-/**
- * The people who carried this one value, ranked.
- *
- * Named, unlike every roster-wide section: the subject is already one
- * repository, and "who works on this" is the question a reader descends to ask.
- * The roster-wide screens stay anonymous — see `AttentionSection` for the only
- * other place a name appears.
- */
 function ContributorsSection({
   spec,
   grid,
   memberIds,
   nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "contributors" }>;
   grid: GridData;
   memberIds: readonly string[];
   nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
+  const evidence = useMetricEvidenceOptional();
   const r = grid.byKey.get(spec.metric);
   if (!r) return null;
+
+  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric)) ?? null;
+  const people = peopleEvidenceView(
+    r,
+    memberIds,
+    spec.title,
+    { nameByEntity, personIdByEntity },
+    carrier
+  );
+  const targetByEntity = new Map(
+    people.rows.flatMap((row) =>
+      row.target ? [[row.entityId, row.target] as const] : []
+    )
+  );
 
   const ranked = entityValues(r, memberIds)
     .filter((e) => e.value > 0)
@@ -1969,12 +1992,19 @@ function ContributorsSection({
     });
   }
 
+  const openPerson = (row: BarRow) => {
+    const target = targetByEntity.get(row.key);
+    if (target) evidence?.openEvidence(target.selection, target.label);
+  };
+
   return (
     <BarList
       title={spec.title}
       rows={toBarRows(bucket)}
       format={r.format}
       unit={r.unit}
+      onOpen={evidence && targetByEntity.size ? openPerson : undefined}
+      canOpen={(row) => targetByEntity.has(row.key)}
     />
   );
 }

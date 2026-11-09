@@ -11,6 +11,7 @@ mod metric_results;
 mod metrics;
 mod person_names;
 mod reports;
+mod roster_names;
 mod saved_queries;
 mod sort_direction;
 pub(crate) mod usage;

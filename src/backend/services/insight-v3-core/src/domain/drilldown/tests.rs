@@ -14,6 +14,7 @@ fn column(key: &str, kind: ColumnKind) -> Column {
         key: key.to_owned(),
         kind,
         percent: false,
+        exact: false,
     }
 }
 

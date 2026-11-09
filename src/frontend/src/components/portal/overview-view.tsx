@@ -1,10 +1,12 @@
 import { useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
 import { DomainLensView, Pending } from "@/components/portal/domain-lens-view";
 import { HomeDashboards } from "@/components/portal/home-dashboards";
 import { MetricGroupsView } from "@/components/portal/metric-groups-view";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { resolveText, type DisplayText } from "@/i18n/localized-text";
 import { visibleGroups, type GroupId } from "@/lib/insight/groups";
 import { homeItemShown, useHomeSubject } from "@/lib/portal/home-subject";
 import { zoneById } from "@/lib/portal/nav-model";
@@ -119,17 +121,18 @@ function OwnThemePage({
   children,
 }: {
   item: string;
-  title: string;
+  title: DisplayText;
   tagline: string;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       data-testid={`page-overview-${item}`}
       className="flex flex-col gap-6 p-4 md:p-6"
     >
       <div>
-        <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{resolveText(t, title)}</h1>
         <p className="text-sm text-muted-foreground">{tagline}</p>
       </div>
       {children}
