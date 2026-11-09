@@ -444,78 +444,11 @@ export const TASK_METRIC_FIXTURES: MetricResult[] = [
   },
 ];
 
-export const GIT_METRIC_FIXTURES: MetricResult[] = [
-  {
-    metric_key: "git.default_branch_commits",
-    label: "Commits",
-    description: "Authored commits that reached the default branch",
-    unit: "commits",
-    format: "integer",
-    direction: "higher_is_better",
-    computation: "sum",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 42 }] },
-    ],
-  },
-  {
-    metric_key: "git.default_branch_prs_merged",
-    label: "PRs merged",
-    short_label: "PRs merged",
-    description: "Authored pull requests merged into the default branch",
-    unit: "PRs",
-    format: "integer",
-    direction: "higher_is_better",
-    computation: "sum",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 18 }] },
-    ],
-  },
-  {
-    metric_key: "git.default_branch_prs_created",
-    label: "PRs opened",
-    short_label: "PRs opened",
-    description: "Authored pull requests targeting the default branch",
-    unit: "PRs",
-    format: "integer",
-    direction: "higher_is_better",
-    computation: "sum",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 21 }] },
-    ],
-  },
-  {
-    metric_key: "git.pr_size",
-    label: "PR size",
-    description: "Typical diff size per pull request",
-    unit: "lines",
-    format: "integer",
-    direction: "lower_is_better",
-    computation: "median",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 140 }] },
-    ],
-  },
-  {
-    metric_key: "git.default_branch_code_lines",
-    label: "Code lines",
-    short_label: "Code lines",
-    description: "Lines added to code files that reached the default branch",
-    unit: "lines",
-    format: "integer",
-    direction: "higher_is_better",
-    computation: "sum",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 2400 }] },
-    ],
-  },
-];
-
 export function metricResultFixtureByKey(key: string): MetricResult | null {
   return (
     METRIC_RESULTS_RESPONSE_FIXTURE.metrics.find((m) => m.metric_key === key) ??
     COLLAB_METRIC_FIXTURES.find((m) => m.metric_key === key) ??
     TASK_METRIC_FIXTURES.find((m) => m.metric_key === key) ??
-    GIT_METRIC_FIXTURES.find((m) => m.metric_key === key) ??
     null
   );
 }
