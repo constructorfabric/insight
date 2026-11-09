@@ -37,5 +37,5 @@ export function AdminPicker({
     [...admins.data.personIds].filter((id) => !excluded.has(id))
   );
 
-  return <PersonPicker onlyIds={offered} onPick={onPick} source="roster" />;
+  return <PersonPicker onlyIds={offered} onPick={onPick} />;
 }

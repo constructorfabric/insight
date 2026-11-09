@@ -175,16 +175,15 @@ describe("<OrphanedDashboards>", () => {
     ).toBeDisabled();
   });
 
-  it("searches the tenant roster, not the identity journal, for the new owner", async () => {
+  // INVARIANT: an administrator need not have a current roster row, and the
+  // service accepts any of them as the new owner.
+  it("searches every person, not only the roster, for the new owner", async () => {
     const user = renderWith(<OrphanedDashboards />);
     await openTransfer(user);
 
-    expect(vi.mocked(usePersonList).mock.calls.map((call) => call[2])).toEqual(
-      expect.arrayContaining(["roster"])
-    );
-    expect(
-      vi.mocked(usePersonList).mock.calls.map((call) => call[2])
-    ).not.toContain("identities");
+    const sources = vi.mocked(usePersonList).mock.calls.map((call) => call[2]);
+    expect(sources).toContain("identities");
+    expect(sources).not.toContain("roster");
   });
 
   it("transfers to the picked administrator and reads the list again", async () => {
