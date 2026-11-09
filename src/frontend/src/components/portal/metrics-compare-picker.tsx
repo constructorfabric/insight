@@ -3,11 +3,13 @@ import { Search, Users } from "lucide-react";
 
 import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
 import {
+  Button,
+  Checkbox,
+  Input,
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { Button, Checkbox, Input } from "@gears-frontx/ui-kit";
+} from "@gears-frontx/ui-kit";
 import type { CompareTeam } from "@/lib/portal/metrics-view";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
 

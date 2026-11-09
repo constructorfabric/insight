@@ -14,13 +14,13 @@ import {
   ReportMetricPicker,
   type OfferedReportMetric,
 } from "@/components/portal/report-builder-metrics";
+import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
 import {
+  Button,
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
-import { Button } from "@gears-frontx/ui-kit";
+} from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { flattenSubordinates } from "@/lib/insight/identity-tree";
