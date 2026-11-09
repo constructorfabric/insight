@@ -384,6 +384,7 @@ jobs:
       # computes the same version.
       - name: Re-check the merge queue before pushing
         id: queue
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
@@ -398,8 +399,7 @@ jobs:
             echo 'matches=true' >> "$GITHUB_OUTPUT"
           else
             echo 'matches=false' >> "$GITHUB_OUTPUT"
-            echo '::error::Branch advanced while validating; candidate was not published. Start a new workflow run on the current branch tip; rerunning this candidate will not update its source SHA.'
-            exit 1
+            echo '::warning::Branch advanced while validating; candidate was not published.'
           fi
 
       - name: Helm registry login (GHCR)
@@ -494,6 +494,19 @@ jobs:
           path: published/chart.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Leave the release to a newer run
+        if: steps.queue.outputs.clear != 'true' || steps.current.outputs.matches != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if newer="$(python3 scripts/ci/superseding_run.py)"; then
+            echo "::notice::Candidate not published; ${newer} releases the newer branch tip."
+          else
+            echo '::error::Candidate not published and no newer run is waiting on this branch. Start a new workflow run on the current branch tip; rerunning this candidate will not update its source SHA.'
+            exit 1
+          fi
 
   publish-release-chart:
     if: |

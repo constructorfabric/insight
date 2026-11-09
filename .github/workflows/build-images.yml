@@ -24,6 +24,7 @@ on:
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
       - "scripts/ci/candidate_inputs.py"
+      - "scripts/ci/superseding_run.py"
       - "tests/datapath/**"
       - "tests/stand/**"
       - "docs/components/backend/*/openapi.json"
@@ -55,6 +56,7 @@ on:
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
       - "scripts/ci/candidate_inputs.py"
+      - "scripts/ci/superseding_run.py"
       - "tests/datapath/**"
       - "tests/stand/**"
       - "docs/components/backend/*/openapi.json"
@@ -346,6 +348,7 @@ jobs:
               - '.github/workflows/release-helm.yml'
               - '.github/workflows/scripts/verify-chart-candidate.sh'
               - '.github/workflows/scripts/wait-for-empty-merge-queue.sh'
+              - 'scripts/ci/superseding_run.py'
               - '.github/workflows/scripts/pin-chart-images.sh'
               - '.github/workflows/deploy-test-stand.yml'
               - '.github/workflows/build-images.yml'
@@ -2190,6 +2193,7 @@ jobs:
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     permissions:
       contents: read
+      actions: read
     outputs:
       clear: ${{ steps.wait.outputs.clear }}
     # INVARIANT: Leave time for the script to report an exhausted wait budget.
@@ -2201,9 +2205,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Wait for the merge queue to drain
         id: wait
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 45
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.wait.outputs.clear != 'true'
+        with:
+          python-version: "3.12"
+      - name: Leave the release to a newer run
+        if: steps.wait.outputs.clear != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if newer="$(python3 scripts/ci/superseding_run.py)"; then
+            echo "::notice::Merge queue stayed busy; ${newer} releases the newer branch tip."
+          else
+            echo '::error::Merge queue stayed busy and no newer run is waiting on this branch. Retry once the queue drains.'
+            exit 1
+          fi
 
   # ─── Connector descriptor bump ─────────────────────────────────────────────
   # After build-image succeeds on every matrix leg, patch each connector's
