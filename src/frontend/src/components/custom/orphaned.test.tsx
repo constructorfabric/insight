@@ -24,7 +24,7 @@ const people = vi.hoisted(() => {
 });
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
-  usePersonList: () => ({
+  usePersonList: vi.fn(() => ({
     data: {
       pages: [
         {
@@ -40,7 +40,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
     isError: false,
     hasNextPage: false,
     fetchNextPage: vi.fn(),
-  }),
+  })),
 }));
 vi.mock("@/queries/person-name", () => ({
   usePersonName: (personId: string | null) => ({
@@ -62,6 +62,7 @@ import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import * as identityClient from "@/api/identity-client";
+import { usePersonList } from "@/queries/identity-resolution";
 
 import { type Orphan, OrphanedDashboards, TransferOrphan } from "./orphaned";
 
@@ -172,6 +173,18 @@ describe("<OrphanedDashboards>", () => {
     expect(
       within(dialog).getByRole("button", { name: "Transfer" })
     ).toBeDisabled();
+  });
+
+  it("searches the tenant roster, not the identity journal, for the new owner", async () => {
+    const user = renderWith(<OrphanedDashboards />);
+    await openTransfer(user);
+
+    expect(vi.mocked(usePersonList).mock.calls.map((call) => call[2])).toEqual(
+      expect.arrayContaining(["roster"])
+    );
+    expect(
+      vi.mocked(usePersonList).mock.calls.map((call) => call[2])
+    ).not.toContain("identities");
   });
 
   it("transfers to the picked administrator and reads the list again", async () => {
