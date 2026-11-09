@@ -29,16 +29,22 @@ vi.mock("@/components/feedback-context", () => ({
 vi.mock("@/lib/portal/use-shell-layout", () => ({
   useShellLayout: () => mocks.layout,
 }));
-vi.mock("@/lib/portal/use-rail-nav", () => ({
-  useRailNav: () => ({
-    items: [
-      { id: "home", label: "Home", icon: () => null, zones: ["overview"] },
-      { id: "people", label: "People", icon: () => null, zones: ["person", "people"] },
-    ],
-    activeItem: mocks.activeItem,
-    selectItem: (item: { id: string }) => mocks.selected.push(item.id),
-  }),
-}));
+vi.mock("@/lib/portal/use-rail-nav", async () => {
+  const { railItemFor } = await vi.importActual<typeof import("@/lib/portal/rail-model")>(
+    "@/lib/portal/rail-model",
+  );
+  return {
+    useRailNav: () => ({
+      items: [
+        { id: "home", label: "Home", icon: () => null, zones: ["overview"] },
+        { id: "people", label: "People", icon: () => null, zones: ["person", "people"] },
+        railItemFor("manage"),
+      ],
+      activeItem: mocks.activeItem,
+      selectItem: (item: { id: string }) => mocks.selected.push(item.id),
+    }),
+  };
+});
 vi.mock("@/components/app-sidebar-footer", () => ({
   AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
     <button type="button" onClick={onNavigate}>
@@ -63,6 +69,9 @@ const rail = () =>
 /** The label is present either way; what changes is whether it can be seen. */
 const labelOf = (name: string) =>
   screen.getByRole("button", { name }).querySelector("span:not(.sr-only)");
+
+const iconShapeOf = (name: string) =>
+  screen.getByRole("button", { name }).querySelector("svg")?.innerHTML;
 
 beforeEach(() => {
   // `shouldAdvanceTime` is required, not incidental: `userEvent` awaits a real
@@ -161,6 +170,12 @@ describe("LensRail", () => {
   it("uncaps the brand mark so WebKit does not shrink the product name to an ellipsis", () => {
     rail();
     expect(screen.getByRole("img", { name: "Constructor Fabric" })).toHaveClass("max-w-none");
+  });
+
+  it("draws the settings button with a different icon than Manage", () => {
+    rail();
+    expect(iconShapeOf("Manage")).toBeTruthy();
+    expect(iconShapeOf("Settings")).not.toBe(iconShapeOf("Manage"));
   });
 });
 

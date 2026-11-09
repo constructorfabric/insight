@@ -19,6 +19,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  layout: "wide" as "phone" | "narrow" | "wide",
   isFlat: false,
   zone: { activeZone: "overview", activePerson: "boss@x" },
   standings: [] as Array<{
@@ -43,6 +44,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
+vi.mock("@/lib/portal/use-shell-layout", () => ({ useShellLayout: () => mocks.layout }));
 vi.mock("@/components/org-tree", () => ({
   OrgTree: () => <div data-testid="org-tree" />,
 }));
@@ -138,6 +140,7 @@ beforeEach(() => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   inZone("overview");
+  mocks.layout = "wide";
   mocks.isFlat = false;
   mocks.isAdmin = false;
   mocks.canSeeOthers = true;
@@ -174,6 +177,20 @@ describe("ContextPane header", () => {
     inZone(zone);
     pane();
     expect(screen.getByText(title, { selector: '[data-slot="sidebar-header"] *' })).toBeInTheDocument();
+  });
+});
+
+describe("Phone drawer", () => {
+  it("draws the settings row with a different icon than Manage", () => {
+    mocks.layout = "phone";
+    inZone("manage");
+    pane();
+
+    const iconShapeOf = (name: string) =>
+      screen.getByRole("button", { name }).querySelector("svg")?.innerHTML;
+
+    expect(iconShapeOf("Manage")).toBeTruthy();
+    expect(iconShapeOf("Settings")).not.toBe(iconShapeOf("Manage"));
   });
 });
 
