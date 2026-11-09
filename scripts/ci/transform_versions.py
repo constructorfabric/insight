@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 from dataclasses import dataclass
@@ -33,10 +31,14 @@ CONFIG_END = re.compile(r"\s*[-+]?\}\}")
 
 @dataclass(frozen=True)
 class Model:
+    name: str
+    raw_sql: str
     sql: str
     config: dict[str, Json]
     version: int | None
     macros: tuple[str, ...]
+    nodes: tuple[str, ...]
+    tags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ class Macro:
 class Manifest:
     models: dict[str, Model]
     macros: dict[str, Macro]
+    variables: dict[str, Json]
 
 
 @dataclass(frozen=True)
@@ -105,11 +108,22 @@ def object_value(value: Json) -> dict[str, Json]:
     return value
 
 
-def dependencies(node: dict[str, Json]) -> tuple[str, ...]:
-    values = object_value(node["depends_on"])["macros"]
+def string_list(values: Json) -> tuple[str, ...]:
     if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
-        raise ValueError("expected a manifest macro dependency list")
-    return tuple(cast(list[str], values))
+        raise ValueError("expected a manifest string list")
+    return tuple(sorted(set(cast(list[str], values))))
+
+
+def literal_calls(text: str, function: str) -> tuple[str, ...]:
+    pattern = re.compile(rf"\b{re.escape(function)}\s*\(\s*(['\"])(.*?)\1\s*(?=[,)])", re.DOTALL)
+    names: set[str] = set()
+    for token in TOKEN.finditer(text):
+        if token.lastgroup != "other":
+            continue
+        call = pattern.match(text, token.start())
+        if call is not None:
+            names.add(call.group(2))
+    return tuple(sorted(names))
 
 
 def contract_columns(raw_columns: Json) -> dict[str, Json]:
@@ -120,7 +134,7 @@ def contract_columns(raw_columns: Json) -> dict[str, Json]:
     return columns
 
 
-def read_manifest(data: dict[str, Json]) -> Manifest:
+def read_manifest(data: dict[str, Json], variables: dict[str, Json]) -> Manifest:
     nodes = dict(object_value(data["nodes"]))
     if "disabled" in data:
         for name, variants in object_value(data["disabled"]).items():
@@ -145,15 +159,25 @@ def read_manifest(data: dict[str, Json]) -> Manifest:
         if object_value(config["contract"])["enforced"]:
             build["constraints"] = node["constraints"]
             build["columns"] = contract_columns(node["columns"])
+        raw_sql = normalize(str(node["raw_code"]))
+        dependencies = object_value(node["depends_on"])
         models[name] = Model(
-            normalize(str(node["raw_code"]), model_sql=True), build, cast(int | None, version), dependencies(node)
+            name,
+            raw_sql,
+            normalize(str(node["raw_code"]), model_sql=True),
+            build,
+            cast(int | None, version),
+            string_list(dependencies["macros"]),
+            string_list(dependencies["nodes"]),
+            string_list(node["tags"]),
         )
 
     macros: dict[str, Macro] = {}
     for name, value in object_value(data["macros"]).items():
         macro = object_value(value)
-        macros[name] = Macro(normalize(str(macro["macro_sql"])), dependencies(macro))
-    return Manifest(models, macros)
+        dependencies = object_value(macro["depends_on"])
+        macros[name] = Macro(normalize(str(macro["macro_sql"])), string_list(dependencies["macros"]))
+    return Manifest(models, macros, variables)
 
 
 def macro_closure(model: Model, macros: dict[str, Macro]) -> dict[str, str]:
@@ -169,8 +193,33 @@ def macro_closure(model: Model, macros: dict[str, Macro]) -> dict[str, str]:
     return result
 
 
+def contributors(model: Model, manifest: Manifest) -> tuple[str, ...]:
+    tags = set(literal_calls(model.raw_sql, "union_by_tag"))
+    return tuple(
+        sorted(
+            name
+            for name, candidate in manifest.models.items()
+            if name != model.name and candidate.config.get("enabled") is not False and tags.intersection(candidate.tags)
+        )
+    )
+
+
+def variable_values(model: Model, macros: dict[str, str], variables: dict[str, Json]) -> dict[str, tuple[Json, ...]]:
+    names = set(literal_calls(model.raw_sql, "var"))
+    for body in macros.values():
+        names.update(literal_calls(body, "var"))
+    values: dict[str, tuple[Json, ...]] = {}
+    for name in names:
+        values[name] = (variables[name],) if name in variables else ()
+    return values
+
+
 def definition_changes(before: Model, after: Model, base: Manifest, head: Manifest) -> tuple[str, ...]:
     changes = ["sql"] if before.sql != after.sql else []
+    if before.nodes != after.nodes:
+        changes.append("dependencies")
+    if contributors(before, base) != contributors(after, head):
+        changes.append("contributors")
     for key in sorted(before.config.keys() | after.config.keys()):
         if before.config.get(key) != after.config.get(key):
             changes.append(f"config {key}")
@@ -180,6 +229,11 @@ def definition_changes(before: Model, after: Model, base: Manifest, head: Manife
     for name in sorted(old_macros.keys() | new_macros.keys()):
         if old_macros.get(name) != new_macros.get(name):
             changes.append(f"macro {name}")
+    old_variables = variable_values(before, old_macros, base.variables)
+    new_variables = variable_values(after, new_macros, head.variables)
+    for name in sorted(old_variables.keys() | new_variables.keys()):
+        if old_variables.get(name) != new_variables.get(name):
+            changes.append(f"var {name}")
     return tuple(changes)
 
 
@@ -218,11 +272,14 @@ def snapshot(root: Path, destination: Path, revision: str | None) -> None:
         return
 
     archive = subprocess.run(["git", "archive", revision, *map(str, INPUTS)], cwd=root, check=True, capture_output=True)
-    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as bundle:
-        bundle.extractall(destination, filter="data")
+    subprocess.run(["tar", "-xf", "-", "-C", str(destination)], input=archive.stdout, check=True)
 
 
 def parse_snapshot(directory: Path, dbt: str) -> Manifest:
+    import yaml
+
+    project = yaml.safe_load((directory / PROJECT / "dbt_project.yml").read_text(encoding="utf-8"))
+    variables = object_value(project["vars"]) if "vars" in project else {}
     profile: dict[str, Json] = {
         "transform_guard": {
             "target": "offline",
@@ -268,7 +325,7 @@ def parse_snapshot(directory: Path, dbt: str) -> Manifest:
     if result.returncode:
         raise ValueError(f"dbt parse failed:\n{result.stdout}\n{result.stderr}")
     data = json.loads((directory / PROJECT / "target/manifest.json").read_text(encoding="utf-8"))
-    return read_manifest(data)
+    return read_manifest(data, variables)
 
 
 def main() -> int:

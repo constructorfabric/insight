@@ -25,7 +25,8 @@ def model(sql: str = "SELECT 1", *, version: guard.Json = 1, **config: guard.Jso
         "database": "",
         "description": "",
         "columns": {},
-        "depends_on": {"macros": []},
+        "tags": config.get("tags", []),
+        "depends_on": {"macros": [], "nodes": []},
     }
 
 
@@ -33,12 +34,26 @@ def macro(sql: str, *dependencies: str) -> dict[str, guard.Json]:
     return {"macro_sql": sql, "depends_on": {"macros": list(dependencies)}}
 
 
-def manifest(nodes: dict[str, guard.Json], macros: dict[str, guard.Json]) -> guard.Manifest:
-    return guard.read_manifest({"nodes": nodes, "macros": macros})
+def manifest(
+    nodes: dict[str, guard.Json], macros: dict[str, guard.Json], variables: dict[str, guard.Json] | None = None
+) -> guard.Manifest:
+    return guard.read_manifest({"nodes": nodes, "macros": macros}, {} if variables is None else variables)
 
 
 def judge(before: dict[str, guard.Json], after: dict[str, guard.Json]) -> list[guard.Finding]:
     return guard.compare(manifest({"model.example.one": before}, {}), manifest({"model.example.one": after}, {}))
+
+
+def union_manifest(contributing: bool, *, hint: bool, version: int = 1) -> guard.Manifest:
+    tags: list[guard.Json] = ["silver:example"] if contributing else []
+    producer = model(f"{{{{ config(tags={tags!r}) }}}} SELECT 1", tags=tags)
+    consumer = model("SELECT * FROM {{ union_by_tag('silver:example') }}", version=version)
+    guard.object_value(consumer["depends_on"])["macros"] = ["macro.example.union_by_tag"]
+    if hint:
+        consumer["raw_code"] = "-- depends_on: {{ ref('producer') }}\n" + str(consumer["raw_code"])
+        guard.object_value(consumer["depends_on"])["nodes"] = ["model.example.producer"]
+    nodes = {"model.example.consumer": consumer, "model.example.producer": producer}
+    return manifest(nodes, {"macro.example.union_by_tag": macro("SELECT 1")})
 
 
 class TransformVersionTests(unittest.TestCase):
@@ -120,9 +135,9 @@ class TransformVersionTests(unittest.TestCase):
 
     def test_macro_changes_reach_direct_and_transitive_users_only(self) -> None:
         direct = model()
-        direct["depends_on"] = {"macros": ["macro.example.leaf"]}
+        direct["depends_on"] = {"macros": ["macro.example.leaf"], "nodes": []}
         transitive = model()
-        transitive["depends_on"] = {"macros": ["macro.example.wrapper"]}
+        transitive["depends_on"] = {"macros": ["macro.example.wrapper"], "nodes": []}
         nodes = {"model.example.direct": direct, "model.example.transitive": transitive, "model.example.other": model()}
         old = {
             "macro.example.leaf": macro("{% macro leaf() %}1{% endmacro %}"),
@@ -138,7 +153,7 @@ class TransformVersionTests(unittest.TestCase):
 
     def test_macro_comments_and_whitespace_do_not_require_a_bump(self) -> None:
         node = model()
-        node["depends_on"] = {"macros": ["macro.example.leaf"]}
+        node["depends_on"] = {"macros": ["macro.example.leaf"], "nodes": []}
         old = manifest({"one": node}, {"macro.example.leaf": macro("SELECT 1")})
         for sql in ("SELECT   1", "SELECT /* note */ 1", "SELECT 1 -- note", "SELECT {# note #} 1"):
             with self.subTest(sql=sql):
@@ -147,7 +162,7 @@ class TransformVersionTests(unittest.TestCase):
 
     def test_dispatch_dependencies_and_cycles_are_followed(self) -> None:
         node = model()
-        node["depends_on"] = {"macros": ["macro.example.wrapper"]}
+        node["depends_on"] = {"macros": ["macro.example.wrapper"], "nodes": []}
         old = {
             "macro.example.wrapper": macro("{{ adapter.dispatch('leaf')() }}", "macro.example.clickhouse__leaf"),
             "macro.example.clickhouse__leaf": macro("SELECT 1", "macro.example.wrapper"),
@@ -159,7 +174,7 @@ class TransformVersionTests(unittest.TestCase):
 
     def test_removed_macro_dependencies_change_the_definition(self) -> None:
         before = model()
-        before["depends_on"] = {"macros": ["macro.example.leaf"]}
+        before["depends_on"] = {"macros": ["macro.example.leaf"], "nodes": []}
         old = manifest({"one": before}, {"macro.example.leaf": macro("SELECT 1")})
         new = manifest({"one": model()}, {})
         self.assertEqual(guard.compare(old, new)[0].changes, ("macro macro.example.leaf",))
@@ -219,14 +234,14 @@ class TransformVersionTests(unittest.TestCase):
 
     def test_missing_macro_definitions_fail_closed(self) -> None:
         node = model()
-        node["depends_on"] = {"macros": ["macro.example.missing"]}
+        node["depends_on"] = {"macros": ["macro.example.missing"], "nodes": []}
         broken = manifest({"one": node}, {})
         with self.assertRaises(KeyError):
             guard.compare(broken, broken)
 
     def test_macro_changes_with_higher_model_versions_pass(self) -> None:
         before = model()
-        before["depends_on"] = {"macros": ["macro.example.leaf"]}
+        before["depends_on"] = {"macros": ["macro.example.leaf"], "nodes": []}
         after = copy.deepcopy(before)
         guard.object_value(guard.object_value(after["config"])["meta"])["transform_version"] = 2
         old = manifest({"one": before}, {"macro.example.leaf": macro("SELECT 1")})
@@ -235,7 +250,7 @@ class TransformVersionTests(unittest.TestCase):
 
     def test_disabled_models_keep_version_enforcement(self) -> None:
         old = manifest({"one": model(enabled=True)}, {})
-        new = guard.read_manifest({"nodes": {}, "disabled": {"one": [model(enabled=False)]}, "macros": {}})
+        new = guard.read_manifest({"nodes": {}, "disabled": {"one": [model(enabled=False)]}, "macros": {}}, {})
         self.assertEqual(guard.compare(old, new)[0].changes, ("config enabled",))
 
     def test_history_before_versions_passes(self) -> None:
@@ -249,3 +264,102 @@ class TransformVersionTests(unittest.TestCase):
         after = model()
         guard.object_value(after["config"])["meta"] = {}
         self.assertEqual(judge(model(), after)[0].changes, ("missing transform_version",))
+
+    def test_contributor_changes_require_only_the_consumer_to_bump(self) -> None:
+        for before, after in ((False, True), (True, False)):
+            with self.subTest(before=before, after=after):
+                base = union_manifest(before, hint=before)
+                head = union_manifest(after, hint=after)
+                expected = guard.Finding("model.example.consumer", 1, 1, ("dependencies", "contributors"))
+                self.assertEqual(guard.compare(base, head), [expected])
+                bumped = union_manifest(after, hint=after, version=2)
+                self.assertEqual(guard.compare(base, bumped), [])
+
+    def test_contributor_tags_are_tracked_without_hints(self) -> None:
+        for before, after in ((False, True), (True, False)):
+            with self.subTest(before=before, after=after):
+                base = union_manifest(before, hint=False)
+                head = union_manifest(after, hint=False)
+                self.assertEqual(
+                    guard.compare(base, head), [guard.Finding("model.example.consumer", 1, 1, ("contributors",))]
+                )
+
+    def test_ref_and_source_changes_require_a_bump(self) -> None:
+        for dependency in ("model.example.input", "source.example.bronze.input"):
+            before = model()
+            after = model()
+            guard.object_value(after["depends_on"])["nodes"] = [dependency]
+            with self.subTest(dependency=dependency):
+                self.assertEqual(judge(before, after)[0].changes, ("dependencies",))
+                self.assertEqual(judge(after, before)[0].changes, ("dependencies",))
+
+    def test_dependency_order_is_irrelevant(self) -> None:
+        before = model()
+        after = model()
+        guard.object_value(before["depends_on"])["nodes"] = ["model.example.a", "source.example.b"]
+        guard.object_value(after["depends_on"])["nodes"] = ["source.example.b", "model.example.a", "source.example.b"]
+        self.assertEqual(judge(before, after), [])
+
+    def test_project_variable_changes_reach_only_sql_and_macro_readers(self) -> None:
+        direct = model("SELECT {{ var('example_patterns') }}")
+        direct_macro = model("SELECT {{ leaf() }}")
+        direct_macro["depends_on"] = {"macros": ["macro.example.leaf"], "nodes": []}
+        macro_reader = model("SELECT {{ wrapper() }}")
+        macro_reader["depends_on"] = {"macros": ["macro.example.wrapper"], "nodes": []}
+        macros = {
+            "macro.example.wrapper": macro("{{ leaf() }}", "macro.example.leaf"),
+            "macro.example.leaf": macro('{{ var("example_patterns", []) }}'),
+        }
+        nodes = {
+            "model.example.direct_macro": direct_macro,
+            "model.example.sql": direct,
+            "model.example.transitive": macro_reader,
+            "model.example.other": model(),
+        }
+        before = manifest(nodes, macros, {"example_patterns": ["^a"]})
+        after = manifest(nodes, macros, {"example_patterns": ["^b"]})
+        findings = guard.compare(before, after)
+        self.assertEqual(
+            findings,
+            [
+                guard.Finding("model.example.direct_macro", 1, 1, ("var example_patterns",)),
+                guard.Finding("model.example.sql", 1, 1, ("var example_patterns",)),
+                guard.Finding("model.example.transitive", 1, 1, ("var example_patterns",)),
+            ],
+        )
+
+    def test_unrelated_project_variable_changes_pass(self) -> None:
+        nodes = {"one": model("SELECT {{ var('used') }}")}
+        before = manifest(nodes, {}, {"used": 1, "unused": 1})
+        after = manifest(nodes, {}, {"used": 1, "unused": 2})
+        self.assertEqual(guard.compare(before, after), [])
+
+    def test_absent_project_variables_differ_from_null_values(self) -> None:
+        nodes = {"one": model("SELECT {{ var('example', 'fallback') }}")}
+        before = manifest(nodes, {}, {})
+        after = manifest(nodes, {}, {"example": None})
+        self.assertEqual(guard.compare(before, after), [guard.Finding("one", 1, 1, ("var example",))])
+        self.assertEqual(guard.compare(after, before), [guard.Finding("one", 1, 1, ("var example",))])
+
+    def test_literal_variable_names_with_or_without_defaults_are_tracked(self) -> None:
+        for expression in ("var('example')", 'var("example")', "var('example', 0)", 'var("example", 0)'):
+            with self.subTest(expression=expression):
+                nodes = {"one": model("SELECT {{ " + expression + " }}")}
+                before = manifest(nodes, {}, {"example": 1})
+                after = manifest(nodes, {}, {"example": 2})
+                self.assertEqual(guard.compare(before, after), [guard.Finding("one", 1, 1, ("var example",))])
+
+    def test_dynamic_and_documentary_variable_calls_are_ignored(self) -> None:
+        for sql in (
+            "SELECT {{ var(name) }}",
+            "SELECT {{ var('prefix' ~ suffix, 0) }}",
+            "SELECT 1 -- var('example')",
+            "SELECT /* var('example') */ 1",
+            "SELECT {# var('example') #} 1",
+            "SELECT 'var(\"example\")'",
+        ):
+            with self.subTest(sql=sql):
+                nodes = {"one": model(sql)}
+                before = manifest(nodes, {}, {"example": 1})
+                after = manifest(nodes, {}, {"example": 2})
+                self.assertEqual(guard.compare(before, after), [])
