@@ -69,12 +69,11 @@ request gets 401.
    - every day, or every weekday, at a chosen time;
    - custom: 1 to 10 cron expressions, five fields, UTC.
 2. Any frequency is allowed.
-3. Typing a minute or a time replaces the value in the field, in every supported browser.
-4. Before saving, the editor shows the cron that will be stored and the next three runs.
-5. An invalid value shows an error next to the field, and Save stays disabled.
-6. Save stores the schedule and applies it to the sync job at once.
-7. The badge says Applied only after the service has read the sync job back and found the saved schedule on it.
-8. If another admin changed the schedule in the meantime, the save is refused, and the editor
+3. Before saving, the editor shows the cron that will be stored and the next three runs.
+4. An invalid value shows an error next to the field, and Save stays disabled.
+5. Save stores the schedule and applies it to the sync job at once.
+6. The badge says Applied only after the service has read the sync job back and found the saved schedule on it.
+7. If another admin changed the schedule in the meantime, the save is refused, and the editor
    reloads the current schedule and says so.
 
 ### 4.4 Resetting a schedule
@@ -127,6 +126,4 @@ request gets 401.
 7. A failed sync shows as failed in the row, sorts first, and is listed in the sync history.
 8. With the read-only account unable to read saved schedules, a reconcile pass changes no sync job's
    schedule and reports one failure; once access is back, the next pass is clean.
-9. Changing the minute of an hourly schedule by clicking the field and typing works in Safari and in
-   Chrome.
-10. A non-admin gets 403 from every schedule and health API.
+9. A non-admin gets 403 from every schedule and health API.
