@@ -57,6 +57,9 @@ permissions:
   contents: read
   actions: read
 
+env:
+  UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031 # v1.64.1-noble
+
 jobs:
   test-stand:
     name: deploy → seed → smoke → suite
@@ -560,24 +563,21 @@ jobs:
             exit 1
           fi
 
-          # INVARIANT: the restarted pod validates evidence at boot; smoke starts
-          # after the browser install below, past that pass.
+          # Analytics re-validates evidence in the background after this restart; nothing waits for that pass before smoke.
           kubectl -n "$STAND_NAMESPACE" rollout restart "deploy/${STAND_RELEASE}-analytics" 2>&1 | python3 "$REDACT"
           kubectl -n "$STAND_NAMESPACE" rollout status "deploy/${STAND_RELEASE}-analytics" --timeout=5m 2>&1 | python3 "$REDACT"
           echo "==> gold rebuilt over the retained dataset; analytics restarted"
 
-      # Chromium and its system libraries, resolved by the locked test
-      # environment so every runner drives the same build. Its own step: a
-      # failed install is an infrastructure problem, not a red suite.
+      # Its own step: a failed pull is an infrastructure problem, not a red suite.
       #
       # INVARIANT: this runs BEFORE the smoke gate. `stand_smoke` selects
       # browser journeys as well as API cases, so a smoke-only run needs the
       # browser too — move this below the gate and a `deploy+seed+smoke` run
       # can never pass.
-      - name: 'Install the browser the journeys drive'
+      - name: 'Pull the browser image the journeys drive'
         if: steps.stages.outputs.run_smoke == 'true' || steps.stages.outputs.run_suite == 'true'
         timeout-minutes: 10
-        run: uv run --project tests --frozen playwright install --with-deps chromium
+        run: docker pull "$UI_TESTS_IMAGE"
 
       - name: 'Stage 4/5 — smoke the stand through its public URL'
         id: smoke
@@ -595,8 +595,8 @@ jobs:
           # Explicit: the library default is relative to its own location.
           export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
           mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
-          uv run --project tests --frozen \
-            pytest tests/stand -m stand_smoke --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+          .github/workflows/scripts/stand-suite-in-image.sh \
+            tests/stand -m stand_smoke --stand-manifest /stand/manifest.json \
             2>&1 | python3 "$REDACT"
 
       # Every API contract and every browser journey, against the stand this run
@@ -624,8 +624,8 @@ jobs:
           mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
           # retain-on-failure: a green run then carries no session credentials
           # off the runner at all, which is a smaller problem than redacting one.
-          uv run --project tests --frozen \
-            pytest tests/stand -ra -m 'not requires_service_principal' --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+          .github/workflows/scripts/stand-suite-in-image.sh \
+            tests/stand -ra -m 'not requires_service_principal' --stand-manifest /stand/manifest.json \
             --browser chromium \
             --tracing=retain-on-failure \
             --screenshot=only-on-failure \
