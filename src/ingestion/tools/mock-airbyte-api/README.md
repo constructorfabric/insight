@@ -7,8 +7,8 @@ chart and full API reference are in
 For a host process, provide every runtime input explicitly:
 
 ```bash
+export MOCK_CONTROL_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
 MOCK_HOST=127.0.0.1 MOCK_PORT=8081 MOCK_JOURNAL_RETENTION=1000 MOCK_UPSTREAM_TIMEOUT=300 \
-MOCK_CONTROL_TOKEN=synthetic-control-token \
 MOCK_AIRBYTE_UPSTREAM=http://127.0.0.1:8001 \
 python3 src/ingestion/tools/mock-airbyte-api/server.py
 ```

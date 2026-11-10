@@ -120,9 +120,9 @@ class StreamSocket(socket.socket):
 
 
 @contextmanager
-def running() -> Iterator[tuple[Server, ThreadingHTTPServer]]:
+def running(upstream_handler: type[BaseHTTPRequestHandler] = Upstream) -> Iterator[tuple[Server, ThreadingHTTPServer]]:
     with patch.object(ThreadingHTTPServer, "server_bind"), patch.object(ThreadingHTTPServer, "server_activate"):
-        upstream = ThreadingHTTPServer(("127.0.0.1", 10001), Upstream)
+        upstream = ThreadingHTTPServer(("127.0.0.1", 10001), upstream_handler)
         proxy = Server(("127.0.0.1", 10002), "http://127.0.0.1:10001", TOKEN, 100)
     upstream.server_port = 10001
     proxy.server_port = 10002

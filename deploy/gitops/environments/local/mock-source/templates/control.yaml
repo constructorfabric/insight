@@ -1,0 +1,9 @@
+{{- $name := printf "%s-control" .Release.Name }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace $name }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+type: Opaque
+data:
+  control_token: {{ if $secret }}{{ required "existing control Secret must contain control_token" $secret.data.control_token | quote }}{{ else }}{{ randAlphaNum 64 | b64enc | quote }}{{ end }}

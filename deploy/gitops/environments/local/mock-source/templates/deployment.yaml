@@ -47,7 +47,7 @@ spec:
             - name: MOCK_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: mock-source-auth
+                  name: {{ .Release.Name }}-control
                   key: control_token
           readinessProbe:
             httpGet:

@@ -55,7 +55,7 @@ def test_response_streaming_delivers_bytes_before_upstream_finishes() -> None:
         client = http.client.HTTPConnection("127.0.0.1", proxy.server_port, timeout=1)
         client.request("GET", "/api/v1/jobs")
         response = client.getresponse()
-        assert response.getheader("Transfer-Encoding") is None
+        assert response.getheader("Transfer-Encoding") == "chunked"
         assert response.read(5) == b"first"
         assert upstream.first_sent.is_set() and not upstream.finish.is_set()
         upstream.finish.set()

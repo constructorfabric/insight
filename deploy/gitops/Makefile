@@ -39,9 +39,7 @@ SHELL            := /bin/bash
 
 .PHONY: local-mock-source-guard local-mock-source-install local-mock-source-remove
 local-mock-source-guard:
-	@test "$(ENV)" = local || { echo "mock-source is local-only; set ENV=local"; exit 1; }
-	@test -n "$(NS_APP)" || { echo "NS_APP is required"; exit 1; }
-	@test -n "$(KUBE_CTX)" || { echo "KUBE_CTX is required"; exit 1; }
+	@ENV="$(ENV)" KUBE_CTX="$(KUBE_CTX)" bash scripts/local-harness-guard.sh "$(NS_APP)"
 
 local-mock-source-install: local-mock-source-guard
 	@test -n "$(MOCK_TOOLBOX_IMAGE)" || { echo "MOCK_TOOLBOX_IMAGE is required"; exit 1; }
@@ -66,7 +64,7 @@ local-mock-airbyte-api-remove: local-mock-source-guard
 
 local-mock-airbyte-api-profile: local-mock-source-guard
 	@mkdir -p .deploy
-	@ENV="$(ENV)" NS_APP="$(NS_APP)" bash scripts/local-airbyte-proxy-profile.sh > .deploy/local-airbyte-proxy.yaml
+	@ENV="$(ENV)" KUBE_CTX="$(KUBE_CTX)" NS_APP="$(NS_APP)" bash scripts/local-airbyte-proxy-profile.sh > .deploy/local-airbyte-proxy.yaml
 
 local-airbyte-manifest-seed:
 	@ENV="$(ENV)" KUBE_CTX="$(KUBE_CTX)" NS_INFRA="$(NS_INFRA)" bash scripts/local-airbyte-manifest-seed.sh

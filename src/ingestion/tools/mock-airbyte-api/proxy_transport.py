@@ -49,6 +49,11 @@ def json_value(body: bytes) -> object:
         return None
 
 
+def require_complete_body(response: http.client.HTTPResponse) -> None:
+    if response.length:
+        raise http.client.IncompleteRead(b"", response.length)
+
+
 class HeaderReader:
     def __init__(self, stream: io.BufferedReader) -> None:
         self.stream = stream
@@ -285,22 +290,29 @@ class Handler(BaseHTTPRequestHandler):
         connection.endheaders()
         if self.headers.get("Transfer-Encoding") == "chunked":
             connection.send(self.raw_body)
-        else:
+        elif body:
             connection.send(body)
 
-    def response_headers(self, response: http.client.HTTPResponse, rewrite_body: bool) -> None:
+    def response_headers(
+        self, response: http.client.HTTPResponse, rewrite_body: bool, stream_body: bool = False
+    ) -> None:
         self.started = True
         self.send_response_only(response.status, response.reason)
         excluded = HOP_HEADERS | {part.strip().lower() for part in (response.getheader("Connection") or "").split(",")}
         if rewrite_body:
             excluded |= {"content-length", "content-encoding", "etag", "content-md5", "digest"}
+        if stream_body:
+            excluded.add("content-length")
         for key, value in response.getheaders():
             if key.lower() not in excluded:
                 self.send_header(key, value)
+        if stream_body:
+            self.send_header("Transfer-Encoding", "chunked")
         self.send_header("Connection", "close")
 
     def relay(self, response: http.client.HTTPResponse, request: int) -> None:
-        self.response_headers(response, False)
+        stream_body = self.command != "HEAD" and response.status >= 200 and response.status not in {204, 304}
+        self.response_headers(response, False, stream_body)
         self.end_headers()
         captured = bytearray()
         complete = True
@@ -309,7 +321,10 @@ class Handler(BaseHTTPRequestHandler):
                 captured.extend(chunk)
             else:
                 complete = False
-            self.wfile.write(chunk)
+            self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
+        require_complete_body(response)
+        if stream_body:
+            self.wfile.write(b"0\r\n\r\n")
         ids = identities(json_value(bytes(captured))) if complete else {"connection_id": [], "job_id": []}
         self.server.state.event(
             "response",
@@ -326,6 +341,7 @@ class Handler(BaseHTTPRequestHandler):
         body = response.read(MAX_REWRITE_BYTES + 1)
         if len(body) > MAX_REWRITE_BYTES:
             raise Refusal(502)
+        require_complete_body(response)
         try:
             value = rewrite(json.loads(body), action.field, action.value)
             encoded = json.dumps(value, separators=(",", ":")).encode()

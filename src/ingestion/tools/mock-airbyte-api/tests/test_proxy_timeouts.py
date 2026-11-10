@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import secrets
 from http.server import ThreadingHTTPServer
 
 import pytest
@@ -17,7 +18,7 @@ def test_runtime_upstream_timeout_uses_the_default_or_environment(
         "MOCK_HOST": "127.0.0.1",
         "MOCK_PORT": "8080",
         "MOCK_AIRBYTE_UPSTREAM": "http://synthetic.invalid:8001",
-        "MOCK_CONTROL_TOKEN": "synthetic-control-token",
+        "MOCK_CONTROL_TOKEN": secrets.token_urlsafe(48),
         "MOCK_JOURNAL_RETENTION": "100",
     }.items():
         monkeypatch.setenv(name, value)

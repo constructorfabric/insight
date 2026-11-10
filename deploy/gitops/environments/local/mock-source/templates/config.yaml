@@ -13,7 +13,6 @@ metadata:
 type: Opaque
 stringData:
   api_token: {{ required "apiToken is required" .Values.apiToken | quote }}
-  control_token: {{ required "controlToken is required" .Values.controlToken | quote }}
 {{- range $instance := list "mock-a" "mock-b" }}
 ---
 apiVersion: v1

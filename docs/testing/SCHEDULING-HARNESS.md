@@ -343,7 +343,15 @@ planned pytest work.
 ## Local deployment
 
 Use an already configured local GitOps inventory and cluster. Set `KIND_CLUSTER`
-to your own local Kind cluster name if loading an image with Kind. Build once
+to your own local Kind cluster name if loading an image with Kind. Every harness
+install, remove, profile and seed target verifies the selected context's API
+server with `kubectl config view --minify --context "$KUBE_CTX"`. It requires
+`ENV=local`, an explicit context and namespace, and a server using loopback,
+`localhost`, `host.docker.internal`, a `*.local` hostname (including `*.orb.local`),
+or a private local VM address (RFC 1918 IPv4 or IPv6 unique-local). Public addresses,
+other hostnames and missing contexts are refused, with no override. Private
+addresses must identify your local VM; the guard cannot distinguish a remote
+cluster exposed through a local tunnel or using a private address. Build once
 and use the same toolbox image for mock-source, reconcile and dbt:
 
 ```bash
@@ -363,8 +371,15 @@ normal ingestion commands; then run a real Airbyte sync and staging transform.
 To access controls, use the application namespace from your local inventory:
 
 ```bash
+MOCK_SOURCE_CONTROL_TOKEN=$(kubectl --context "$KUBE_CTX" -n "$NS_APP" \
+  get secret mock-source-control -o jsonpath='{.data.control_token}' | base64 -d)
 kubectl --context "$KUBE_CTX" -n "$NS_APP" port-forward service/mock-source 8080:8080
-curl -H 'Authorization: Bearer synthetic-control-token' \
+```
+
+Run the following in another terminal with the same token variable set:
+
+```bash
+curl -H "Authorization: Bearer $MOCK_SOURCE_CONTROL_TOKEN" \
   'http://127.0.0.1:8080/observations?after=0&instance=mock-a'
 make -C deploy/gitops local-mock-source-remove ENV=local KUBE_CTX="$KUBE_CTX" NS_APP="$NS_APP"
 ```
@@ -376,8 +391,9 @@ Airbyte jobs already in flight or remove bronze/staging data.
 For source-only development without Kubernetes, set every runtime input:
 
 ```bash
+export MOCK_CONTROL_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
 MOCK_HOST=127.0.0.1 MOCK_PORT=8080 MOCK_JOURNAL_RETENTION=1000 \
-MOCK_API_TOKEN=synthetic-mock-token MOCK_CONTROL_TOKEN=synthetic-control-token \
+MOCK_API_TOKEN=synthetic-mock-token \
 MOCK_SCENARIOS_FILE=deploy/gitops/environments/local/mock-source/scenarios.json \
 python3.12 src/ingestion/tools/mock-source/server.py
 ```
@@ -390,8 +406,14 @@ Without a rule it forwards the method, path, query, duplicate request headers
 (including authorization and Host) and body to the configured upstream origin.
 Chunked request framing, extensions and trailers are preserved. Responses stream
 in chunks of at most 64 KiB; the proxy closes each client connection and removes
-response hop-by-hop headers, decoding upstream chunk framing. End-to-end headers
-and response bytes pass through, including compressed responses. It does not
+response hop-by-hop headers. It decodes upstream framing and re-chunks body-bearing
+responses downstream, replacing Content-Length with Transfer-Encoding: chunked.
+Only a completed upstream body receives a terminating chunk. Premature EOF or an
+upstream timeout closes the downstream connection without that terminator, so
+clients report an incomplete body even when the bytes contain valid JSON.
+HEAD, 204 and 304 responses have no chunked body. Buffered rewrites use their new
+Content-Length and reject incomplete upstream bodies before sending headers.
+Other end-to-end headers and response bytes pass through, including compressed responses. It does not
 follow redirects, retry requests or mint credentials.
 
 Only `/health`, `/control/*` and `/observations` are reserved locally. Health is
@@ -560,6 +582,15 @@ helm upgrade "$APP_RELEASE" charts/insight --kube-context "$KUBE_CTX" -n "$NS_AP
   --set-string ingestion.toolboxImage="$MOCK_TOOLBOX_IMAGE" --wait --timeout 30m
 ```
 
+The two `local-*-install` targets also upgrade existing releases. Each chart
+generates its own random 64-character control token in the release's
+`<release>-control` Secret. Helm `lookup` retains that token on later upgrades;
+no control token value is required. The first upgrade from the older chart
+creates the new Secret and replaces the previous control credential. Removal
+deletes the Secret, so a reinstall generates a new token. Offline `helm template`
+cannot look up installed Secrets and generates preview tokens; use the Make
+targets or an online Helm upgrade for installation and upgrades.
+
 With an inventory, the usual `make deploy-app ENV=local CHART=../../charts/insight`
 can instead receive
 `HELM_UPGRADE_FLAGS='-f .deploy/local-airbyte-proxy.yaml --set-string ingestion.toolboxImage=insight-toolbox:mock-m2'`.
@@ -599,11 +630,13 @@ In another terminal expose the proxy control and data port:
 kubectl --context "$KUBE_CTX" -n "$NS_APP" port-forward service/mock-airbyte-api 8081:8080
 ```
 
-Use the chart's synthetic control token (or the token you explicitly installed):
+Read the proxy release's generated control token in the terminal used for curl:
 
 ```bash
+MOCK_PROXY_CONTROL_TOKEN=$(kubectl --context "$KUBE_CTX" -n "$NS_APP" \
+  get secret mock-airbyte-api-control -o jsonpath='{.data.control_token}' | base64 -d)
 curl --fail-with-body -X PUT http://127.0.0.1:8081/control/scenario \
-  -H 'Authorization: Bearer synthetic-control-token' -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $MOCK_PROXY_CONTROL_TOKEN" -H 'Content-Type: application/json' \
   --data '{"rules":[]}'
 kubectl --context "$KUBE_CTX" -n "$NS_APP" get cronworkflows
 ```
@@ -629,7 +662,7 @@ ARGO_INSTANCE_ID=$(kubectl --context "$KUBE_CTX" -n "$NS_APP" get cronworkflow "
   -o jsonpath='{.metadata.labels.workflows\.argoproj\.io/controller-instanceid}')
 argo submit --context "$KUBE_CTX" -n "$NS_APP" --instanceid "$ARGO_INSTANCE_ID" \
   --from "cronwf/$MOCK_CRON" --watch
-curl --fail-with-body -H 'Authorization: Bearer synthetic-control-token' \
+curl --fail-with-body -H "Authorization: Bearer $MOCK_PROXY_CONTROL_TOKEN" \
   'http://127.0.0.1:8081/observations?after=0'
 ```
 
