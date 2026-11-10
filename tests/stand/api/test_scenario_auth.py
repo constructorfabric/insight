@@ -21,6 +21,7 @@ from insight_stand import (
     LoginSession,
     Manifest,
     Person,
+    PersonaSession,
     ServiceTokenSession,
     default_token_url,
     identity_path,
@@ -79,8 +80,13 @@ class Device:
 
 
 @pytest.fixture
-def sign_in(stand_manifest: Manifest, stand_base_url: str) -> Iterator[Callable[[str], Device]]:
+def sign_in(
+    stand_manifest: Manifest,
+    stand_base_url: str,
+    session_for: Callable[[str], PersonaSession],
+) -> Iterator[Callable[[str], Device]]:
     devices: list[Device] = []
+    signed_in: set[str] = set()
 
     def _sign_in(fixture_name: str) -> Device:
         person = stand_manifest.fixture(fixture_name)
@@ -94,6 +100,7 @@ def sign_in(stand_manifest: Manifest, stand_base_url: str) -> Iterator[Callable[
         session = CookieSession(cookie)
         device = Device(person, session, ApiClient(base_url=stand_base_url, session=session))
         devices.append(device)
+        signed_in.add(fixture_name)
         return device
 
     yield _sign_in
@@ -107,6 +114,10 @@ def sign_in(stand_manifest: Manifest, stand_base_url: str) -> Iterator[Callable[
                 continue
             device.csrf_token = csrf.parse(CsrfToken).csrf_token
         device.client.post("/auth/logout", headers=device.csrf())
+
+    # Revoking every session of a persona also ends the suite's cached one.
+    for fixture_name in sorted(signed_in):
+        session_for(fixture_name).session.login()
 
 
 def _ok[T: BaseModel](response: ApiResponse, model: type[T]) -> T:
