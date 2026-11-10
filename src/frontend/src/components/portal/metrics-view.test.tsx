@@ -22,6 +22,11 @@ import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
 import { AppTooltips, openTooltip } from "@/test/tooltip";
 
+const exportMocks = vi.hoisted(() => ({
+  csv: vi.fn(),
+  xlsx: vi.fn(async () => {}),
+}));
+
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   layout: "wide" as "phone" | "narrow" | "wide",
@@ -77,6 +82,10 @@ vi.mock("@/queries/metrics-view", () => ({
 }));
 vi.mock("@/lib/portal/use-shell-layout", () => ({
   useShellLayout: () => mocks.layout,
+}));
+vi.mock("@/lib/export/matrix", () => ({
+  downloadMatrixCsv: exportMocks.csv,
+  downloadMatrixXlsx: exportMocks.xlsx,
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
@@ -145,6 +154,14 @@ const rowHeaders = () =>
     .getAllByRole("rowheader")
     .map((header) => header.textContent);
 
+function downloadedCsv(): { columns: string[]; rows: unknown[][] } {
+  const matrix = exportMocks.csv.mock.calls.at(-1)?.[1] as
+    | { columns: string[]; rows: unknown[][] }
+    | undefined;
+  if (!matrix) throw new Error("no csv download");
+  return matrix;
+}
+
 beforeEach(() => {
   const tree = identityPerson("boss", {}, [
     identityPerson("a", {}, [identityPerson("c")]),
@@ -206,6 +223,8 @@ beforeEach(() => {
       ]),
     ],
   ]);
+  exportMocks.csv.mockClear();
+  exportMocks.xlsx.mockClear();
   act(() => {
     portalRouter.set({ scope: undefined, direct: false, metrics: undefined, compare: undefined });
     setMetricsViewPaneShown(false);
@@ -653,5 +672,80 @@ describe("MetricsView", () => {
 
     expect(shown.result.current).toBe(true);
     expect(screen.getByRole("button", { name: "Hide menu" })).toBeInTheDocument();
+  });
+
+  it("downloads the people and metrics on screen as raw numbers", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    await user.click(await screen.findByRole("menuitem", { name: "CSV (.csv)" }));
+
+    expect(exportMocks.csv).toHaveBeenCalledWith(
+      "metrics_2026-07-01_2026-07-31.csv",
+      expect.anything(),
+    );
+    const matrix = downloadedCsv();
+    expect(matrix.columns).toEqual([
+      "Person",
+      "Role",
+      "Period",
+      "Default branch commits",
+      "Messages",
+    ]);
+    expect(matrix.rows.map((line) => line[0])).toEqual(["boss", "a", "b"]);
+    expect(matrix.rows[2]).toEqual(["b", "", "2026-07-01 to 2026-07-31", 20, 6]);
+
+    await user.click(screen.getByRole("button", { name: "Sort by Default branch commits" }));
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Excel (.xlsx)" }));
+
+    expect(exportMocks.xlsx).toHaveBeenCalledWith(
+      "metrics_2026-07-01_2026-07-31.xlsx",
+      "Metrics",
+      expect.objectContaining({
+        rows: [
+          expect.arrayContaining(["boss", 50]),
+          expect.arrayContaining(["c", 30]),
+          expect.arrayContaining(["b", 20]),
+          expect.arrayContaining(["a", 10]),
+        ],
+      }),
+    );
+  });
+
+  it("downloads the people being compared, and not the rest of the team", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await compare(user, ["a", "b"]);
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    await user.click(await screen.findByRole("menuitem", { name: "CSV (.csv)" }));
+
+    expect(exportMocks.csv).toHaveBeenCalledWith(
+      "metrics-compare_2026-07-01_2026-07-31.csv",
+      expect.anything(),
+    );
+    const matrix = downloadedCsv();
+    expect(matrix.columns).toEqual(["Metric", "Period", "a", "b"]);
+    expect(matrix.rows).toEqual([
+      ["Default branch commits", "2026-07-01 to 2026-07-31", 10, 20],
+      ["Messages", "2026-07-01 to 2026-07-31", 4, 6],
+    ]);
+  });
+
+  it("withholds the file when the table has nothing to give", async () => {
+    const user = userEvent.setup();
+    mocks.data.isPending = true;
+    const view = render(<MetricsView />);
+
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
+
+    mocks.data.isPending = false;
+    view.rerender(<MetricsView />);
+    await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
+    await user.click(screen.getByRole("button", { name: "Clear all metrics" }));
+
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
   });
 });

@@ -1,9 +1,11 @@
 import { useMemo, useState, type SetStateAction } from "react";
 import { Columns3, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
+import type { DateRange } from "@/api/period-to-date-range";
 import { useViewer } from "@/auth";
 import { MetricsComparePicker } from "@/components/portal/metrics-compare-picker";
 import { MetricsCompareTable } from "@/components/portal/metrics-compare-table";
+import { MetricsExportMenu } from "@/components/portal/metrics-export-menu";
 import {
   MetricsTable,
   type MetricsSort,
@@ -37,6 +39,10 @@ import {
   metricsViewCatalog,
   sortRows,
 } from "@/lib/portal/metrics-view";
+import {
+  metricsCompareMatrix,
+  metricsTableMatrix,
+} from "@/lib/portal/metrics-view-export";
 import {
   setMetricsViewPaneShown,
   useMetricsViewPaneShown,
@@ -204,6 +210,7 @@ export function MetricsView() {
           metricKeys={metricKeys}
           byKey={data.byKey}
           helpByKey={helpByKey}
+          period={dateRange}
           loading={data.isPending}
         />
       )}
@@ -267,6 +274,7 @@ function MetricsBody({
   metricKeys,
   byKey,
   helpByKey,
+  period,
   loading,
 }: {
   pivot: IdentityPerson | null;
@@ -275,6 +283,7 @@ function MetricsBody({
   metricKeys: readonly string[];
   byKey: Map<string, NormalizedMetricResult>;
   helpByKey: ReadonlyMap<string, MetricHelpText>;
+  period: DateRange;
   loading: boolean;
 }) {
   const { setScope } = usePortalNavActions();
@@ -331,6 +340,32 @@ function MetricsBody({
           </Button>
         ) : null}
         <div className="ms-auto flex items-center gap-2">
+          <MetricsExportMenu
+            page={comparing ? "metrics-compare" : "metrics"}
+            period={period}
+            matrix={
+              comparing
+                ? metricsCompareMatrix({
+                    people: compared,
+                    keys: columns,
+                    byKey,
+                    roles,
+                    period,
+                  })
+                : metricsTableMatrix({
+                    rows,
+                    keys: columns,
+                    byKey,
+                    roles,
+                    period,
+                  })
+            }
+            disabled={
+              loading ||
+              columns.length === 0 ||
+              (comparing ? compared.length === 0 : rows.length === 0)
+            }
+          />
           {comparing ? (
             <Button
               type="button"
