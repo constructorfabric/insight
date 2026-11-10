@@ -42,7 +42,7 @@ request gets 401.
 ### 4.2 Viewing a schedule
 
 1. Each instance shows its schedule in words and as cron, with times in UTC.
-2. It shows the next three runs in the viewer's local time; UTC is in the tooltip.
+2. It shows the next three runs, in UTC.
 3. A saved schedule shows who set it and when, and that it overrides the default schedule.
 4. One status badge shows the state:
 
@@ -97,13 +97,13 @@ request gets 401.
 1. The schedule is shown full width at the top of the expanded row.
 2. Below it:
    - a strip of up to the last 50 syncs, one small coloured bar each, with totals by status;
-   - a table of the latest 10 syncs with column headers (status, start in local time, duration,
+   - a table of the latest 10 syncs with column headers (status, start in UTC, duration,
      records), which expands to show the rest.
 3. The heading states how many syncs it shows, for example "Latest 10 of 50 recorded".
 
 ## 5. Constraints
 
-1. Schedules are stored and applied in UTC.
+1. Schedules are stored and applied in UTC, and every time on the page is shown in UTC.
 2. The service changes only the schedule, the timezone and its own marker on a sync job; it changes no
    other field.
 3. The service runs as one replica and uses the install's existing database credentials; it adds no
