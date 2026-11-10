@@ -3,7 +3,8 @@
 A move between two done statuses (Resolved → Closed, Closed → Verified) is
 bookkeeping after the close; counting it would shift the closed date and every
 duration that ends there. A reopen followed by a fresh close is a new entry and
-moves the close forward. An issue created in a done status entered it at birth.
+moves the close forward. An issue created in a done status entered it at birth, unless the source
+dates the value it was seeded with: then that date is the entry.
 
 Seeds `silver.class_task_field_history`, `class_task_statuses` and
 `class_task_users` directly: the subject is what gold does with them, as in
@@ -38,8 +39,7 @@ STATUSES = {
     VERIFIED: "done",
 }
 
-ORDER_BAND_INITIAL = 0
-ORDER_BAND_CHANGELOG = 1
+ORDER_BAND = {"synthetic_initial": 0, "changelog": 1, "snapshot_diff": 2}
 
 
 class Lifecycle(NamedTuple):
@@ -47,6 +47,7 @@ class Lifecycle(NamedTuple):
     created_in: str
     moves: list[tuple[str, str]]
     closes_at: datetime | None
+    observed: tuple[tuple[str, str], ...] = ()
 
 
 LIFECYCLES = [
@@ -76,6 +77,14 @@ LIFECYCLES = [
     Lifecycle("BORN-DONE-1", CLOSED, [], datetime(2026, 3, 1, 9)),
     Lifecycle("BORN-DONE-2", CLOSED, [("2026-03-09 09:00:00", VERIFIED)], datetime(2026, 3, 1, 9)),
     Lifecycle("OPEN-1", OPEN, [("2026-03-02 09:00:00", IN_PROGRESS)], None),
+    Lifecycle("SEEDED-DONE-1", CLOSED, [], datetime(2026, 3, 20, 9), observed=(("2026-03-20 09:00:00", CLOSED),)),
+    Lifecycle(
+        "OBSERVED-DONE-1",
+        OPEN,
+        [("2026-03-03 09:00:00", RESOLVED)],
+        datetime(2026, 3, 3, 9),
+        observed=(("2026-03-20 09:00:00", CLOSED),),
+    ),
 ]
 
 CREATED_AT = "2026-03-01 09:00:00"
@@ -92,10 +101,9 @@ def event_order(at: str, band: int, rank: int) -> int:
     return millis * 1_000_000 + band * 100_000 + rank
 
 
-def journal_row(issue: str, field_id: str, value: str | None, *, at: str, rank: int, changelog: bool) -> dict[str, Any]:
+def journal_row(issue: str, field_id: str, value: str | None, *, at: str, rank: int, kind: str) -> dict[str, Any]:
     values = [] if value is None else [value]
-    band = ORDER_BAND_CHANGELOG if changelog else ORDER_BAND_INITIAL
-    event_id = f"{issue}-{at}" if changelog else f"initial:{issue}"
+    event_id = {"synthetic_initial": f"initial:{issue}", "snapshot_diff": f"snapshot_diff:{issue}"}.get(kind, f"{issue}-{at}")
     return {
         "unique_key": f"{issue}-{field_id}-{event_id}",
         "insight_source_id": SOURCE,
@@ -104,8 +112,8 @@ def journal_row(issue: str, field_id: str, value: str | None, *, at: str, rank: 
         "id_readable": issue,
         "event_id": event_id,
         "event_at": at,
-        "event_kind": "changelog" if changelog else "synthetic_initial",
-        "event_order": event_order(at, band, rank),
+        "event_kind": kind,
+        "event_order": event_order(at, ORDER_BAND[kind], rank),
         "_seq": rank,
         "author_id": ACTOR,
         "field_id": field_id,
@@ -122,12 +130,15 @@ def journal_row(issue: str, field_id: str, value: str | None, *, at: str, rank: 
 
 def journal(lifecycle: Lifecycle) -> list[dict[str, Any]]:
     initial = [
-        journal_row(lifecycle.issue, "created", None, at=CREATED_AT, rank=0, changelog=False),
-        journal_row(lifecycle.issue, "status", lifecycle.created_in, at=CREATED_AT, rank=1, changelog=False),
-        journal_row(lifecycle.issue, "assignee", ACTOR, at=CREATED_AT, rank=2, changelog=False),
+        journal_row(lifecycle.issue, "created", None, at=CREATED_AT, rank=0, kind="synthetic_initial"),
+        journal_row(lifecycle.issue, "status", lifecycle.created_in, at=CREATED_AT, rank=1, kind="synthetic_initial"),
+        journal_row(lifecycle.issue, "assignee", ACTOR, at=CREATED_AT, rank=2, kind="synthetic_initial"),
     ]
-    moves = [journal_row(lifecycle.issue, "status", s, at=at, rank=0, changelog=True) for at, s in lifecycle.moves]
-    return initial + moves
+    moves = [journal_row(lifecycle.issue, "status", s, at=at, rank=0, kind="changelog") for at, s in lifecycle.moves]
+    observed = [
+        journal_row(lifecycle.issue, "status", s, at=at, rank=0, kind="snapshot_diff") for at, s in lifecycle.observed
+    ]
+    return initial + moves + observed
 
 
 def status_row(status_id: str, category: str) -> dict[str, Any]:

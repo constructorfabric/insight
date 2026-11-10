@@ -262,7 +262,15 @@ status_steps AS (
             PARTITION BY fh.insight_source_id, fh.issue_id
             ORDER BY fh.event_order
             ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
-        )                                                                    AS was_done
+        )                                                                    AS was_done,
+        toUInt8(
+            fh.event_kind = 'snapshot_diff'
+            AND lagInFrame(toString(fh.event_kind), 1, '') OVER (
+                PARTITION BY fh.insight_source_id, fh.issue_id
+                ORDER BY fh.event_order
+                ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
+            ) = 'synthetic_initial'
+        )                                                                    AS dates_seeded_value
     FROM history AS fh
     LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
         ON st.insight_source_id = fh.insight_source_id
@@ -271,13 +279,15 @@ status_steps AS (
 ),
 -- Close time: the last ENTRY into a done-category status from a non-done one
 -- (or from nothing, for an issue created done). A move between two done
--- statuses is not a close. OrNull so a never-closed issue is NULL, not the
--- epoch default — `final_close_at IS NOT NULL` gates the closed-issue measures.
+-- statuses is not a close. A `snapshot_diff` right after the creation seed is
+-- the date the source gives for a value no event ever recorded, so it is the
+-- entry. OrNull so a never-closed issue is NULL, not the epoch default —
+-- `final_close_at IS NOT NULL` gates the closed-issue measures.
 issue_close AS (
     SELECT
         insight_source_id                                                    AS insight_source_id,
         issue_id                                                             AS issue_id,
-        maxIfOrNull(event_at, is_done = 1 AND was_done = 0)                  AS final_close_at
+        maxIfOrNull(event_at, is_done = 1 AND (was_done = 0 OR dates_seeded_value = 1)) AS final_close_at
     FROM status_steps
     GROUP BY insight_source_id, issue_id
 )
