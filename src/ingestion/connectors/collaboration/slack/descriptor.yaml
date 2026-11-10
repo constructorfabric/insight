@@ -7,8 +7,23 @@ name: slack
 # 2027.0.0 (major): the chat feeder drops guest accounts.
 #   MAJOR so reconcile dispatches the one-shot `dbt --full-refresh` that purges
 #   rows materialised before the filter — incremental models never retro-delete.
-version: "2027.0.0"
+# 2027.1.0: Python CDK instead of a declarative manifest, so a day Slack refuses
+#   with {"ok": false} fails the sync instead of landing as an all-NULL row.
+#   Same stream, schema, unique_key and {"date"} state: reconcile migrates the
+#   definition and restores the connection state; bronze keeps its meaning.
+#   Staging drops a row with a NULL message counter instead of reading it as 0
+#   (none exist on vz, so no full refresh is needed).
+version: "2027.1.0"
+type: cdk
 schedule: 0 4 * * *
+# images.cdk.image stays empty until the first main build of build-images.yml,
+# whose bump-descriptors job pins it; reconcile skips the connector until then.
+images:
+  cdk:
+    name: source-slack-insight
+    dockerfile: ./Dockerfile
+    context: .
+    image: ""
 dbt_select: tag:slack+
 workflow: sync
 connection:

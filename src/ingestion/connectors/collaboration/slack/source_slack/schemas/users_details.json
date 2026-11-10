@@ -1,0 +1,150 @@
+{
+  "type": "object",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Slack's member analytics file, one row per member per day. Source fields are [type, \"null\"] per the connector convention: the destination NULLs a value it cannot coerce and records it in _airbyte_meta instead of failing the load. Slack itself sends every field on every row (0/false, not null). Non-null is enforced downstream: slack__collab_chat_activity drops a row without user_id, date or either message counter, and the dbt test assert_slack_bronze_rows_reach_metrics logs each such row.",
+  "properties": {
+    "unique_key": {
+      "type": "string"
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "date": {
+      "type": "string"
+    },
+    "team_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "email_address": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "is_guest": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_billable_seat": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active_ios": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active_android": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active_desktop": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active_apps": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active_workflows": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "is_active_slack_connect": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "reactions_added_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "messages_posted_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "channel_messages_posted_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "files_added_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "total_calls_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "slack_calls_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "slack_huddles_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "search_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "date_claimed": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "unique_key",
+    "tenant_id",
+    "source_id",
+    "user_id",
+    "date"
+  ],
+  "additionalProperties": true
+}

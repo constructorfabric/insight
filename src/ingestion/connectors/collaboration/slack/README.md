@@ -2,6 +2,11 @@
 
 Per-day user activity snapshots from Slack Analytics API (`admin.analytics.getFile?type=member`).
 
+Python CDK connector (`source_slack/`). Slack refuses a day with HTTP 200 and
+`{"ok": false, "error": "<code>"}`, while a served day is a gzip file; a declarative
+error handler cannot read that body without consuming the gzip stream, so the
+manifest version stored refusals as all-NULL rows and kept reporting success.
+
 ## Prerequisites
 
 - Slack workspace on **Business+** or **Enterprise Grid** (Analytics API is not available on lower plans).
@@ -21,7 +26,20 @@ Per-day user activity snapshots from Slack Analytics API (`admin.analytics.getFi
 |--------|-----------|-------------|--------|-------------|
 | `users_details` | Incremental | `unique_key` (`tenant-source-user_id-date`) | `date` (P1D) | Per-user per-day Slack activity snapshot |
 
-The stream issues one HTTP request per date from `slack_start_date` to `today - 2 days`. Response body is gzip-compressed JSON Lines; each line is a single member record.
+The stream issues one HTTP request per date from the cursor day (read again, as the manifest connector did; `unique_key` dedups it) or `slack_start_date` to `today - 2 days`, and checkpoints `{"date": "YYYY-MM-DD"}` after each day. Response body is gzip-compressed JSON Lines; each line is a single member record.
+
+### When Slack refuses a day
+
+| Slack `error` | Sync outcome |
+|---------------|--------------|
+| `file_not_yet_available`, day within 5 days of today | Stops at the last published day and succeeds; the next run retries |
+| `file_not_yet_available`, older day | Fails (`system_error`) |
+| token, scope or plan errors (`invalid_auth`, `missing_scope`, `not_allowed_token_type`, `not_an_admin`, `feature_not_available`, `member_analytics_disabled`, `org_level_email_display_disabled`, `token_revoked`, …) | Fails (`config_error`) naming the code |
+| anything else (`file_not_found`, `data_not_available`, …) | Fails (`system_error`) naming the code and day |
+
+HTTP 429, 5xx, network errors and Slack's temporary codes (`ratelimited`, `internal_error`, `fatal_error`, `service_unavailable`, `request_timeout`) are retried with backoff (honouring `Retry-After`) up to 5 times. Days read before a failure keep their records and checkpoint.
+
+A day Slack refuses for good (`file_not_found`, `data_not_available`) fails every run until it is skipped: set `slack_start_date` past it, since the read starts at the later of the cursor and the start date.
 
 ### Fields (from `admin.analytics.getFile?type=member`)
 
@@ -77,3 +95,12 @@ stringData:
 - Slack publishes analytics with a ~2-day delay. The connector pins `end_date = today - 2 days` to avoid `file_not_yet_available`.
 - Slack analytics data is available on a rolling 13-month basis; recently upgraded workspaces may have less history.
 - Response content is `application/gzip` containing JSONL (one JSON record per line).
+
+## Local run
+
+```bash
+cd src/ingestion/connectors/collaboration/slack
+uv venv && uv pip install -e ".[dev]"
+.venv/bin/python -m pytest
+.venv/bin/source-slack check --config config.json
+```
