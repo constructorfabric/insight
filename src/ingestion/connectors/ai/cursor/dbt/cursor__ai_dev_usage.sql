@@ -59,7 +59,12 @@ WITH daily AS (
       -- at the epoch) and emits a phantom 1970 row into Silver.
       AND date IS NOT NULL
     {% if is_incremental() %}
-      AND toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+      -- INVARIANT: the read-time arm admits an older day a backfill re-reads (#4243);
+      -- the day window keeps re-deriving recent days whose joined streams arrive late.
+      AND (
+          toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+          OR _airbyte_extracted_at > {{ instance_incremental_watermark('collected_at', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id']) }}
+      )
     {% endif %}
 )
 

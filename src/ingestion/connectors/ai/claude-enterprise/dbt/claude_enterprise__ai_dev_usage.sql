@@ -113,5 +113,10 @@ WHERE user_email IS NOT NULL
        OR coalesce(code_commit_count, 0) > 0
        OR coalesce(code_pull_request_count, 0) > 0)
 {% if is_incremental() %}
-  AND toDate(parseDateTimeBestEffortOrNull(date)) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+  -- INVARIANT: the read-time arm admits an older day a backfill re-reads (#4243);
+  -- the day window keeps re-deriving recent days whose joined streams arrive late.
+  AND (
+      toDate(parseDateTimeBestEffortOrNull(date)) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+      OR toUnixTimestamp64Milli(_airbyte_extracted_at) > {{ instance_incremental_watermark('_version', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id']) }}
+  )
 {% endif %}
