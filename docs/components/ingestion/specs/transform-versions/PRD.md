@@ -44,6 +44,8 @@ Authors act through pull requests and operators through Helm values. Everyone el
 6. Description, docs and meta edits are not changes. A tag edit changes only the classes the tag adds the model to or removes it from.
 7. A version that goes down always fails. A version that stays the same fails when the model changed.
 8. The check also runs on each push to the main branch. Two merged pull requests that raise one model to the same number fail there.
+9. CI compares text, not meaning, so a refactor that keeps a model's output also needs a higher version.
+10. The repository's dbt conventions say when to raise a version, including the changes CI cannot see. The connector validation checklist and the dbt conventions audit check those changes.
 
 ### 4.2 Recording applied versions
 
