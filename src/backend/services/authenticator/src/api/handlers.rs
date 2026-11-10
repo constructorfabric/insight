@@ -8,6 +8,7 @@
 //! authenticator specs in this repo:
 //! the committed contract at `docs/components/backend/authenticator/openapi.json`.
 
+use anyhow::Context as _;
 use std::sync::Arc;
 
 use axum::Extension;
@@ -19,7 +20,6 @@ use axum::response::{IntoResponse as _, Response};
 use axum_extra::extract::cookie::CookieJar;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use rand::Rng as _;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -652,8 +652,8 @@ async fn mint_and_store_session(
     let expires_at = expires_at.min(absolute_expires_at);
 
     let session_id = Uuid::now_v7().to_string();
-    let token = csprng_token();
-    let csrf_token = csprng_token();
+    let token = csprng_token()?;
+    let csrf_token = csprng_token()?;
 
     // Identity roles, `default_roles` as fallback; values only, never the
     // claim shape (DD-AUTH-07).
@@ -981,7 +981,10 @@ pub async fn refresh(
         return refresh_ok(&state, jar, &record.current_token, record.expires_at, now);
     }
 
-    let new_token = csprng_token();
+    let new_token = match csprng_token() {
+        Ok(token) => token,
+        Err(e) => return internal_problem("csprng", &e),
+    };
     let new_expires_at = (now + state.cfg.session_ttl_seconds).min(record.absolute_expires_at);
     let rotated = match state
         .sessions
@@ -1643,10 +1646,12 @@ fn now_secs() -> u64 {
 }
 
 /// A CSPRNG token (256 bits, base64url) — session token, CSRF token, state, nonce.
-fn csprng_token() -> String {
+/// Drawn from the platform crypto facade; an unavailable backend is an error,
+/// never an empty or zeroed token.
+fn csprng_token() -> anyhow::Result<String> {
     let mut raw = [0u8; 32];
-    rand::rng().fill_bytes(&mut raw);
-    B64.encode(raw)
+    toolkit_security::crypto::rng::fill(&mut raw).context("crypto rng")?;
+    Ok(B64.encode(raw))
 }
 
 /// A uniform jitter in `[-window, +window]` seconds (thread RNG is fine here).

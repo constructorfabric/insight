@@ -10,9 +10,8 @@ use axum::response::{IntoResponse as _, Response};
 use axum_extra::extract::cookie::CookieJar;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use rand::Rng as _;
 use serde_json::json;
-use toolkit_security::crypto::{constant_time_eq, hash::Sha256};
+use toolkit_security::crypto::{CryptoError, constant_time_eq, hash::Sha256, rng};
 use url::Url;
 use uuid::Uuid;
 
@@ -83,7 +82,11 @@ pub async fn register_client(
         }
     }
 
-    let client = match validated_registration(request, random_token()) {
+    let client_id = match random_token() {
+        Ok(token) => token,
+        Err(error) => return rng_unavailable(error),
+    };
+    let client = match validated_registration(request, client_id) {
         Ok(client) => client,
         Err(reason) => {
             return oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", reason);
@@ -234,7 +237,10 @@ pub async fn decide(
         return response;
     }
 
-    let code = random_token();
+    let code = match random_token() {
+        Ok(token) => token,
+        Err(error) => return rng_unavailable(error),
+    };
     let grant = AuthorizationCodeGrant {
         client_id: pending.client_id.clone(),
         redirect_uri: pending.redirect_uri.clone(),
@@ -376,7 +382,19 @@ async fn authorization_request(
             ));
         }
     };
-    let request_id = random_token();
+    let request_id = match random_token() {
+        Ok(token) => token,
+        Err(error) => {
+            tracing::error!(error = %error, "crypto rng unavailable");
+            return Err(authorization_redirect(
+                &pending,
+                Some((
+                    "temporarily_unavailable",
+                    "authorization server unavailable",
+                )),
+            ));
+        }
+    };
     if let Err(error) = state
         .mcp_oauth
         .put_pending(
@@ -588,7 +606,10 @@ async fn issue_initial_tokens(
     record: &SessionRecord,
     grant: &AuthorizationCodeGrant,
 ) -> Response {
-    let refresh_token = random_token();
+    let refresh_token = match random_token() {
+        Ok(token) => token,
+        Err(error) => return rng_unavailable(error),
+    };
     let refresh_grant = RefreshGrant {
         client_id: grant.client_id.clone(),
         grant_id: Uuid::now_v7().to_string(),
@@ -625,7 +646,10 @@ async fn issue_rotated_tokens(
     old_hash: &str,
     grant: &RefreshGrant,
 ) -> Response {
-    let refresh_token = random_token();
+    let refresh_token = match random_token() {
+        Ok(token) => token,
+        Err(error) => return rng_unavailable(error),
+    };
     let new_hash = token_hash(&refresh_token);
     let Some(ttl) = grant.remaining_seconds(now_secs()) else {
         return invalid_grant();
@@ -792,7 +816,10 @@ fn consent_page(
     request_id: &str,
     pending: &PendingAuthorization,
 ) -> Response {
-    let nonce = random_token();
+    let nonce = match random_token() {
+        Ok(token) => token,
+        Err(error) => return rng_unavailable(error),
+    };
     let redirect_origin = redirect_origin(&pending.redirect_uri);
     let body = format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize data access</title><style>body{{font:16px system-ui;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#17202a}}main{{border:1px solid #d5d8dc;border-radius:12px;padding:2rem}}button{{font:inherit;padding:.65rem 1rem;margin-right:.5rem}}.approve{{background:#17202a;color:white;border:0;border-radius:6px}}</style></head><body><main><h1>Authorize data exploration</h1><p>Client-provided name: <strong>{}</strong> (unverified).</p><p>Redirect destination: <strong>{}</strong>.</p><p>This client is requesting read-only SQL access to this Insight instance.</p><p>This connection will act as <strong>{}</strong> and requires an active administrator role.</p><p>Access lasts 30 days from approval, including after signing out of Insight. Revoke this MCP connection to end access sooner; issued access tokens remain valid until they expire.</p><form id="decision"><input type="hidden" name="request_id" value="{}"><input type="hidden" id="csrf" value="{}"><button class="approve" name="decision" value="approve">Approve access</button><button name="decision" value="cancel">Cancel</button></form><p id="error" role="alert"></p></main><script nonce="{}">const form=document.getElementById('decision');form.addEventListener('submit',async event=>{{event.preventDefault();const button=event.submitter;const data=new URLSearchParams(new FormData(form));data.set('decision',button.value);const csrf=document.getElementById('csrf').value;const response=await fetch('/auth/oauth/decision',{{method:'POST',headers:{{'content-type':'application/x-www-form-urlencoded','x-csrf-token':csrf}},body:data}});const result=await response.json();if(response.ok&&result.redirect_to){{location.assign(result.redirect_to)}}else{{document.getElementById('error').textContent=result.error_description||'Authorization failed'}}}});</script></body></html>"#,
@@ -1030,10 +1057,18 @@ fn endpoint(origin: &str, path: &str) -> String {
     format!("{}{path}", origin.trim_end_matches('/'))
 }
 
-fn random_token() -> String {
+/// 256 bits from the platform crypto facade, base64url. An unavailable
+/// backend is an error, never an empty or zeroed token.
+fn random_token() -> Result<String, CryptoError> {
     let mut bytes = [0_u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    B64.encode(bytes)
+    rng::fill(&mut bytes)?;
+    Ok(B64.encode(bytes))
+}
+
+/// The response for a token the crypto backend could not draw.
+fn rng_unavailable(error: CryptoError) -> Response {
+    tracing::error!(error = %error, "crypto rng unavailable");
+    temporarily_unavailable()
 }
 
 fn token_hash(token: &str) -> String {
