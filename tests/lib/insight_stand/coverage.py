@@ -52,8 +52,7 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 #: from outside, so they never count against coverage.
 SERVER_FAULT_FLOOR = 500
 
-#: The gateway answers it before routing, so a service document that omits it
-#: is not under-declaring.
+#: The gateway answers 401 before routing; a service document may omit it.
 EDGE_REFUSAL = 401
 
 ANALYTICS_PREFIX = "/api/analytics"

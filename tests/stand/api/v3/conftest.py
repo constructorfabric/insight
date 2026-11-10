@@ -1,9 +1,5 @@
-"""Scratch insight-v3-core resources, created as the admin operator and removed after.
-
-Every test under this directory is marked `requires_insight_v3_core`. The
-authoring surfaces are admin-only by the identity `admin` row, not the realm role.
-Teardown runs in dependency order: v3 answers 409 to removing a definition another
-still names.
+"""v3 authoring is admin-only by the identity `admin` row, not the realm role.
+Teardown runs in dependency order: v3 answers 409 to removing a definition another still names.
 """
 
 from __future__ import annotations

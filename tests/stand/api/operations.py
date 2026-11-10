@@ -284,8 +284,6 @@ V3_OPERATIONS: Final[tuple[Operation, ...]] = (
     _v("POST", f"/v1/alerts/{SOME_ID}/disable"),
     _v("GET", f"/v1/alerts/{SOME_ID}/notifications"),
     _v("POST", "/v1/chat"),
-    # Matched by the session-authenticated `/api/v3` prefix, although ingest
-    # authenticates with the instance token on the service's own port.
     _v("POST", "/v1/raw-data"),
 )
 

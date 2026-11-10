@@ -1,17 +1,3 @@
-"""The shared v3 scratch fixtures create what they claim, and read back.
-
-    PUT  /v1/datasets/{name}   200
-    POST /v1/metrics           201 · GET /v1/metrics/{id}     200
-    POST /v1/widgets           201 · GET /v1/widgets/{id}     200
-    POST /v1/dashboards        201 · GET /v1/dashboards/{id}  200
-    POST /v1/folders           201
-    POST /v1/alerts            201
-
-Every scenario module under this directory builds on these fixtures, so a
-fixture that quietly made the wrong thing would turn each of them into a test of
-something else.
-"""
-
 from __future__ import annotations
 
 import pytest
