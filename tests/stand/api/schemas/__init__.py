@@ -7,8 +7,11 @@ Two halves, and a reader should be able to tell which one they are in:
 * `identity_internal.py` — hand-written from the Rust DTO, because the two
   `/internal/persons/*` S2S routes are registered raw and stay out of the
   generated document by design.
-* `analytics.py`, `authenticator.py`, `identity.py`, `previews.py` — GENERATED
-  from documents
+* `v3_untyped.py` — hand-written from the Rust that serializes them: the
+  insight-v3-core success bodies its document declares as a bare `type: object`.
+  `tests/generate_schemas.py --check` fails when the document types one of them.
+* `analytics.py`, `authenticator.py`, `identity.py`, `previews.py`, `v3.py` —
+  GENERATED from documents
   the services emit themselves (`cargo run -p <service> -- openapi`) and each
   service's test suite drift-gates, so the models describe
   the very structs that serialize the wire. `authenticator.py` is currently just
@@ -34,7 +37,12 @@ The strictness follows from that. Generated models set `extra="forbid"`: they ar
 regenerated in the same change that adds a field, so strictness costs nothing and
 an undeclared field is exactly the drift worth catching. Hand-written models
 leave `extra` at its default, because there they would only tax every benign
-upstream addition.
+upstream addition — except `v3_untyped.py`, which mirrors the serializing structs
+field for field and forbids extras like a generated module.
+
+The v3 modules are imported by name (`from ..schemas.v3_untyped import Folder`)
+rather than re-exported here: their names are the service's own, and `Folder`,
+`Dataset` or `Page` would read as belonging to every service.
 """
 
 from __future__ import annotations
