@@ -46,6 +46,7 @@ function person(id: string): identityClient.PeopleListItem {
     email: null,
     attributes: {},
     manager_person_id: null,
+    manager_name: null,
   };
 }
 

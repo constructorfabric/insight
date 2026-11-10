@@ -5,13 +5,13 @@ import { OrgTree } from "@/components/org-tree";
 import { ItemButton } from "@/components/portal/pane-nav";
 import {
   Input,
+  ScrollArea,
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@gears-frontx/ui-kit";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import { visibleGroups } from "@/lib/insight/groups";
 import {
@@ -125,7 +125,7 @@ function WorkChart() {
       {isFlat ? null : <PaneGroupLabel>WorkChart</PaneGroupLabel>}
       <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
         {find}
-        <ScrollArea className="min-h-0 flex-1">
+        <ScrollArea data-slot="scroll-area" className="min-h-0 flex-1">
           <OrgTree leadsToTeam query={query} />
         </ScrollArea>
       </SidebarGroupContent>

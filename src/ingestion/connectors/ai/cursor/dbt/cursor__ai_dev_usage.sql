@@ -59,18 +59,7 @@ WITH daily AS (
       -- at the epoch) and emits a phantom 1970 row into Silver.
       AND date IS NOT NULL
     {% if is_incremental() %}
-      -- Empty-table guard. On a freshly-truncated `this` (the e2e rig resets staging
-      -- between tests) `max(day)` is the Date epoch (1970-01-01), and `- INTERVAL 3 DAY`
-      -- underflows the Date range and wraps to ~2149-06-04 — which would filter out
-      -- every row and leave the model empty. Short-circuit when the table is empty so
-      -- the full set is (re)loaded. Mirrors the m365__collab_* watermark guard.
-      AND (
-        (SELECT count() FROM {{ this }}) = 0
-        OR toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) > (
-            SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-            FROM {{ this }}
-        )
-      )
+      AND toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
     {% endif %}
 )
 

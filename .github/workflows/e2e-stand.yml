@@ -273,6 +273,9 @@ jobs:
     outputs:
       api: ${{ steps.results.outputs.api }}
       ui: ${{ steps.results.outputs.ui }}
+      api_report: ${{ steps.results.outputs.api_report }}
+      ui_report: ${{ steps.results.outputs.ui_report }}
+      job_url: ${{ steps.results.outputs.job_url }}
     timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 120 || 80 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -387,7 +390,7 @@ jobs:
         id: api-tests
         if: steps.stand-up.outcome == 'success'
         continue-on-error: true
-        run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui
+        run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui --junitxml=.artifacts/api-junit.xml -o junit_family=xunit1
 
       # `always()`: the ledger a FAILING run wrote is the more useful of the
       # two — it says which operations were reached before things went wrong —
@@ -452,6 +455,7 @@ jobs:
           ./dev-compose.sh test-stand test \
             --image "$UI_TESTS_IMAGE" \
             --ignore=tests/stand/api --ignore=tests/stand/meta \
+            --junitxml=test-results/ui-junit.xml -o junit_family=xunit1 \
             --browser chromium \
             --tracing=retain-on-failure \
             --screenshot=only-on-failure \
@@ -552,6 +556,11 @@ jobs:
           [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
           ./dev-compose.sh test-stand down
 
+      - name: Install defusedxml
+        if: always()
+        continue-on-error: true
+        run: python3 -m pip install --quiet "defusedxml==0.7.1"
+
       - name: Record lane results
         id: results
         if: always()
@@ -565,6 +574,9 @@ jobs:
           REDACTION: ${{ steps.redact.outcome }}
           UI_TRACES_UPLOAD: ${{ steps.ui-traces-upload.outcome }}
           TEARDOWN: ${{ steps.teardown.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+          JOB_ID: ${{ job.check_run_id }}
+          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ job.check_run_id }}
         run: |
           set -euo pipefail
           api=failure
@@ -576,6 +588,24 @@ jobs:
             ui=success
           fi
           printf 'api=%s\nui=%s\n' "$api" "$ui" >> "$GITHUB_OUTPUT"
+          report_lanes() {
+            job_url="$RUN_URL"
+            if [ -n "$JOB_ID" ]; then job_url="$JOB_URL"; fi
+            printf 'job_url=%s\n' "$job_url" >> "$GITHUB_OUTPUT"
+            for lane in api ui; do
+              lane_name="api-smoke"
+              junit=".artifacts/api-junit.xml"
+              if [ "$lane" = ui ]; then
+                lane_name="ui-journeys"
+                junit="test-results/ui-junit.xml"
+              fi
+              report="$(python3 .github/workflows/scripts/stand-lane-report.py "$lane_name" "$junit" "$job_url")" || return 0
+              delimiter="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" || return 0
+              printf '%s_report<<%s\n%s\n%s\n' "$lane" "$delimiter" "$report" "$delimiter" >> "$GITHUB_OUTPUT" || return 0
+              printf '%s\n\n' "$report" >> "$GITHUB_STEP_SUMMARY" || return 0
+            done
+          }
+          report_lanes || true
 
   # ─── stable lane checks ──────────────────────────────────────────────────
   # INVARIANT: These job names are stable branch-protection check identities.
@@ -591,6 +621,10 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           LANE: ${{ needs.stand-runner.outputs.api }}
+          REPORT: ${{ needs.stand-runner.outputs.api_report }}
+          STAND_RESULT: ${{ needs.stand-runner.result }}
+          STAND_URL: ${{ needs.stand-runner.outputs.job_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: |
           set -euo pipefail
           if [ "$CHANGES" != success ]; then
@@ -602,7 +636,19 @@ jobs:
             exit 0
           fi
           if [ "$LANE" != success ]; then
-            echo "::error::API smoke did not pass"
+            STAND_URL="${STAND_URL:-$RUN_URL}"
+            if [ -z "$LANE" ]; then
+              REPORT="api-smoke: no lane output from stand-runner (needs.stand-runner.result=$STAND_RESULT)."$'\n\n'"[Workflow run]($RUN_URL)"
+            elif [ -z "$REPORT" ]; then
+              REPORT="api-smoke: lane result=$LANE; stage details unavailable (needs.stand-runner.result=$STAND_RESULT)."$'\n\n'"[Stand runner job log]($STAND_URL)"
+            fi
+            token="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')"
+            printf '::stop-commands::%s\n%s\n::%s::\n' "$token" "$REPORT" "$token"
+            printf '%s\n\n' "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            detail="${REPORT%%$'\n'*}"
+            detail="${detail//'%'/'%25'}"
+            detail="${detail//$'\r'/'%0D'}"
+            echo "::error::API smoke did not pass — $detail — Stand runner: $STAND_URL"
             exit 1
           fi
           echo "API smoke passed"
@@ -619,6 +665,10 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           LANE: ${{ needs.stand-runner.outputs.ui }}
+          REPORT: ${{ needs.stand-runner.outputs.ui_report }}
+          STAND_RESULT: ${{ needs.stand-runner.result }}
+          STAND_URL: ${{ needs.stand-runner.outputs.job_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: |
           set -euo pipefail
           if [ "$CHANGES" != success ]; then
@@ -630,7 +680,19 @@ jobs:
             exit 0
           fi
           if [ "$LANE" != success ]; then
-            echo "::error::UI journeys did not pass"
+            STAND_URL="${STAND_URL:-$RUN_URL}"
+            if [ -z "$LANE" ]; then
+              REPORT="ui-journeys: no lane output from stand-runner (needs.stand-runner.result=$STAND_RESULT)."$'\n\n'"[Workflow run]($RUN_URL)"
+            elif [ -z "$REPORT" ]; then
+              REPORT="ui-journeys: lane result=$LANE; stage details unavailable (needs.stand-runner.result=$STAND_RESULT)."$'\n\n'"[Stand runner job log]($STAND_URL)"
+            fi
+            token="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')"
+            printf '::stop-commands::%s\n%s\n::%s::\n' "$token" "$REPORT" "$token"
+            printf '%s\n\n' "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            detail="${REPORT%%$'\n'*}"
+            detail="${detail//'%'/'%25'}"
+            detail="${detail//$'\r'/'%0D'}"
+            echo "::error::UI journeys did not pass — $detail — Stand runner: $STAND_URL"
             exit 1
           fi
           echo "UI journeys passed"

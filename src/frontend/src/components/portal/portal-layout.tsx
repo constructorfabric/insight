@@ -19,6 +19,7 @@ import {
   SidebarProvider,
   useSidebar,
 } from "@gears-frontx/ui-kit";
+import { useMetricsViewHidesPane } from "@/lib/portal/metrics-view-pane";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
 import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
@@ -52,6 +53,7 @@ export function PortalLayout() {
   const zone = usePortalZone();
   const homeShown = bareLandingZone(usePortalShowPlanned()) === "overview";
   const landed = useRef(false);
+  const paneHidden = useMetricsViewHidesPane();
   useEffect(() => {
     if (landed.current) return;
     const decision = landingDecision({
@@ -83,7 +85,11 @@ export function PortalLayout() {
   return (
     <SidebarProvider
       className="h-svh overflow-hidden"
-      style={{ "--sidebar-width": SHELL_SIDEBAR_WIDTH } as CSSProperties}
+      style={
+        {
+          "--sidebar-width": paneHidden ? RAIL_WIDTH : SHELL_SIDEBAR_WIDTH,
+        } as CSSProperties
+      }
     >
       <PaneStateForLayout />
       <ShellSidebar />
@@ -103,7 +109,8 @@ export function PortalLayout() {
 }
 
 /** Rail plus pane: the provider's width is the whole open sidebar. */
-const SHELL_SIDEBAR_WIDTH = "calc(var(--sidebar-width-icon) + 1px + 16rem)";
+const RAIL_WIDTH = "calc(var(--sidebar-width-icon) + 1px)";
+const SHELL_SIDEBAR_WIDTH = `calc(${RAIL_WIDTH} + 16rem)`;
 
 /**
  * Collapsible to the icon rail: the rail column stays, the pane beside it goes.

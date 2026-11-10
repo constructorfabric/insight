@@ -76,6 +76,7 @@ beforeEach(() => {
       email: "boss@example.com",
       attributes: {},
       manager_person_id: null,
+      manager_name: null,
     },
     ...[
       ["a", "R&D", "Engineer"],
@@ -90,6 +91,7 @@ beforeEach(() => {
       email: `${label}@example.com`,
       attributes: { division: division!, job_title: jobTitle! },
       manager_person_id: pid("boss"),
+      manager_name: null,
     })),
   ];
 });

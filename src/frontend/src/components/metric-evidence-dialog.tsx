@@ -43,9 +43,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Spinner,
 } from "@gears-frontx/ui-kit";
 import { formatMetricNumber } from "@/lib/format";
-import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { nextSort } from "@/lib/metrics/evidence-rows";
 import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";
@@ -167,25 +167,32 @@ export function MetricEvidenceDialog({
     [pages]
   );
   const notReady = pages?.[0]?.not_ready != null;
+  const metricLabel = activeTarget?.label;
   const columns = useMemo(() => {
     const columns = query.data?.pages[0]?.columns ?? [];
     const order = new Map([
       ["person", -1],
       ["ref", 0],
       ["title", 1],
+      ["value", 1.5],
+      ["numerator", 1.5],
+      ["denominator", 1.6],
       ["repository", 2],
       ["author", 3],
       ["date", 100],
-      ["value", 101],
-      ["numerator", 101],
-      ["denominator", 102],
     ]);
-    return [...columns].sort(
-      (left, right) =>
-        (order.get(left.key) ?? 50) - (order.get(right.key) ?? 50) ||
-        left.label.localeCompare(right.label)
-    );
-  }, [query.data?.pages]);
+    return [...columns]
+      .sort(
+        (left, right) =>
+          (order.get(left.key) ?? 50) - (order.get(right.key) ?? 50) ||
+          left.label.localeCompare(right.label)
+      )
+      .map((column) =>
+        column.key === "value" && metricLabel
+          ? { ...column, label: metricLabel }
+          : column
+      );
+  }, [query.data?.pages, metricLabel]);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
   const pageLimitReached = (query.data?.pages.length ?? 0) >= 50 && hasNextPage;
   // The server orders and narrows the rows. Until the first page says it does,
@@ -520,6 +527,7 @@ export function MetricEvidenceDialog({
               // INVARIANT: remounts per metric — expansion state is the
               // table's and must not carry across.
               key={activeMetricKey}
+              numbered
               metricKey={activeMetricKey}
               rows={rows}
               columns={columns}

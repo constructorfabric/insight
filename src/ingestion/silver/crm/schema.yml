@@ -14,6 +14,10 @@ models:
         description: "Email — identity key for Silver Step 2"
         tests:
           - not_null
+      - name: primary_team_id
+        description: "The owner's primary team — joins to class_crm_teams.team_id"
+      - name: team_ids
+        description: "Every team the owner belongs to"
       - name: data_source
         description: "Source discriminator"
         tests:
@@ -30,10 +34,18 @@ models:
         description: "Salesperson ID — joins to class_crm_users.user_id"
         tests:
           - not_null
+      - name: stage
+        description: "Stage ID — joins to class_crm_pipeline_stages.stage_id (object_type = 'deals')"
+      - name: currency
+        description: "ISO currency of `amount`; `amount_home` is in the portal's home currency"
       - name: data_source
         description: "Source discriminator"
         tests:
           - not_null
+      - name: is_deleted
+        description: "1 when the record is archived (deleted) in the source"
+      - name: properties
+        description: "Every non-empty property of the record, standard and custom — labels in class_crm_property_definitions"
 
   - name: class_crm_activities
     description: "Unified CRM activities (calls, meetings, tasks, emails) from all sources"
@@ -43,17 +55,25 @@ models:
         tests:
           - not_null
       - name: activity_type
-        description: "Normalised type: call, email, task, event, meeting"
+        description: "Normalised type: call, email, meeting, task, note, communication"
         tests:
           - not_null
       - name: owner_id
         description: "Activity owner — joins to class_crm_users.user_id"
         tests:
           - not_null
+      - name: body
+        description: "Free text of the engagement (call notes, email text, meeting body, task body, note, message)"
+      - name: channel
+        description: "Communications only: SMS, WHATS_APP, LINKEDIN_MESSAGE, …"
       - name: data_source
         description: "Source discriminator"
         tests:
           - not_null
+      - name: is_deleted
+        description: "1 when the record is archived (deleted) in the source"
+      - name: properties
+        description: "Every non-empty property of the record, standard and custom — labels in class_crm_property_definitions"
 
   - name: class_crm_contacts
     description: "Unified CRM contacts (external customers) from all sources"
@@ -66,6 +86,10 @@ models:
         description: "Source discriminator"
         tests:
           - not_null
+      - name: is_deleted
+        description: "1 when the record is archived (deleted) in the source"
+      - name: properties
+        description: "Every non-empty property of the record, standard and custom — labels in class_crm_property_definitions"
 
   - name: class_crm_accounts
     description: "Unified CRM accounts/companies from all sources"
@@ -74,6 +98,165 @@ models:
         description: "Source-specific account ID"
         tests:
           - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+      - name: is_deleted
+        description: "1 when the record is archived (deleted) in the source"
+      - name: properties
+        description: "Every non-empty property of the record, standard and custom — labels in class_crm_property_definitions"
+
+  - name: class_crm_leads
+    description: "Unified CRM leads (prospects before a deal) from all sources"
+    columns:
+      - name: lead_id
+        description: "Source-specific lead ID"
+        tests:
+          - not_null
+      - name: stage_id
+        description: "Joins to class_crm_pipeline_stages.stage_id"
+      - name: contact_id
+        description: "Primary contact"
+      - name: account_id
+        description: "Primary company"
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_tickets
+    description: "CRM service tickets. Columns up to `_version` mirror silver.dim_support_ticket in name, order and type, so the two can be unioned."
+    columns:
+      - name: insight_source_id
+        description: "Source instance — named as in dim_support_ticket"
+        tests:
+          - not_null
+      - name: source_ticket_id
+        description: "Source-specific ticket ID"
+        tests:
+          - not_null
+      - name: status_canonical
+        description: "open | closed"
+      - name: priority_canonical
+        description: "low | normal | high | urgent (HubSpot MEDIUM → normal)"
+      - name: stage_id
+        description: "Joins to class_crm_pipeline_stages.stage_id (object_type = 'tickets')"
+      - name: content
+        description: "Ticket description text"
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_associations
+    description: "Associated object ids, one row per (record, associated object type); the whole id list is replaced when the record changes"
+    columns:
+      - name: from_object_type
+        description: "contacts, deals, calls, emails, meetings, tasks, notes, communications, leads, tickets"
+        tests:
+          - not_null
+      - name: from_object_id
+        tests:
+          - not_null
+      - name: to_object_type
+        description: "companies, contacts, deals"
+        tests:
+          - not_null
+      - name: to_object_ids
+        description: "Associated ids — ARRAY JOIN to get pairs"
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_pipelines
+    description: "Deal and ticket pipelines"
+    columns:
+      - name: pipeline_id
+        tests:
+          - not_null
+      - name: object_type
+        description: "deals | tickets"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_pipeline_stages
+    description: "Pipeline stages with their closing semantics"
+    columns:
+      - name: stage_id
+        tests:
+          - not_null
+      - name: pipeline_id
+        tests:
+          - not_null
+      - name: object_type
+        description: "deals | tickets"
+        tests:
+          - not_null
+      - name: probability
+        description: "Deal stages: win probability 0..1"
+      - name: is_closed
+      - name: is_won
+        description: "Deal stages: closed at probability 1; NULL for tickets"
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_field_history
+    description: "Property value changes, one row per change"
+    columns:
+      - name: object_type
+        description: "deals | tickets"
+        tests:
+          - not_null
+      - name: object_id
+        tests:
+          - not_null
+      - name: field
+        description: "Property name, e.g. dealstage, amount, hs_pipeline_stage"
+        tests:
+          - not_null
+      - name: value
+        description: "Value set by the change (NULL or empty when cleared)"
+      - name: changed_at
+      - name: changed_by_user_id
+        description: "Joins to class_crm_users.hs_user_id"
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_teams
+    description: "CRM teams, as named on their members"
+    columns:
+      - name: team_id
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_property_definitions
+    description: "Labels, types and option labels of every property"
+    columns:
+      - name: object_type
+        tests:
+          - not_null
+      - name: name
+        description: "Property name as it appears in `properties`"
+        tests:
+          - not_null
+      - name: is_custom
+        description: "1 for portal-defined properties"
+      - name: options
+        description: "Option value → label for enumerations"
       - name: data_source
         description: "Source discriminator"
         tests:

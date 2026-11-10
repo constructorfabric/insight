@@ -1,4 +1,14 @@
-{{ config(materialized='table', schema='staging', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], tags=['youtrack', 'staging']) }}
+{{ config(
+    materialized='table',
+    schema='staging',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
+    order_by=['unique_key'],
+    tags=['youtrack', 'staging'],
+    query_settings={
+        'max_bytes_before_external_group_by': 500000000,
+        'max_threads': 4,
+    },
+) }}
 
 WITH events AS (
     SELECT a.*, r.entry_rank,
@@ -12,6 +22,8 @@ WITH events AS (
 ), latest AS (
     SELECT insight_source_id, issue_id, field_id, argMax(pairs, observed_at) AS pairs
     FROM {{ ref('youtrack__issue_field_snapshot') }}
+    WHERE (insight_source_id, issue_id, field_id) IN (
+        SELECT insight_source_id, issue_id, field_id FROM {{ ref('youtrack__activities') }})
     GROUP BY insight_source_id, issue_id, field_id
 ), candidates AS (
     SELECT g.*, s.pairs AS snapshot_pairs,
@@ -39,6 +51,7 @@ WITH events AS (
 SELECT concat(insight_source_id, '-youtrack-', issue_id, '-', field_id, '-', event_id) AS unique_key,
     insight_source_id, issue_id, field_id, event_id, pairs,
     toUInt64(toUnixTimestamp64Milli(now64(3))) AS _version
+-- INVARIANT: no lambda here may capture events or states; a captured array is copied per element.
 FROM replay ARRAY JOIN
-    arrayMap(n -> if(n = 0, concat('initial:', issue_id), events[n].2), range(0, length(events)+1)) AS event_id,
-    arrayMap(n -> states[n+1], range(0, length(events)+1)) AS pairs
+    arrayPushFront(arrayMap(e -> e.2, events), concat('initial:', issue_id)) AS event_id,
+    states AS pairs

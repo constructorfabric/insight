@@ -86,6 +86,6 @@ spec:
           # `| json | fields_event="data_quality_finding"` (Loki flattens nested
           # keys with `fields_`). Built from dbt's own artifacts (not its logger);
           # python3 reading files keeps the step free of shell/text interpolation.
-          python3 /ingestion/scripts/data_quality_findings.py
+          python3 /ingestion/scripts/data_quality_findings.py --scope scheduled --dbt-exit-code "$RC"
           exit "$RC"
 {{- end }}

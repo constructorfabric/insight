@@ -13,6 +13,7 @@ import {
   collectionSetPending,
   useMetricCollection,
   useMetricCollectionSet,
+  useUnattributedShares,
   type MetricCollectionResult,
 } from "@/queries/metric-results";
 
@@ -57,7 +58,9 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
       direction: "higher_is_better",
       computation: "sum",
       views: m.views.map((v) =>
-        v.view === "peer"
+        v.view === "unattributed"
+          ? { view: "unattributed" as const, value: 4 }
+          : v.view === "peer"
           ? {
               view: "peer",
               values: ids.map((id) => ({
@@ -246,6 +249,35 @@ describe("useMetricCollection", () => {
   });
 });
 
+describe("useUnattributedShares", () => {
+  beforeEach(() => {
+    mock.mockReset();
+    mock.mockImplementation(async (req) => respond(req));
+    offers("m");
+  });
+
+  it("reads each metric's share through the one person it is anchored on", async () => {
+    const { result } = renderHook(
+      () => useUnattributedShares(["m"], "me@x.com", RANGE),
+      { wrapper: wrapper() },
+    );
+
+    await waitFor(() => expect(result.current.byKey.get("m")).toBe(4));
+    expect(mock.mock.calls[0]![0].entity).toEqual({ type: "person", ids: ["me@x.com"] });
+  });
+
+  it("asks nothing without an anchor", async () => {
+    const { result } = renderHook(
+      () => useUnattributedShares(["m"], null, RANGE),
+      { wrapper: wrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.byKey.size).toBe(0);
+    expect(mock).not.toHaveBeenCalled();
+  });
+});
+
 describe("useMetricCollectionSet", () => {
   beforeEach(() => {
     mock.mockReset();
@@ -294,8 +326,8 @@ describe("useMetricCollectionSet", () => {
     await waitFor(() =>
       expect(result.current.get("g")?.isPending).toBe(false),
     );
-    // period+peer → 2 rows/entity → 2250/chunk → 3000 ids span 2 requests.
-    expect(mock).toHaveBeenCalledTimes(2);
+    // period+peer → 2 rows/entity → 2250 by rows, capped at 1000 ids → 3 requests.
+    expect(mock).toHaveBeenCalledTimes(3);
     expect(result.current.get("g")?.byKey.get("m")?.period?.values).toHaveLength(
       3000,
     );
@@ -317,7 +349,7 @@ describe("useMetricCollectionSet", () => {
     );
     mock.mockClear();
     result.current.get("g")?.refetch();
-    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(3));
   });
 
   it("serves a tenant entity as one unchunked id-less request", async () => {

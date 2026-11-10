@@ -244,6 +244,11 @@ class MetricResponse:
         """The histogram entries of `key`, counted as an assertion over their bins."""
         return self._whole_view(key, "histogram")
 
+    def unattributed(self, key: str) -> Any:
+        """The tenant-wide value of `key`'s unattributed view, counted as its assertion."""
+        self._ledger.record_assertion(key, "unattributed", self._test_name)
+        return self.view(key, "unattributed").get("value")
+
     def rows(self, key: str, kind: str) -> list[Row]:
         """Every row of `key`'s `kind` view, for a rule over the whole list.
 

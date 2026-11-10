@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RangePicker } from "./range-picker";
 
@@ -11,14 +11,14 @@ describe("<RangePicker>", () => {
         offered={["PDC", "P30D", "inf"]}
         selected="P30D"
         onSelect={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Yesterday" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Last 30 days" })).toBeVisible();
     expect(screen.getByRole("button", { name: "All time" })).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Last quarter" }),
+      screen.queryByRole("button", { name: "Last quarter" })
     ).not.toBeInTheDocument();
   });
 
@@ -28,15 +28,15 @@ describe("<RangePicker>", () => {
         offered={["PDC", "P30D"]}
         selected="P30D"
         onSelect={vi.fn()}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Last 30 days" }),
+      screen.getByRole("button", { name: "Last 30 days" })
     ).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Yesterday" })).toHaveAttribute(
       "aria-pressed",
-      "false",
+      "false"
     );
   });
 
@@ -47,7 +47,7 @@ describe("<RangePicker>", () => {
         offered={["PDC", "P30D"]}
         selected="P30D"
         onSelect={onSelect}
-      />,
+      />
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Yesterday" }));
@@ -61,20 +61,20 @@ describe("<RangePicker>", () => {
         offered={["PDC", "P30D"]}
         selected="2026-08-01/2026-09-01"
         onSelect={vi.fn()}
-      />,
+      />
     );
 
     const custom = screen.getByRole("button", { name: /2026-08-01/ });
 
     expect(custom).toHaveAttribute("aria-pressed", "true");
     expect(
-      screen.getByRole("button", { name: "Last 30 days" }),
+      screen.getByRole("button", { name: "Last 30 days" })
     ).toHaveAttribute("aria-pressed", "false");
   });
 
   it("says the end date is not counted, where the dates are picked", async () => {
     render(
-      <RangePicker offered={["P30D"]} selected="P30D" onSelect={vi.fn()} />,
+      <RangePicker offered={["P30D"]} selected="P30D" onSelect={vi.fn()} />
     );
 
     await userEvent.click(screen.getByRole("button", { name: /custom/i }));
@@ -91,7 +91,7 @@ describe("<RangePicker> custom interval", () => {
         offered={["P30D"]}
         selected="2026-08-01/2026-09-01"
         onSelect={onSelect}
-      />,
+      />
     );
     await userEvent.click(screen.getByRole("button", { name: /2026-08-01/ }));
 
@@ -102,7 +102,7 @@ describe("<RangePicker> custom interval", () => {
 
   it("has nothing to apply until a whole span is picked", async () => {
     render(
-      <RangePicker offered={["P30D"]} selected="P30D" onSelect={vi.fn()} />,
+      <RangePicker offered={["P30D"]} selected="P30D" onSelect={vi.fn()} />
     );
 
     await userEvent.click(screen.getByRole("button", { name: /custom/i }));
@@ -113,7 +113,7 @@ describe("<RangePicker> custom interval", () => {
   it("leaves the window alone when the calendar is dismissed", async () => {
     const onSelect = vi.fn();
     render(
-      <RangePicker offered={["P30D"]} selected="P30D" onSelect={onSelect} />,
+      <RangePicker offered={["P30D"]} selected="P30D" onSelect={onSelect} />
     );
     await userEvent.click(screen.getByRole("button", { name: /custom/i }));
 
@@ -131,7 +131,7 @@ describe("<RangePicker> reopened after the selection moved", () => {
         offered={["P30D"]}
         selected="2026-08-01/2026-09-01"
         onSelect={onSelect}
-      />,
+      />
     );
 
     rerender(
@@ -139,11 +139,86 @@ describe("<RangePicker> reopened after the selection moved", () => {
         offered={["P30D"]}
         selected="2026-06-01/2026-07-01"
         onSelect={onSelect}
-      />,
+      />
     );
     await userEvent.click(screen.getByRole("button", { name: /2026-06-01/ }));
     await userEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     expect(onSelect).toHaveBeenCalledWith("2026-06-01/2026-07-01");
   });
+});
+
+describe("<RangePicker> offers no end past the day after today", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 6, 15, 10, 30));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    { when: "today", day: /July 15th, 2026/, enabled: true },
+    {
+      when: "tomorrow, the end that counts today",
+      day: /July 16th, 2026/,
+      enabled: true,
+    },
+    { when: "the day after tomorrow", day: /July 17th, 2026/, enabled: false },
+  ])("a day $when is pickable: $enabled", async ({ day, enabled }) => {
+    render(
+      <RangePicker
+        offered={["P30D"]}
+        selected="2026-07-01/2026-07-10"
+        onSelect={vi.fn()}
+      />
+    );
+    await userEvent.click(screen.getByRole("button", { name: /2026-07-01/ }));
+
+    const button = await screen.findByRole("button", { name: day });
+
+    if (enabled) expect(button, String(day)).toBeEnabled();
+    else expect(button, String(day)).toBeDisabled();
+  });
+
+  it("does not show a month that has not started", async () => {
+    render(
+      <RangePicker
+        offered={["P30D"]}
+        selected="2026-07-01/2026-07-10"
+        onSelect={vi.fn()}
+      />
+    );
+    await userEvent.click(screen.getByRole("button", { name: /2026-07-01/ }));
+    await screen.findByRole("button", { name: /July 15th, 2026/ });
+
+    expect(
+      screen.queryByRole("button", { name: /August 1st, 2026/ })
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("<RangePicker> arrow keys inside the calendar stay inside it", () => {
+  it.each(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"])(
+    "%s on the previous-month button keeps focus in the popover",
+    async (key) => {
+      render(
+        <RangePicker
+          offered={["P30D"]}
+          selected="2026-07-01/2026-07-10"
+          onSelect={vi.fn()}
+        />
+      );
+      await userEvent.click(screen.getByRole("button", { name: /2026-07-01/ }));
+      const previous = await screen.findByRole("button", {
+        name: /previous month/i,
+      });
+
+      act(() => previous.focus());
+      await userEvent.keyboard(`{${key}}`);
+
+      expect(document.activeElement, key).toBe(previous);
+    }
+  );
 });

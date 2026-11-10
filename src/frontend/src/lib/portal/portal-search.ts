@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import type { OwnedFilter } from "@/api/custom-client";
 import { validateDateRange } from "@/api/period-to-date-range";
 import { isRangeToken } from "@/lib/custom/time-range";
+import { formatSources, parseSources } from "@/lib/identities/sources";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -30,6 +31,7 @@ export interface PortalSearch {
   acct?: string;
   /** Which Identities mode is open (the review queue, a person). */
   mode?: string;
+  src?: string;
   /** Person under inspection in the Identities person mode. */
   person?: string;
   /**
@@ -76,6 +78,8 @@ export interface PortalSearch {
   tag?: string[];
   /** Narrows the dashboard list to those the reader owns, or those shared with them. */
   owned?: OwnedFilter;
+  metrics?: string;
+  compare?: string;
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -96,6 +100,14 @@ function scalar(v: unknown): string | undefined {
   return typeof v === "number" || typeof v === "boolean" ? String(v) : str(v);
 }
 
+const METRIC_KEY = /^(none|[a-z][a-z0-9_]*\.[a-z0-9_.]+)$/;
+const PERSON_ID = /^[0-9a-z-]+$/;
+
+function list(v: unknown, part: RegExp): string | undefined {
+  const parts = (str(v) ?? "").split(",").filter((value) => part.test(value));
+  return parts.length > 0 ? parts.join(",") : undefined;
+}
+
 function strs(v: unknown): string[] | undefined {
   const values = (Array.isArray(v) ? v : [v])
     .map(scalar)
@@ -103,6 +115,10 @@ function strs(v: unknown): string[] | undefined {
 
   return values.length > 0 ? values : undefined;
 }
+
+/** INVARIANT: mirror the identity-resolution service's `source` limits. */
+const MAX_SOURCES = 20;
+const MAX_SOURCE_CHARS = 30;
 
 /**
  * Validate rather than trust: search params are user-editable text, and a
@@ -130,6 +146,11 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     item: str(raw.item),
     acct: str(raw.acct),
     mode: str(raw.mode),
+    src: formatSources(
+      parseSources(str(raw.src))
+        .filter((source) => source.length <= MAX_SOURCE_CHARS)
+        .slice(0, MAX_SOURCES),
+    ),
     person: str(raw.person)?.toLowerCase(),
     find: str(raw.find),
     dir: str(raw.dir),
@@ -143,11 +164,12 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
     // email) resolves to nothing and the scope falls back to the viewer.
     scope: str(raw.scope)?.toLowerCase(),
-    // Omit rather than serialise `false`: a default has no business in a URL
+    // `undefined` rather than `false`: a default has no business in a URL
     // people read and share.
-    ...(raw.direct === true || raw.direct === "true" || raw.direct === 1
-      ? { direct: true as const }
-      : {}),
+    direct:
+      raw.direct === true || raw.direct === "true" || raw.direct === 1
+        ? true
+        : undefined,
     slice: str(raw.slice),
     // The same check the run endpoint makes, so a hand-edited token
     // degrades to the board's default.
@@ -156,8 +178,13 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     folder: str(raw.folder),
     tag: strs(raw.tag),
     owned: raw.owned === "me" || raw.owned === "shared" ? raw.owned : undefined,
+    metrics: list(raw.metrics, METRIC_KEY),
+    compare: list(str(raw.compare)?.toLowerCase(), PERSON_ID),
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
-    ...(custom ? { from, to } : {}),
+    // INVARIANT: every key is present, `undefined` when dropped — the router
+    // spreads this over the root route's raw query, so an omitted key leaks.
+    from: custom ? from : undefined,
+    to: custom ? to : undefined,
   };
 }
 
@@ -167,6 +194,7 @@ export const PORTAL_SEARCH_KEYS = [
   "item",
   "acct",
   "mode",
+  "src",
   "person",
   "find",
   "dir",

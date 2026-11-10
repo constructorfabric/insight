@@ -100,7 +100,8 @@ SELECT
     -- merge request row, which is not re-fetched on its own.
     greatest(
         mr._airbyte_extracted_at,
-        COALESCE(ds._airbyte_extracted_at, mr._airbyte_extracted_at)
+        COALESCE(ds._airbyte_extracted_at, mr._airbyte_extracted_at),
+        p._airbyte_extracted_at
     ) AS _airbyte_extracted_at
 -- FINAL: a merge request updated twice inside one sync's lookback leaves two
 -- bronze rows under one key until the parts merge; the class dedup cannot
@@ -126,5 +127,5 @@ WHERE greatest(
     mr._airbyte_extracted_at,
     COALESCE(ds._airbyte_extracted_at, mr._airbyte_extracted_at),
     p._airbyte_extracted_at
-) > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+) > {{ instance_incremental_watermark('_airbyte_extracted_at', ['mr.tenant_id', 'mr.source_id']) }}
 {% endif %}

@@ -64,9 +64,10 @@ jobs:
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
     # it is declared here rather than on the caller.
     environment: insight-test-stand
-    # INVARIANT: Candidate validation has a one-hour total budget, including setup.
-    # Runs with seeding allow 210 minutes, above the combined step ceilings.
-    timeout-minutes: ${{ inputs.candidate_artifact != '' && 60 || 210 }}
+    # INVARIANT: Candidate validation has an 80-minute total budget, including
+    # setup and the gold rebuild. Runs with seeding allow 210 minutes, above the
+    # combined step ceilings.
+    timeout-minutes: ${{ inputs.candidate_artifact != '' && 80 || 210 }}
     env:
       ENV_NAME: test-stand
       VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
@@ -527,6 +528,44 @@ jobs:
           echo "lines above."
           exit 1
 
+      # INVARIANT: a candidate keeps the stand's data and a deploy never runs dbt;
+      # rebuild gold here, as a sync would, so the suite reads the gold it ships.
+      - name: 'Stage 3/5 — rebuild gold over the retained dataset'
+        id: gold
+        if: steps.stages.outputs.run_seed == 'true' && inputs.candidate_artifact != ''
+        timeout-minutes: 20
+        env:
+          SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
+        run: |
+          set -euo pipefail
+
+          email_args=()
+          if [ -n "${SEED_EMAIL:-}" ]; then
+            email_args+=(--email "$SEED_EMAIL")
+          fi
+
+          kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
+          gold_rc=0
+          ./src/ingestion/tools/seed/seed-stand.sh \
+            -n "$STAND_NAMESPACE" \
+            --context "$kube_context" \
+            "${email_args[@]}" \
+            --step gold \
+            --deadline 720 \
+            > "$RUNNER_TEMP/gold.log" 2>&1 || gold_rc=$?
+
+          if [ "$gold_rc" -ne 0 ]; then
+            echo "::error::rebuilding gold over the retained dataset failed (seed-stand.sh exited $gold_rc)."
+            grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/gold.log" | python3 "$REDACT" || true
+            exit 1
+          fi
+
+          # INVARIANT: the restarted pod validates evidence at boot; smoke starts
+          # after the browser install below, past that pass.
+          kubectl -n "$STAND_NAMESPACE" rollout restart "deploy/${STAND_RELEASE}-analytics" 2>&1 | python3 "$REDACT"
+          kubectl -n "$STAND_NAMESPACE" rollout status "deploy/${STAND_RELEASE}-analytics" --timeout=5m 2>&1 | python3 "$REDACT"
+          echo "==> gold rebuilt over the retained dataset; analytics restarted"
+
       # Chromium and its system libraries, resolved by the locked test
       # environment so every runner drives the same build. Its own step: a
       # failed install is an infrastructure problem, not a red suite.
@@ -658,6 +697,7 @@ jobs:
             ${{ steps.deploy_secret.outcome || 'skipped' }} ${{ steps.deploy_downgrade_guard.outcome || 'skipped' }} ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
           EDGE_RESULT: ${{ steps.edge.outcome || 'skipped' }}
           SEED_RESULT: ${{ steps.seed.outcome || 'skipped' }}
+          GOLD_RESULT: ${{ steps.gold.outcome || 'skipped' }}
           GATE_RESULT: ${{ steps.smoke.outcome || 'skipped' }}
           SUITE_RESULT: ${{ steps.suite.outcome || 'skipped' }}
         run: |
@@ -693,6 +733,7 @@ jobs:
             echo "| edge | $(render "$EDGE_RESULT") |"
             if [ -n "$CANDIDATE" ]; then
               echo "| dataset | existing data retained; no reseed |"
+              echo "| gold rebuild | $(render "$GOLD_RESULT") |"
             else
               echo "| seed | $(render "$SEED_RESULT") |"
             fi

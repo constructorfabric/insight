@@ -28,16 +28,14 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
-import {
+  Spinner,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import {
   cellText,
   evidenceRowKeys,
@@ -45,7 +43,9 @@ import {
 } from "@/lib/metrics/evidence-rows";
 import { fitWidths, type ColumnNeed } from "@/lib/metrics/evidence-widths";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
+import { formatTimeMetricValue, type MetricValueFormat } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useMetricDefinition } from "@/queries/metric-definitions";
 
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "person") return { basisRem: 11, grow: 0.5 };
@@ -86,13 +86,26 @@ const NUMBERED_LEADING_REM: readonly number[] = [NUMBER_REM, EXPANDER_REM];
  */
 const SUMMARY_ONLY_LINKS: ReadonlySet<string> = new Set(["title"]);
 
+function valueText(
+  row: MetricEvidenceRow,
+  column: MetricEvidenceColumn,
+  metric: MetricValueFormat | null
+): string {
+  const value = row.values[column.key];
+  return (
+    (column.key === "value" ? formatTimeMetricValue(value, metric) : null) ??
+    cellText(value)
+  );
+}
+
 /** The text a cell shows on its one line. */
 function cellLine(
   row: MetricEvidenceRow,
   column: MetricEvidenceColumn,
-  metricKey: string | null
+  metricKey: string | null,
+  metric: MetricValueFormat | null
 ): { full: string; line: string } {
-  const full = summaryLine(cellText(row.values[column.key]));
+  const full = summaryLine(valueText(row, column, metric));
   // The ref column shows the issue number alone; the tooltip keeps the
   // repository, which is the only place a row states it when the metric
   // declares no `source` to link from.
@@ -136,7 +149,8 @@ function columnNeeds(
   element: HTMLElement,
   columns: readonly MetricEvidenceColumn[],
   rows: readonly MetricEvidenceRow[],
-  metricKey: string | null
+  metricKey: string | null,
+  metric: MetricValueFormat | null
 ): ColumnNeed[] | null {
   const sample = rows.slice(0, MEASURED_ROWS);
   const texts = [
@@ -144,7 +158,7 @@ function columnNeeds(
     ...columns.flatMap((column) => [
       { text: column.label, header: true },
       ...sample.map((row) => ({
-        text: cellLine(row, column, metricKey).line,
+        text: cellLine(row, column, metricKey, metric).line,
         header: false,
       })),
     ]),
@@ -256,6 +270,7 @@ export function MetricEvidenceTable({
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const metric = useMetricDefinition(metricKey);
   const rowKeys = useMemo(() => evidenceRowKeys(rows), [rows]);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -288,12 +303,20 @@ export function MetricEvidenceTable({
   // until a viewport has a width to share, the type-based layout stands in.
   const measured = useMemo(() => {
     if (!viewport || viewportWidth === 0) return null;
-    const needs = columnNeeds(viewport, columns, rows, metricKey);
+    const needs = columnNeeds(viewport, columns, rows, metricKey, metric);
     if (!needs) return null;
     const remPx =
       parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
     return fitWidths(needs, viewportWidth - leadingTotalRem * remPx);
-  }, [viewport, viewportWidth, columns, rows, metricKey, leadingTotalRem]);
+  }, [
+    viewport,
+    viewportWidth,
+    columns,
+    rows,
+    metricKey,
+    metric,
+    leadingTotalRem,
+  ]);
 
   const minimumWidth = measured
     ? `calc(${leadingTotalRem}rem + ${measured.reduce((total, px) => total + px, 0)}px)`
@@ -420,7 +443,7 @@ export function MetricEvidenceTable({
                       type="button"
                       onClick={() => onSortChange(column.key)}
                       className={cn(
-                        "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                        "group/sort flex min-w-0 items-center gap-1 rounded-sm [text-transform:inherit] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                         numeric && "flex-row-reverse",
                         state && "text-foreground"
                       )}
@@ -492,14 +515,19 @@ export function MetricEvidenceTable({
                 </TableCell>
                 {columns.map((column) => {
                   const value = row.values[column.key];
-                  const { full, line } = cellLine(row, column, metricKey);
+                  const { full, line } = cellLine(
+                    row,
+                    column,
+                    metricKey,
+                    metric
+                  );
                   return (
                     <TableCell
                       role="cell"
                       key={column.key}
                       className={cn(
-                        "h-11 min-w-0 px-3 py-3 tabular-nums",
-                        column.type === "number" && "text-right"
+                        "flex h-11 min-w-0 items-center px-3 py-0 tabular-nums",
+                        column.type === "number" && "justify-end text-right"
                       )}
                     >
                       {column.key === "ref" && value != null ? (
@@ -532,7 +560,7 @@ export function MetricEvidenceTable({
                     // INVARIANT: selecting text here must not reach the row's
                     // expand toggle.
                     onClick={(event) => event.stopPropagation()}
-                    className="cursor-auto border-t bg-muted/40 px-3 py-3"
+                    className="h-auto cursor-auto border-t bg-muted/40 px-3 py-3"
                     // The record entire, under the row it belongs to: a track
                     // of its own across every column.
                     style={{ gridColumn: "1 / -1" }}
@@ -541,7 +569,7 @@ export function MetricEvidenceTable({
                       exceed the table's own height. */}
                     <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
                       {columns.map((column) => {
-                        const text = cellText(row.values[column.key]);
+                        const text = valueText(row, column, metric);
                         return (
                           <Fragment key={column.key}>
                             <dt className="text-sm text-muted-foreground">

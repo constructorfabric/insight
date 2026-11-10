@@ -15,6 +15,7 @@ import {
   resolveZoneItem,
   zoneSections,
 } from "@/lib/portal/nav-model";
+import { useMetricsViewHidesPane } from "@/lib/portal/metrics-view-pane";
 import { usePortalItem } from "@/lib/portal/portal-nav";
 import { railItemFor, type RailId } from "@/lib/portal/rail-model";
 import { useZoneNav, type ZoneNav } from "@/lib/portal/use-zone-nav";
@@ -35,6 +36,9 @@ export function ContextPane() {
   const rail = railItemFor(nav.activeZone);
   const { t } = useTranslation();
   const { state } = useSidebar();
+  const hidden = useMetricsViewHidesPane();
+
+  if (hidden) return null;
 
   return (
     <Sidebar

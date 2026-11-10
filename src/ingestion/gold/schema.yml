@@ -239,9 +239,10 @@ models:
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.
-      Median inputs retain event grain; additive measures retain daily and
-      dimension summaries. Active commit days retain their date subject and
-      dimensions for exact distinct counts at every supported breakdown.
+      Commit and pull-request measures retain event grain; line measures keep
+      one row per commit per file dimension set, so every line traces to its
+      commit. Active commit days keep one row per commit with its date as the
+      subject, so distinct counts stay exact at every supported breakdown.
     columns: *metric_evidence_columns
 
   - name: collab_metric_evidence
@@ -255,8 +256,10 @@ models:
   - name: task_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for task source measures.
-      Issue duration inputs retain event grain; lifecycle ratios, snapshots,
-      and daily flows are marked as derived populations.
+      Every row is one issue's share of one measure, carrying the issue's ref
+      and title: closes and reopens per issue-day, in-progress and worklog
+      seconds per person-day and issue, and a person-day's estimate deviation
+      split equally among the issues estimated that day.
     columns: *metric_evidence_columns
 
   - name: wiki_metric_evidence
@@ -853,9 +856,11 @@ models:
           in lockstep with identity's `insight_source_id` minting.
       - name: account_id
         description: >
-          Tracker account id of the assignee or worklog author. Rows resolve
+          Tracker account id of the assignee or worklog author; '' with an
+          empty entity_id on an unassigned issue's rows. Rows resolve
           account-first through `identity.account_assignment`; an account
-          bound to the excluded person attributes to nobody.
+          bound to the excluded person attributes to nobody. A row that
+          resolves to no person otherwise counts in the unattributed share.
       - name: metric_date
         description: >
           Observation date: close date for closed-issue measures, transition
@@ -891,6 +896,7 @@ models:
                   - reopened_within_14d
                   - worklog_seconds
                   - in_progress_seconds
+                  - logged_hours
                   - stale_in_progress
                   - resolution_days
                   - pickup_days
@@ -945,11 +951,12 @@ models:
   - name: task_issue_state
     description: >
       Per-issue lifecycle state for the task-delivery observation pipeline:
-      one row per assigned issue with the assignee's tracker account and email,
-      the current status category, the close time, and the scalar fields the
-      observation measures read. The per-person attribution root, not a census:
-      unassigned and deleted issues have no row; an assignee missing from the
-      user directory keeps its issues under the account. Materialized so the
+      one row per issue with the assignee's tracker account and email, the
+      current status category, the close time, and the scalar fields the
+      observation measures read. Deleted issues have no row. An unassigned
+      issue keeps its row with an empty account and email, so it counts in the
+      unattributed share; an assignee missing from the user directory keeps
+      its issues under the account. Materialized so the
       field-history pivot runs once per build instead of once per measure
       branch.
     columns:
@@ -970,7 +977,7 @@ models:
       - name: account_source_id
         description: "Raw connector source id of the assignee account"
       - name: account_id
-        description: "Tracker account id of the assignee"
+        description: "Tracker account id of the assignee; '' for an unassigned issue"
         tests:
           - not_null
       - name: issue_id
@@ -1023,10 +1030,10 @@ models:
   - name: task_worklog_flow
     description: >
       Per-person per-day time flow for the task-delivery observation pipeline:
-      in-progress seconds split from the status spans by calendar day, summed
-      with the worklog seconds logged per author. One row per person-day: per
-      (tenant, email, date) where the tracker states an email, per (tenant,
-      account, date) where it states none; either figure is 0 on a day the
+      in-progress seconds split from the status spans by calendar day, beside
+      the worklog seconds logged per author. One row per person-day and issue:
+      per (tenant, email, date) where the tracker states an email, per (tenant,
+      account, date) where it states none; either figure is 0 on an issue the
       other side has no rows for. The account columns are set only on a day
       a single account made, so the row resolves account-first; a day several
       accounts of one email made resolves through the email.
@@ -1049,10 +1056,26 @@ models:
         description: "Calendar day the seconds fall on"
         tests:
           - not_null
+      - name: insight_source_id
+        description: "Connector source id of the issue"
+        tests:
+          - not_null
+      - name: issue_id
+        description: "Tracker id of the issue; '' for a worklog that names none"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Tracker family of the issue (jira, youtrack, github)"
+      - name: id_readable
+        description: "Key the tracker shows for the issue, e.g. PROJ-7"
+      - name: title
+        description: "Issue title; NULL when the issue has no title or no row in task_issue_state"
       - name: in_progress_seconds
-        description: "Seconds of the day the person's issues sat in an in-progress status"
+        description: "Seconds of the day the issue sat in an in-progress status, assigned to the person"
       - name: worklog_seconds
-        description: "Seconds of work the person logged on the day (deleted worklogs excluded)"
+        description: "Seconds of work the person logged on the issue that day (deleted worklogs excluded)"
+      - name: person_day_in_progress_seconds
+        description: "In-progress seconds of the whole person-day, across all its issues"
 
   - name: ci_metric_observations
     description: >

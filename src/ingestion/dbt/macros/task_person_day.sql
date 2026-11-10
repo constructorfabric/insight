@@ -22,15 +22,16 @@
     )
 {% endmacro %}
 
-{% macro task_person_day_account_columns(prefix) %}
+{% macro task_person_day_account_columns(prefix, window=none) %}
+    {% set over = ' OVER ' ~ window if window else '' %}
     {% for column in ['account_source_type', 'account_source_id', 'account_id'] %}
     if(
         uniqExact(
             coalesce({{ prefix }}account_source_type, ''),
             coalesce({{ prefix }}account_source_id, ''),
             coalesce({{ prefix }}account_id, '')
-        ) = 1,
-        any(coalesce({{ prefix }}{{ column }}, '')),
+        ){{ over }} = 1,
+        any(coalesce({{ prefix }}{{ column }}, '')){{ over }},
         ''
     ) AS {{ column }}{% if not loop.last %},{% endif %}
     {% endfor %}

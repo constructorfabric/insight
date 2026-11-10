@@ -76,7 +76,6 @@
     },
     "team_sections_meta": {
       "team_summary": "Team summary",
-      "attention": "Attention needed",
       "members": "Members"
     },
     "copy": "Copy",
@@ -450,7 +449,8 @@
       "assign_person": "Assign to a person",
       "merge_into_person": "Merge into this person",
       "confirm_group_one": "Confirm 1 account",
-      "confirm_group_other": "Confirm all {{count}} accounts"
+      "confirm_group_other": "Confirm all {{count}} accounts",
+      "skip": "Skip"
     },
     "dialogs": {
       "bind_title": "Bind this account?",
@@ -532,6 +532,13 @@
       "bind_description": "The account is bound to this person.",
       "bind_from_description": "The account is taken from {{name}} and bound to this person."
     },
+    "sources": {
+      "title": "Sources",
+      "search": "Find a source",
+      "all": "All",
+      "none": "No source matches",
+      "failed": "Sources could not be loaded"
+    },
     "accounts": {
       "placeholder": "Find an account by source, address, handle, id or observed name…",
       "no_matches": "No observed account carries that",
@@ -541,7 +548,16 @@
       "none_observed_description": "Accounts appear once a connector reports them. If you expected some, the identity build may not have run yet.",
       "no_matches_description": "Only accounts a connector has seen can be found here.",
       "loading_more": "Loading…",
-      "excluded": "excluded — bot / CI"
+      "excluded": "excluded — bot / CI",
+      "unmatched": "Unmatched",
+      "none_unmatched": "No unmatched accounts",
+      "all_accounts": "All accounts",
+      "matched_by_email": "matched by email",
+      "reasons": {
+        "no_evidence": "No address to match on",
+        "no_source_id": "No person has this address",
+        "contested": "More than one person claims it"
+      }
     }
   },
   "feedback": {
@@ -553,5 +569,10 @@
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
+  },
+  "worth_a_look": {
+    "title": "Worth a look",
+    "overview_title": "Overview · Worth a look",
+    "nothing_stands_out": "Nothing stands out this period."
   }
 }

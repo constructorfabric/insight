@@ -13,9 +13,10 @@
        silver by the time this runs, so failing the workflow would not undo
        anything — it would only turn a data condition into a red pipeline that
        nobody can fix from here. Findings travel as structured log lines with
-       their `meta.tier`; alerting reads those. An operational failure (dbt
-       cannot reach ClickHouse) is a different matter and is reported as such
-       in the logs, but still does not fail the sync. */}}
+       their `meta.tier`, and an operational failure (dbt cannot reach
+       ClickHouse) as a failed `data_quality_run` line; the insight-dq-* rules
+       in deploy/gitops/system/grafana/values.yaml alert on both. Neither fails
+       the sync. */}}
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -34,6 +35,8 @@ spec:
       inputs:
         parameters:
           - name: dbt_select
+          - name: connector
+            default: ""
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
           - name: clickhouse_host
@@ -55,6 +58,8 @@ spec:
                 key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
           - name: DBT_SELECT
             value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+          - name: DQ_CONNECTOR
+            value: {{ `"{{inputs.parameters.connector}}"` }}
           - name: CLICKHOUSE_HOST
             value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
           - name: CLICKHOUSE_PORT
@@ -92,7 +97,7 @@ spec:
           RC=0
           # shellcheck disable=SC2086 -- a dbt selector may be several words; splitting is intended
           dbt test --profiles-dir . --select $DBT_SELECT --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" || RC=$?
-          python3 /ingestion/scripts/data_quality_findings.py
+          python3 /ingestion/scripts/data_quality_findings.py --scope post_sync --connector "$DQ_CONNECTOR" --dbt-exit-code "$RC"
           if [ "$RC" -ne 0 ]; then
             echo "connector checks reported findings or errored (dbt exit ${RC}); see the finding lines above — this step does not fail the sync" >&2
           fi

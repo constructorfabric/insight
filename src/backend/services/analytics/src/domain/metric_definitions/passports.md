@@ -638,7 +638,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared_internal
 - Formula: sum(files_shared_internal)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with people inside the organization, counted once per file per day.
+- Notes: Files a person shared with people inside the organization, counted once per file per day and summed over the period, so a file shared on several days counts once for each of those days. A share with a group counts as inside even when the group has outside members.
 
 ## collab.files_shared_external — Files shared, external
 
@@ -646,7 +646,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared_external
 - Formula: sum(files_shared_external)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with people outside the organization, counted once per file per day.
+- Notes: Files a person shared with people outside the organization, counted once per file per day and summed over the period, so a file shared on several days counts once for each of those days.
 
 ## collab.files_shared — Files shared
 
@@ -654,7 +654,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared
 - Formula: sum(files_shared)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
+- Notes: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope and summed over the period, so a file shared on several days counts once for each of those days. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
 
 ## collab.meeting_hours — Meeting hours
 
@@ -815,6 +815,14 @@ is an order statistic instead, and always answers with one that did.
 - Formula: estimation_error_pct / estimation_samples -> -1*x + 100, clamped to [0, 100]
 - Shape: percent, higher_is_better
 - Notes: 100 minus the average deviation between original estimates and time spent, over days whose estimated work stayed within twice the estimate. 100 means estimates matched reality; over- and under-estimation count equally.
+
+## tasks.logged_hours — Logged time
+
+- Source: task (task_metric_observations)
+- Reads: logged_hours
+- Formula: sum(logged_hours)
+- Shape: decimal, higher_is_better, unit h
+- Notes: All work time logged in the tracker during the period, whatever the issue's status on the day it was logged.
 
 ## tasks.worklog_accuracy — Worklog accuracy
 

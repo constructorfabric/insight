@@ -31,6 +31,11 @@ import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
+  isAdmin: false,
+  unattributed: new Map<string, number | null>(),
+  unattributedPending: false,
+  /** The anchor each unattributed read was asked with; null is "not asked". */
+  unattributedAnchors: [] as Array<string | null>,
   tree: undefined as IdentityPerson | undefined,
   roster: [] as import("@/api/identity-client").PeopleListItem[],
   grid: {
@@ -75,6 +80,12 @@ vi.mock("@/queries/ic-dashboard", () => ({
 // `useOrgScope` reads the deployment's visibility policy, and its flat branch
 // reads the roster. This suite is about the view, so both answer statically.
 vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({
+    isAdmin: mocks.isAdmin,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
   useVisibilityPolicy: () => ({
     policy: "org_chart",
     isFlat: false,
@@ -106,6 +117,15 @@ vi.mock("@/queries/metric-results", () => ({
     const r = mocks.collections[mocks.call % COLLECTION_CALLS] ?? emptyCollection();
     mocks.call += 1;
     return r;
+  },
+  useUnattributedShares: (_keys: readonly string[], anchor: string | null) => {
+    mocks.unattributedAnchors.push(anchor);
+    return {
+      byKey: anchor ? mocks.unattributed : new Map(),
+      isPending: anchor !== null && mocks.unattributedPending,
+      isError: false,
+      refetch: () => {},
+    };
   },
 }));
 vi.mock("@/queries/metric-definitions", async (orig) => ({
@@ -231,6 +251,10 @@ const HEADLINE_CONFIG: LensConfig = {
 beforeEach(() => {
   mocks.call = 0;
   mocks.requested = [];
+  mocks.isAdmin = false;
+  mocks.unattributed = new Map();
+  mocks.unattributedPending = false;
+  mocks.unattributedAnchors = [];
   mocks.dateRange = { from: "2026-07-20", to: "2026-07-26" };
   seedHappyOrg();
   mocks.grid.isPending = false;
@@ -338,6 +362,101 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     ]);
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     expect(screen.getByText("no activity")).toBeInTheDocument();
+  });
+});
+
+describe("headline: the organisation's unattributed share", () => {
+  const UNATTRIBUTED_CONFIG: LensConfig = {
+    ...HEADLINE_CONFIG,
+    sections: [{ kind: "headline", metrics: ["t.commits"], unattributed: true }],
+  };
+
+  it("sets the work no person reaches beside the team total, not inside it", () => {
+    mocks.isAdmin = true;
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(<DomainLensView config={UNATTRIBUTED_CONFIG} />);
+
+    expect(screen.getByText("25 commits")).toBeInTheDocument();
+    expect(screen.getByText("100 total")).toBeInTheDocument();
+    expect(screen.getByText("+ 7 unattributed")).toBeInTheDocument();
+    expect(screen.getByText("107 in all")).toBeInTheDocument();
+  });
+
+  it("keeps the lens and the card when only work nobody reached exists", () => {
+    mocks.isAdmin = true;
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", [], { short_label: "Commits", unit: "commits" })],
+    ]);
+    mocks.grid.previousByKey = new Map();
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(<DomainLensView config={UNATTRIBUTED_CONFIG} />);
+
+    expect(screen.getByText("7 commits")).toBeInTheDocument();
+    expect(screen.getByText("all unattributed · no person reached")).toBeInTheDocument();
+    expect(screen.queryByText(/active people|total$/)).toBeNull();
+    expect(screen.queryByText("Per person")).toBeNull();
+  });
+
+  it("opens no roster records from a card that shows only the share", () => {
+    mocks.isAdmin = true;
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", [], {
+          short_label: "Commits",
+          unit: "commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-01-01", to: "2026-01-31" },
+            filters: [],
+          },
+        }),
+      ],
+    ]);
+    mocks.grid.previousByKey = new Map();
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence: vi.fn(), openEvidenceTargets: vi.fn(), openEvidencePeople: vi.fn() }}
+      >
+        <DomainLensView config={UNATTRIBUTED_CONFIG} />
+      </EvidenceDialogContext.Provider>
+    );
+
+    expect(screen.getByText("7 commits")).toBeInTheDocument();
+    expect(document.querySelector('[aria-haspopup="dialog"]')).toBeNull();
+  });
+
+  it("waits for the share before calling a source unconnected", () => {
+    mocks.isAdmin = true;
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", [], { short_label: "Commits", unit: "commits" })],
+    ]);
+    mocks.grid.previousByKey = new Map();
+    mocks.unattributedPending = true;
+    render(<DomainLensView config={{ ...UNATTRIBUTED_CONFIG, notIngested: "not wired" }} />);
+
+    expect(screen.queryByText("not wired")).toBeNull();
+  });
+
+  it.each([
+    ["a viewer the org-chart policy refuses it to", () => {}],
+    [
+      "a subtree smaller than the organisation",
+      () => {
+        mocks.isAdmin = true;
+        act(() => portalRouter.set({ scope: pid("a"), direct: false }));
+      },
+    ],
+  ])("asks for no share for %s", (_name, arrange) => {
+    arrange();
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(<DomainLensView config={UNATTRIBUTED_CONFIG} />);
+
+    expect(mocks.unattributedAnchors.every((anchor) => anchor === null)).toBe(true);
+    expect(screen.queryByText(/unattributed/)).toBeNull();
   });
 });
 
@@ -667,6 +786,73 @@ describe("aggregate sections open the people behind them", () => {
     expect(view.title).toContain("busiest 1 of 4");
     // Busiest tenth of 4 contributors = 1 person, and it is the busiest one.
     expect(view.rows.map((row: { value: number }) => row.value)).toEqual([9]);
+  });
+
+  const CONTRIBUTORS_CONFIG: LensConfig = {
+    title: "T",
+    sections: [{ kind: "contributors", metric: "t.commits", title: "Per person" }],
+  };
+
+  it("opens one person's own records from their bar", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: true });
+    drawWithEvidence(CONTRIBUTORS_CONFIG);
+
+    await user.click(
+      screen.getByRole("button", { name: "Open the records behind d" })
+    );
+
+    expect(openEvidence).toHaveBeenCalledTimes(1);
+    const [selection, label] = openEvidence.mock.calls[0]!;
+    expect(selection.entity).toEqual({ type: "person", id: pid("d") });
+    expect(label).toBe("Commits · d");
+  });
+
+  it("leaves a person's bar inert when the metric's records cannot be read", () => {
+    seedSpread({ drillable: false });
+    drawWithEvidence(CONTRIBUTORS_CONFIG);
+
+    expect(
+      screen.queryByRole("button", { name: /Open the records behind/ })
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("concentration names the busiest tenth on the card", () => {
+  function seedRoster(size: number) {
+    const labels = Array.from({ length: size }, (_, i) => `p${String(i).padStart(2, "0")}`);
+    mocks.tree = person("boss", {}, labels.map((l) => person(l)));
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          labels.map((l, i) => [pid(l), i + 1] as [string, number]),
+          { short_label: "Commits" }
+        ),
+      ],
+    ]);
+    mocks.grid.previousByKey = new Map();
+  }
+
+  const config: LensConfig = {
+    title: "T",
+    sections: [{ kind: "concentration", metrics: ["t.commits"], framing: "bus-factor" }],
+  };
+
+  it("lists the busiest people by name, busiest first", () => {
+    seedRoster(20);
+    render(<DomainLensView config={config} />);
+
+    expect(screen.getByText("p19, p18")).toBeInTheDocument();
+  });
+
+  it("names five and counts the rest when the busiest tenth is larger", () => {
+    seedRoster(60);
+    render(<DomainLensView config={config} />);
+
+    expect(screen.getByText("p59, p58, p57, p56, p55 +1 more")).toBeInTheDocument();
   });
 });
 
@@ -1247,12 +1433,11 @@ describe("direction-cards / attention sections", () => {
   });
 
   it("compares a direction card's per-person figure, not the team total", () => {
-    // Same 40-commit total both periods; two people carried it before, four now.
     mocks.grid.byKey = new Map([
-      ["git.default_branch_commits", metric("git.default_branch_commits", IDS.map((id) => [id, 10] as [string, number]))],
+      ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", IDS.map((id) => [id, 10] as [string, number]))],
     ]);
     mocks.grid.previousByKey = new Map([
-      ["git.default_branch_commits", metric("git.default_branch_commits", [[pid("a"), 20], [pid("b"), 20], [pid("c"), 0], [pid("d"), 0]])],
+      ["git.default_branch_prs_merged", metric("git.default_branch_prs_merged", [[pid("a"), 20], [pid("b"), 20], [pid("c"), 0], [pid("d"), 0]])],
     ]);
     render(
       <DomainLensView

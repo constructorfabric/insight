@@ -33,8 +33,8 @@
 -- rebuild from Bronze deletes those months rather than reproducing them, and
 -- reconcile-connectors dispatches `dbt --full-refresh` automatically on a MAJOR
 -- descriptor bump. Silver still rebuilds freely: it reads this model, not
--- Bronze. To rebuild deliberately, drop the table — the empty-table guard below
--- then reloads the whole Bronze window.
+-- Bronze. To rebuild deliberately, drop the table — the next run then builds it
+-- from the whole Bronze window.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -162,16 +162,5 @@ FROM latest_per_seat_month
 {% if is_incremental() %}
   -- Re-evaluate the current and previous month so an in-flight month's
   -- closing value keeps updating; older months are immutable.
-  -- Empty-table guard: over an empty `this` (the e2e rig resets staging between
-  -- tests) max(period_month) is the Date epoch (1970-01-01) and `- INTERVAL 1
-  -- MONTH` underflows the Date range, wrapping to ~2149 — which filters out every
-  -- row and leaves the model empty. Short-circuit when empty so the full set is
-  -- (re)loaded. Mirrors the cursor / claude_team__ai_dev_usage guard.
-  WHERE (
-    (SELECT count() FROM {{ this }}) = 0
-    OR toStartOfMonth(_airbyte_extracted_at) >= (
-        SELECT coalesce(max(period_month), toDate('1970-01-01')) - INTERVAL 1 MONTH
-        FROM {{ this }}
-    )
-  )
+  WHERE toStartOfMonth(_airbyte_extracted_at) >= {{ instance_incremental_watermark('period_month', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '1 MONTH') }}
 {% endif %}

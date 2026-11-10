@@ -17,8 +17,7 @@ import { useTranslation } from "react-i18next";
 
 import type { AccountMatch } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Badge, Input } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
+import { Badge, Input, Spinner } from "@gears-frontx/ui-kit";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";

@@ -54,6 +54,7 @@ from ..schemas import (
     CorrectionResponse,
     PersonAccountsResponse,
     ProblemDocument,
+    SourcesResponse,
 )
 from ..scratch import SCRATCH_SOURCE_ID, SCRATCH_SOURCE_TYPE
 
@@ -70,6 +71,7 @@ CORRECTION_VERBS: tuple[tuple[str, str], ...] = (
 
 ATTENTION = identity_path("/v1/resolution/attention")
 ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
+SOURCES = identity_path("/v1/resolution/sources")
 
 #: The reserved excluded-person sentinel (`Uuid::from_u128(u128::MAX)` in the
 #: service). Once any account was ever excluded it exists in the journal, so
@@ -599,6 +601,84 @@ def test_a_cursor_issued_for_another_needle_is_refused(
         ACCOUNT_SEARCH, params={"limit": 1, "q": "nobody-by-this-name", "cursor": cursor}
     )
     _refused(resumed, 400, field="cursor")
+
+
+def _observed_source(session: PersonaSession) -> str:
+    seen = session.client.get(ACCOUNT_SEARCH, params={"limit": 100})
+    assert seen.status_code == 200, f"{seen.status_code} {seen.text[:300]}"
+    sources = sorted({item.source for item in seen.parse(AccountSearchResponse).items})
+    assert sources, "a seeded stand reports no observed accounts"
+    return sources[0]
+
+
+@pytest.mark.requires_seed("ceo")
+@pytest.mark.security
+def test_the_realm_admin_is_refused_the_source_list(
+    realm_admin_session: PersonaSession,
+) -> None:
+    response = realm_admin_session.client.get(SOURCES)
+    assert response.status_code == 403, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_the_source_list_is_sorted_and_names_a_seeded_source(
+    admin_operator_session: PersonaSession,
+) -> None:
+    observed = _observed_source(admin_operator_session)
+
+    response = admin_operator_session.client.get(SOURCES)
+    assert response.status_code == 200, f"{response.status_code} {response.text[:300]}"
+
+    items = response.parse(SourcesResponse).items
+    assert items == sorted(items), f"the list is not sorted: {items}"
+    assert observed in items, f"{observed!r} reported accounts but is not listed: {items}"
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_the_source_filter_narrows_the_account_listing_to_that_source(
+    admin_operator_session: PersonaSession,
+) -> None:
+    source = _observed_source(admin_operator_session)
+
+    response = admin_operator_session.client.get(
+        ACCOUNT_SEARCH, params={"limit": 100, "source": source}
+    )
+    assert response.status_code == 200, f"{response.status_code} {response.text[:300]}"
+
+    items = response.parse(AccountSearchResponse).items
+    assert items, f"filtering on {source!r} lists none of that source's accounts"
+    assert {item.source for item in items} == {source}, (
+        f"accounts from another source leaked through the filter: {items[:3]}"
+    )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_a_cursor_issued_for_another_source_set_is_refused(
+    admin_operator_session: PersonaSession,
+) -> None:
+    first = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"limit": 1})
+    assert first.status_code == 200, f"{first.status_code} {first.text[:300]}"
+    cursor = first.parse(AccountSearchResponse).next_cursor
+    assert cursor, "a one-row page of the observed accounts must offer a next page"
+
+    resumed = admin_operator_session.client.get(
+        ACCOUNT_SEARCH, params={"limit": 1, "source": "nobody-by-this-name", "cursor": cursor}
+    )
+    _refused(resumed, 400, field="cursor")
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_more_than_twenty_sources_are_refused(
+    admin_operator_session: PersonaSession,
+) -> None:
+    many = ",".join(f"src{i}" for i in range(21))
+
+    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"source": many})
+    _refused(response, 400, field="source")
 
 
 def _verb_body(verb: str, person_id: str) -> dict[str, JsonValue]:

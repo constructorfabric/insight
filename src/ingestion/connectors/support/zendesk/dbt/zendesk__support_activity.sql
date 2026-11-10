@@ -123,21 +123,14 @@ FROM merged
 -- contributions, so a partial row is impossible. Scoped to the (tenant,
 -- source) whose extract touched the date, so one instance's late sync does
 -- not rebuild every other instance's rows for that day.
--- SAFETY: the count() guard is load-bearing. A sync whose bronze carried no
--- matching row leaves the target existing and empty; max() over it is
--- 1970-01-01, and DateTime minus an interval wraps past 2106, which would
--- select no date and keep the table empty forever.
-WHERE (
-    (SELECT count() FROM {{ this }}) = 0
-    OR (tenant_id, source_id, date) IN (
-        SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
-        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
-        WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
-        UNION DISTINCT
-        SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
-        FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
-        WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
-    )
+WHERE (tenant_id, source_id, date) IN (
+    SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
+    FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+    WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('collected_at', ['tenant_id', 'source_id'], ['tenant_id', 'insight_source_id'], '3 DAY') }}
+    UNION DISTINCT
+    SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
+    FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+    WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('collected_at', ['tenant_id', 'source_id'], ['tenant_id', 'insight_source_id'], '3 DAY') }}
 )
 {% endif %}
 GROUP BY tenant_id, source_id, person_key, date

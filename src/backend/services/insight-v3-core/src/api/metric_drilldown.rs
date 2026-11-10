@@ -140,6 +140,7 @@ struct ColumnOut {
     r#type: &'static str,
     sortable: bool,
     percent: bool,
+    exact: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -281,6 +282,7 @@ fn column_out(column: &Column) -> ColumnOut {
         },
         sortable: true,
         percent: column.percent,
+        exact: column.exact,
     }
 }
 

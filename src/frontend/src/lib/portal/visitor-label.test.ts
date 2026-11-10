@@ -24,6 +24,17 @@ describe("visitorLabel", () => {
     ).toEqual({ label: "ada", detail: "username: ada" });
   });
 
+  it("falls back to the address the way People does when no name or handle is known", () => {
+    expect(
+      visitorLabel({
+        person_id: PERSON_ID,
+        display_name: "",
+        username: "",
+        email: "ada@example.com",
+      })
+    ).toEqual({ label: "ada@example.com", detail: PERSON_ID });
+  });
+
   it("falls back to the id when neither a name nor a handle is known", () => {
     expect(
       visitorLabel({ person_id: PERSON_ID, display_name: "", username: "" })

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::metric_results::compiler::sql_string_literal;
 
 use super::dto::MetricDrilldownColumnType;
+use super::row_shape::RowShape;
 
 /// `u64::MAX` is 20 digits. A longer run of digits is not a number worth
 /// padding, and padding it would push a real value out of the field.
@@ -55,7 +56,9 @@ pub(super) const DATE_KEY: &str = "date";
 pub(super) const VALUE_KEY: &str = "value";
 pub(super) const NUMERATOR_KEY: &str = "numerator";
 pub(super) const DENOMINATOR_KEY: &str = "denominator";
+pub(super) const RECORDS_THAT_DAY_KEY: &str = "records_that_day";
 pub(super) const PERSON_KEY: &str = "person";
+pub(super) const PARTS_KEY: &str = "parts";
 
 /// A presented column as the query reads it, applying the same
 /// details-then-dimension fallback the row projection does — an order or a
@@ -176,18 +179,24 @@ fn natural_order(text: &str) -> String {
 /// How a presented column is read off the row. `None` is a column the query
 /// cannot order or search by, and the validator refuses a sort naming it.
 ///
-/// One resolver for both query shapes: the validator and the compiler ask the
+/// One resolver for every row shape: the validator and the compiler ask the
 /// same question, and a second implementation is a second answer.
 pub(super) fn column_sql(
     key: &str,
     r#type: MetricDrilldownColumnType,
-    ratio: bool,
+    shape: RowShape,
 ) -> Option<ColumnSql> {
-    if ratio {
-        return ratio_column_sql(key);
+    match shape {
+        RowShape::Record | RowShape::FoldedRecord => record_column_sql(key, r#type),
+        RowShape::DailyRatio => ratio_column_sql(key),
+        RowShape::RecordRatio => record_ratio_column_sql(key, r#type),
+        RowShape::RecordsPerSubject => records_per_subject_column_sql(key, r#type),
     }
+}
+
+fn record_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<ColumnSql> {
     let sql = match key {
-        PERSON_KEY | NUMERATOR_KEY | DENOMINATOR_KEY => return None,
+        PERSON_KEY | NUMERATOR_KEY | DENOMINATOR_KEY | RECORDS_THAT_DAY_KEY => return None,
         DATE_KEY => ColumnSql::projected(
             MetricDrilldownColumnType::Date,
             "toString(evidence.metric_date)".to_owned(),
@@ -222,10 +231,29 @@ fn ratio_column_sql(key: &str) -> Option<ColumnSql> {
     Some(sql)
 }
 
+fn record_ratio_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<ColumnSql> {
+    match key {
+        VALUE_KEY => None,
+        NUMERATOR_KEY | DENOMINATOR_KEY => ratio_column_sql(key),
+        key => record_column_sql(key, r#type),
+    }
+}
+
+fn records_per_subject_column_sql(
+    key: &str,
+    r#type: MetricDrilldownColumnType,
+) -> Option<ColumnSql> {
+    match key {
+        VALUE_KEY | NUMERATOR_KEY => None,
+        RECORDS_THAT_DAY_KEY => ratio_column_sql(DENOMINATOR_KEY),
+        key => record_column_sql(key, r#type),
+    }
+}
+
 /// Whether the query can order by a column at all — the one answer the
 /// presented column carries and the validator refuses a sort against.
-pub(super) fn is_sortable(key: &str, r#type: MetricDrilldownColumnType, ratio: bool) -> bool {
-    column_sql(key, r#type, ratio).is_some()
+pub(super) fn is_sortable(key: &str, r#type: MetricDrilldownColumnType, shape: RowShape) -> bool {
+    column_sql(key, r#type, shape).is_some()
 }
 
 /// INVARIANT: mirrors `project_row` — the details map first, the dimension of
@@ -241,7 +269,7 @@ fn detail_text(key: &str) -> String {
     )
 }
 
-fn dimension_text(literal: &str) -> String {
+pub(super) fn dimension_text(literal: &str) -> String {
     format!(
         "arrayMap(dimension -> if(trimBoth(ifNull(dimension.3, '')) != '', \
                                   ifNull(dimension.3, ''), \
@@ -255,7 +283,7 @@ mod tests {
     use super::*;
 
     fn text(key: &str) -> ColumnSql {
-        column_sql(key, MetricDrilldownColumnType::String, false)
+        column_sql(key, MetricDrilldownColumnType::String, RowShape::Record)
             .unwrap_or_else(|| panic!("{key} must be readable"))
     }
 
@@ -263,26 +291,64 @@ mod tests {
     fn a_column_the_query_cannot_read_refuses_to_produce_sql() {
         for key in [PERSON_KEY, NUMERATOR_KEY, DENOMINATOR_KEY] {
             assert!(
-                column_sql(key, MetricDrilldownColumnType::String, false).is_none(),
+                column_sql(key, MetricDrilldownColumnType::String, RowShape::Record).is_none(),
                 "should refuse: {key}"
             );
         }
-        assert!(column_sql("repository", MetricDrilldownColumnType::String, true).is_none());
+        assert!(
+            column_sql(
+                "repository",
+                MetricDrilldownColumnType::String,
+                RowShape::DailyRatio
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn a_ratio_row_sorts_only_by_the_day_and_the_two_numbers() {
         for key in [DATE_KEY, NUMERATOR_KEY, DENOMINATOR_KEY] {
             assert!(
-                is_sortable(key, MetricDrilldownColumnType::Number, true),
+                is_sortable(key, MetricDrilldownColumnType::Number, RowShape::DailyRatio),
                 "should sort: {key}"
             );
         }
         assert!(!is_sortable(
             VALUE_KEY,
             MetricDrilldownColumnType::Number,
-            true
+            RowShape::DailyRatio
         ));
+    }
+
+    #[test]
+    fn a_ratio_of_records_reads_the_record_and_its_two_numbers() {
+        for key in [DATE_KEY, NUMERATOR_KEY, DENOMINATOR_KEY, "ref", "title"] {
+            assert!(
+                is_sortable(
+                    key,
+                    MetricDrilldownColumnType::String,
+                    RowShape::RecordRatio
+                ),
+                "should sort: {key}"
+            );
+        }
+        for key in [VALUE_KEY, PERSON_KEY] {
+            assert!(
+                !is_sortable(
+                    key,
+                    MetricDrilldownColumnType::Number,
+                    RowShape::RecordRatio
+                ),
+                "should refuse: {key}"
+            );
+        }
+        let title = column_sql(
+            "title",
+            MetricDrilldownColumnType::String,
+            RowShape::RecordRatio,
+        )
+        .unwrap_or_else(|| panic!("title must be readable"));
+        assert!(title.as_text().contains("evidence.details['title']"));
     }
 
     #[test]
@@ -294,8 +360,12 @@ mod tests {
 
     #[test]
     fn a_number_column_re_enters_the_cursor_as_a_number() {
-        let number = column_sql(VALUE_KEY, MetricDrilldownColumnType::Number, false)
-            .unwrap_or_else(|| panic!("value must be readable"));
+        let number = column_sql(
+            VALUE_KEY,
+            MetricDrilldownColumnType::Number,
+            RowShape::Record,
+        )
+        .unwrap_or_else(|| panic!("value must be readable"));
         assert_eq!(number.cursor_binding(), "toFloat64(?)");
         assert_eq!(text(DATE_KEY).cursor_binding(), "?");
     }
@@ -310,8 +380,12 @@ mod tests {
     // ClickHouse's, and it refuses the query rather than the value.
     #[test]
     fn a_cursor_key_that_cannot_re_enter_the_comparison_is_refused() {
-        let number = column_sql(VALUE_KEY, MetricDrilldownColumnType::Number, false)
-            .unwrap_or_else(|| panic!("value must be readable"));
+        let number = column_sql(
+            VALUE_KEY,
+            MetricDrilldownColumnType::Number,
+            RowShape::Record,
+        )
+        .unwrap_or_else(|| panic!("value must be readable"));
         assert!(number.accepts_cursor_key("12.5"));
         assert!(!number.accepts_cursor_key("x"));
         assert!(!number.accepts_cursor_key(""));

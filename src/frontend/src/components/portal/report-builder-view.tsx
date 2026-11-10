@@ -7,12 +7,13 @@ import type {
 } from "@/api/reports-client";
 import { MAX_REPORT_PEOPLE } from "@/api/reports-client";
 import { Card, CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
+  Spinner,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  ToggleGroup,
+  ToggleGroupItem,
 } from "@gears-frontx/ui-kit";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
@@ -22,7 +23,7 @@ import {
 } from "@/components/portal/report-builder-metrics";
 import { ReportPreviewDialog } from "@/components/portal/report-builder-preview";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import { metricVisible } from "@/lib/portal/nav-policy";
+import { offeredMetricFilter } from "@/lib/insight/groups";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { byFamily } from "@/lib/reports/families";
@@ -75,14 +76,12 @@ export function ReportBuilderView() {
     () => reportPersonIds(scope.roster, scope.pivotPersonId),
     [scope.roster, scope.pivotPersonId]
   );
-  const catalogue = useMemo(
-    () =>
-      (definitions.data?.metrics ?? []).filter(
-        (metric) =>
-          metric.is_enabled && metricVisible(metric.metric_key, showPlanned)
-      ),
-    [definitions.data, showPlanned]
-  );
+  const catalogue = useMemo(() => {
+    const isOffered = offeredMetricFilter(showPlanned);
+    return (definitions.data?.metrics ?? []).filter(
+      (metric) => metric.is_enabled && isOffered(metric)
+    );
+  }, [definitions.data, showPlanned]);
   const offered = useMemo<OfferedReportMetric[]>(
     () =>
       catalogue
@@ -200,6 +199,7 @@ export function ReportBuilderView() {
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Scope</span>
               <ToggleGroup
+                spacing={0}
                 value={[subject]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;
@@ -218,6 +218,7 @@ export function ReportBuilderView() {
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Granularity</span>
               <ToggleGroup
+                spacing={0}
                 value={[granularity]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;

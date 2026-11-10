@@ -5,8 +5,7 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
 use crate::domain::metric_definitions::{
-    ComputationSpec, EvidenceGranularity, MetricDefinition, StoredPresentation,
-    load_definitions_with_ids,
+    EvidenceGranularity, MetricDefinition, StoredPresentation, load_definitions_with_ids,
 };
 use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 
@@ -25,6 +24,7 @@ use super::dto::{
     ValidatedDrilldown, ValidatedMetricDrilldown,
 };
 use super::presentation::presentation_columns;
+use super::row_shape::RowShape;
 use super::sort::{MetricDrilldownSort, column_sql};
 
 struct CommonRequest {
@@ -228,7 +228,7 @@ async fn validate_common(
     // cursor is bound to, and what the compiler reads — so they cannot drift
     // apart between here and the query.
     let columns = presentation_columns(&plan, &filters, &display_dimensions, &entity);
-    let ratio = matches!(plan.definition.spec, ComputationSpec::Ratio { .. });
+    let shape = RowShape::of(&plan);
     let sort = normalize_sort(&columns, sort)?;
     let search = normalize_search(search)?;
     let selection = MetricDrilldownSelection {
@@ -262,7 +262,7 @@ async fn validate_common(
         &fingerprint,
         &columns,
         &selection.sort,
-        ratio,
+        shape,
     )
     .await?;
     Ok(ValidatedDrilldown::Ready(Box::new(
@@ -294,7 +294,7 @@ async fn resume_from(
     fingerprint: &str,
     columns: &[MetricDrilldownColumn],
     sort: &MetricDrilldownSort,
-    ratio: bool,
+    shape: RowShape,
 ) -> Result<Option<super::cursor::CursorKey>, CanonicalError> {
     let Some(value) = cursor else {
         return Ok(None);
@@ -309,7 +309,7 @@ async fn resume_from(
     // sorted column's own cast, and ClickHouse answers a value that will not
     // cast by refusing the QUERY — so it is refused here, as the malformed
     // cursor it is.
-    let fits = column_sql(&sort.key, sort_column_type(columns, &sort.key), ratio)
+    let fits = column_sql(&sort.key, sort_column_type(columns, &sort.key), shape)
         .is_some_and(|sql| sql.accepts_cursor_key(&envelope.key.sort_value));
     if !fits {
         return invalid("cursor", "cursor is malformed");

@@ -34,5 +34,5 @@ SELECT
     toNullable(default_branch) AS default_branch
 FROM {{ source('bronze_gitlab', 'repositories') }} FINAL
 {% if is_incremental() %}
-WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at') }}
 {% endif %}

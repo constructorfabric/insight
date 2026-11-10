@@ -153,10 +153,13 @@ const ORDER_LABEL_SQL: &str = "lowerUTF8(if(email != '', email, \
 const LIST_SQL: &str = r"
     SELECT {COLUMNS}, {LABEL} AS order_label
     FROM ({FOLD})
-    WHERE latest_op != 'DELETE'{FILTER}{RESUME}
+    WHERE latest_op != 'DELETE'{SOURCES}{FILTER}{RESUME}
     ORDER BY order_label, source_type, source_id, account_id
     LIMIT ?
 ";
+
+const SOURCE_PREDICATE_SQL: &str = "
+      AND has(?, source_type)";
 
 /// INVARIANT: probes every value a row can DISPLAY — the source it came from
 /// and the composed name included. The row prints the source beside the account
@@ -352,6 +355,19 @@ const EXISTS_SQL: &str = r"
     LIMIT 1
 ";
 
+const SOURCES_SQL: &str = r"
+    SELECT DISTINCT ifNull(insight_source_type, '') AS source_type
+    FROM identity.identity_inputs
+    WHERE source_account_id IS NOT NULL AND source_account_id != ''
+      AND ifNull(insight_source_type, '') != ''
+    ORDER BY source_type
+";
+
+#[derive(Debug, Row, Deserialize)]
+struct SourceTypeRow {
+    source_type: String,
+}
+
 #[derive(Debug, Row, Deserialize)]
 struct CountRow {
     hits: u64,
@@ -431,12 +447,16 @@ fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
 
 /// Assemble the listing query: the fold, the optional needle, the optional
 /// resume, and the order that makes paging over it well defined.
-fn list_sql(filtered: bool, resuming: bool) -> String {
+fn list_sql(filtered: bool, by_source: bool, resuming: bool) -> String {
     // {LABEL} last: it is what RESUME_SQL is written in terms of, so it has to
     // be substituted after the resume clause is spliced in.
     LIST_SQL
         .replace("{COLUMNS}", FOLD_COLUMNS)
         .replace("{FOLD}", &fold_sql())
+        .replace(
+            "{SOURCES}",
+            if by_source { SOURCE_PREDICATE_SQL } else { "" },
+        )
         .replace("{FILTER}", if filtered { FILTER_SQL } else { "" })
         .replace("{RESUME}", if resuming { RESUME_SQL } else { "" })
         .replace("{LABEL}", ORDER_LABEL_SQL)
@@ -476,14 +496,18 @@ impl ClickHouseEvidenceReader {
     pub async fn list(
         &self,
         needle: Option<&str>,
+        sources: &[String],
         after: Option<AfterAccount<'_>>,
         page_size: u64,
     ) -> anyhow::Result<AccountPage> {
-        let sql = list_sql(needle.is_some(), after.is_some());
+        let sql = list_sql(needle.is_some(), !sources.is_empty(), after.is_some());
 
+        // INVARIANT: binds are positional, in placeholder order: sources first
+        // because `{SOURCES}` precedes `{FILTER}` in the template.
         let mut query = self.client.query(&sql);
-        // Bound in the order the placeholders appear: one probe per displayable
-        // value, then the resume tuple, then the page size.
+        if !sources.is_empty() {
+            query = query.bind(sources);
+        }
         if let Some(needle) = needle {
             for _ in 0..needle_probes() {
                 query = query.bind(needle);
@@ -550,6 +574,19 @@ impl ClickHouseEvidenceReader {
             Err(e) if MissingRelation::from_error(&e).is_some() => Ok(false),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub async fn sources(&self) -> anyhow::Result<Vec<String>> {
+        let rows: Vec<SourceTypeRow> = match self.client.query(SOURCES_SQL).fetch_all().await {
+            Ok(rows) => rows,
+            Err(e) if MissingRelation::from_error(&e).is_some() => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+
+        Ok(rows.into_iter().map(|row| row.source_type).collect())
     }
 
     /// The account as the connectors last described it, or `None` when none
@@ -737,17 +774,17 @@ mod tests {
 
     #[test]
     fn every_placeholder_of_the_listing_has_a_value_bound_to_it() {
-        // The bind list is written by hand — four needle probes, four resume
-        // values, the page size — so a placeholder without its value shifts
-        // every later binding and the resume lands in a needle slot.
-        for (case, filtered, resuming, expected) in [
-            ("browse", false, false, 1),
-            ("search", true, false, 1 + needle_probes()),
-            ("browse, resumed", false, true, 5),
-            ("search, resumed", true, true, 5 + needle_probes()),
+        for (case, filtered, by_source, resuming, expected) in [
+            ("browse", false, false, false, 1),
+            ("search", true, false, false, 1 + needle_probes()),
+            ("browse, resumed", false, false, true, 5),
+            ("search, resumed", true, false, true, 5 + needle_probes()),
+            ("browse one source", false, true, false, 2),
+            ("search one source", true, true, false, 2 + needle_probes()),
+            ("everything on", true, true, true, 6 + needle_probes()),
         ] {
             assert_eq!(
-                list_sql(filtered, resuming).matches('?').count(),
+                list_sql(filtered, by_source, resuming).matches('?').count(),
                 expected,
                 "placeholder count changed for: {case}"
             );
@@ -755,11 +792,70 @@ mod tests {
     }
 
     #[test]
+    fn an_unfiltered_listing_carries_no_source_predicate() {
+        let sql = list_sql(true, false, true);
+
+        assert!(
+            !sql.contains(SOURCE_PREDICATE_SQL.trim()),
+            "unexpected source predicate in: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_source_predicate_narrows_the_fold_output_not_the_fold() {
+        let sql = list_sql(false, true, false);
+
+        let fold = fold_sql();
+        let fold_end = sql.find(&fold).map(|at| at + fold.len());
+        let predicate = sql.find(SOURCE_PREDICATE_SQL.trim());
+
+        assert!(
+            fold_end.is_some() && predicate > fold_end,
+            "the predicate must sit after the fold's closing: {sql}"
+        );
+        assert_eq!(
+            sql.matches(SOURCE_PREDICATE_SQL.trim()).count(),
+            1,
+            "exactly one source predicate: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_sources_read_is_distinct_ordered_and_skips_empty_account_ids() {
+        let sql = SOURCES_SQL.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        for needle in [
+            "SELECT DISTINCT",
+            "FROM identity.identity_inputs",
+            "source_account_id IS NOT NULL AND source_account_id != ''",
+            "ORDER BY source_type",
+        ] {
+            assert!(sql.contains(needle), "missing `{needle}` in: {sql}");
+        }
+    }
+
+    #[test]
+    fn a_needle_and_sources_are_both_joined_with_and() {
+        let sql = list_sql(true, true, false);
+        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert!(
+            normalized
+                .contains("WHERE latest_op != 'DELETE' AND has(?, source_type) AND (positionCase"),
+            "the source predicate and the needle filter must each be ANDed: {sql}"
+        );
+        assert!(
+            sql.find(SOURCE_PREDICATE_SQL.trim()) < sql.find("AND (positionCase"),
+            "the needle filter must follow the source predicate: {sql}"
+        );
+    }
+
+    #[test]
     fn a_needle_is_probed_against_every_value_a_row_can_show() {
         // The composed name is the one an operator reads off a row described by
         // parts alone. Probing only the whole-name column leaves those rows
         // findable by nothing but their account id.
-        let sql = list_sql(true, false);
+        let sql = list_sql(true, false, false);
 
         assert_eq!(
             needle_probes(),
@@ -794,7 +890,7 @@ mod tests {
         // The resume clause is written in terms of the label, so the label is
         // substituted after it — one wrong ordering and a literal `{LABEL}`
         // reaches the server.
-        let sql = list_sql(true, true);
+        let sql = list_sql(true, true, true);
 
         assert!(!sql.contains('{'), "unsubstituted hole in: {sql}");
         assert_eq!(
@@ -809,7 +905,7 @@ mod tests {
         // The row shows email, else username, else the whole name, else the
         // parts composed, else the id. Sorting by anything else puts a row under
         // a value the operator cannot see.
-        let sql = list_sql(false, false);
+        let sql = list_sql(false, false, false);
 
         for value in [
             "email",

@@ -8,22 +8,8 @@
     tags=['hubspot', 'silver:class_crm_deals']
 ) }}
 
--- Live (`deals`) and archived (`deals_archived`) are sibling Bronze tables;
--- ReplacingMergeTree on `unique_key` dedups, with `_version = greatest(updatedAt, archivedAt)`
--- so an archive event always outranks the prior live update. The archived
--- sibling is only synced when Airbyte's HubSpot connector is configured to
--- backfill deleted records — guard the UNION with adapter.get_relation so
--- absent archived tables don't break the build. Derive the bronze schema
--- from the dbt source so a tenant-prefixed `bronze_hubspot_<tenant>` rename
--- doesn't silently drop the archived UNION arm.
-{%- set bronze_schema = source('bronze_hubspot', 'deals').schema -%}
-{%- set bronze_tables = ['deals'] -%}
-{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='deals_archived') -%}
-  {%- do bronze_tables.append('deals_archived') -%}
-{%- endif %}
-
 WITH src AS (
-    {% for tbl in bronze_tables %}
+    {% for tbl in hubspot_bronze_tables('deals') %}
     SELECT
         tenant_id,
         source_id,
@@ -54,9 +40,7 @@ WITH src AS (
         -- can be the contact owner. Resolves to silver.class_crm_users
         -- via the `hs_user_id` column (HubSpot Owners API's `userId`).
         properties_hs_created_by_user_id                AS created_by_user_id,
-        nullIf(arrayElement(
-            JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1
-        ), '')                                          AS account_id,
+        {{ hubspot_first_association('associations_companies') }} AS account_id,
         toNullable(toInt64(coalesce(properties_hs_is_closed, 'false') = 'true'))     AS is_closed,
         toNullable(toInt64(coalesce(properties_hs_is_closed_won, 'false') = 'true')) AS is_won,
         properties_hs_analytics_source                  AS lead_source,
@@ -72,24 +56,13 @@ WITH src AS (
         createdAt                                       AS created_at,
         updatedAt                                       AS updated_at,
         data_source,
-        greatest(
-            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
-            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
-        )                                               AS _version
+        {{ hubspot_record_version() }}                  AS _version,
+        {{ hubspot_deletion_columns() }},
+        {{ hubspot_properties_map() }}                  AS properties,
+        properties_deal_currency_code                   AS currency,
+        toFloat64OrNull(properties_hs_exchange_rate)    AS exchange_rate
     FROM {{ source('bronze_hubspot', tbl) }}
     {% if not loop.last %}UNION ALL{% endif %}
     {% endfor %}
 )
-{% if is_incremental() %}
-SELECT src.*
-FROM src
-LEFT JOIN (
-    SELECT tenant_id, source_id, max(_version) AS hwm
-    FROM {{ this }}
-    GROUP BY tenant_id, source_id
-) w
-  ON w.tenant_id = src.tenant_id AND w.source_id = src.source_id
-WHERE src._version > coalesce(w.hwm, 0)
-{% else %}
-SELECT * FROM src
-{% endif %}
+{{ hubspot_staging_tail('src') }}

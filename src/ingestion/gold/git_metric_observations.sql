@@ -49,8 +49,6 @@ SELECT
     dimensions
 FROM {{ ref('git_metric_evidence') }}
 WHERE measure_key IN (
-    'commit_day',
-    'default_commit_day',
     'commit_change_size',
     'pr_commit_count',
     'pr_cycle_hours',
@@ -60,3 +58,23 @@ WHERE measure_key IN (
     'pr_review_to_merge_hours',
     'pr_approval_to_merge_hours'
 )
+
+UNION ALL
+
+SELECT
+    tenant_id,
+    source_key,
+    entity_type,
+    entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
+    metric_date,
+    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
+    measure_key,
+    max(contribution) AS value,
+    subject_key,
+    dimensions
+FROM {{ ref('git_metric_evidence') }}
+WHERE measure_key IN ('commit_day', 'default_commit_day')
+GROUP BY tenant_id, source_key, entity_type, entity_id, account_source_type, account_source_id, account_id, metric_date, measure_key, subject_key, dimensions

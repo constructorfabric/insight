@@ -379,6 +379,14 @@ describe("row-limit chunking", () => {
     expect(entityChunkSize(PERIOD_PEER)).toBe(225);
   });
 
+  it("never asks for more people than the endpoint takes in one request", () => {
+    const onePeriodMetric: MetricCollectionConfig = {
+      metrics: [{ key: "git.commits", views: [{ view: "period" }] }],
+    };
+
+    expect(entityChunkSize(onePeriodMetric)).toBe(1000);
+  });
+
   it("is not chunkable with bucket-projected views", () => {
     expect(entityChunkSize(COLLECTION)).toBeNull();
   });
@@ -581,6 +589,32 @@ describe("rollup view", () => {
 
   it("is not chunkable — rollup rows carry no entity grain to merge on", () => {
     expect(entityChunkSize(ROLLUP_COLLECTION)).toBeNull();
+  });
+});
+
+describe("unattributed view", () => {
+  const UNATTRIBUTED_COLLECTION: MetricCollectionConfig = {
+    metrics: [{ key: "tasks.closed", views: [{ view: "unattributed" }] }],
+  };
+
+  it("asks for the share in one request that never chunks", () => {
+    const request = buildMetricCollectionRequest(
+      UNATTRIBUTED_COLLECTION,
+      { type: "person", ids: ["alice@example.com"] },
+      RANGE
+    );
+
+    expect(request.metrics[0]?.views).toEqual([{ view: "unattributed" }]);
+    expect(entityChunkSize(UNATTRIBUTED_COLLECTION)).toBeNull();
+  });
+
+  it("normalizes onto the unattributed field", () => {
+    const normalized = normalizeMetricResult({
+      ...SUM_METRIC_FIXTURE,
+      views: [{ view: "unattributed", value: 3 }],
+    });
+
+    expect(normalized.unattributed).toEqual({ view: "unattributed", value: 3 });
   });
 });
 

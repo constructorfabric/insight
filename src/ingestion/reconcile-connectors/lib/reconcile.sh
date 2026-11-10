@@ -357,9 +357,21 @@ reconcile_migrated_state_dir_ready() {
 }
 
 # ---------------------------------------------------------------------------
+# reconcile_is_mirror_move <current_repo> <desired_repo>
+# True when the desired repository is the current one rewritten through
+# RECONCILE_IMAGE_MIRRORS: the same image, now pulled through the install's
+# mirror. That repository change is migrated; any other one is left to an
+# operator.
+# ---------------------------------------------------------------------------
+reconcile_is_mirror_move() {
+  [[ "$(python3 "${_RECONCILE_PY_DIR}/mirror_image_ref.py" "$1")" == "$2" ]]
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_migrate_definition_kind <connector_name> <old_definition_id> <cdk_image>
 #
-# Move a connector from a manifest-backed definition to a CDK-image-backed one.
+# Move a connector from a manifest-backed definition to a CDK-image-backed one,
+# or from a CDK image to the same image under the install's registry mirror.
 # Airbyte's source_definitions/update carries only dockerImageTag, so a
 # definition's docker repository cannot be repointed, and definitions are found
 # by name — the old one must be gone before the new one can hold the name.
@@ -660,11 +672,15 @@ reconcile_definitions() {
     IFS=$'\t' read -r desc_repo desc_tag \
       < <(python3 "${_RECONCILE_PY_DIR}/split_docker_image_ref.py" "${cdk_image}")
 
-    if [[ "${current_repo}" != "${desc_repo}" && "${current_repo}" != "${_RECONCILE_MANIFEST_REPO}" ]]; then
+    if [[ "${current_repo}" != "${desc_repo}" && "${current_repo}" != "${_RECONCILE_MANIFEST_REPO}" ]] \
+       && ! reconcile_is_mirror_move "${current_repo}" "${desc_repo}"; then
       # Two CDK image repositories differing is a registry move or a descriptor
       # typo, not a change of connector kind, and tearing a live source down for
       # either would be out of all proportion. Unchanged from before: WARN and
-      # leave it to an operator.
+      # leave it to an operator. The one move recognised is the install turning
+      # on a mirror for the image's registry, migrated below: the old reference
+      # is one the cluster may not pull, so leaving it means a source that
+      # never runs.
       reconcile__log WARN "${connector_name}" \
         "cdk image repository changed (${current_repo} → ${desc_repo}); manual recreate-with-state needed — skipping for now"
       printf 'noop\tnone\t%s\n' "${definition_id}"
@@ -672,12 +688,14 @@ reconcile_definitions() {
     fi
 
     if [[ "${current_repo}" != "${desc_repo}" ]]; then
-      # Only the manifest-backed → CDK case reaches here. A connector rewritten
-      # from a declarative manifest keeps its name, so the definition found above
-      # is the manifest runner's and its repository can never be updated into
-      # ours. Migrating is the only way forward; leaving it in place would keep
-      # the old connection syncing the superseded extraction while the repo
-      # claims otherwise.
+      # Manifest-backed → CDK, or CDK → the same image under a mirror. A
+      # connector rewritten from a declarative manifest keeps its name, so the
+      # definition found above is the manifest runner's and its repository can
+      # never be updated into ours; a mirrored image hits the same wall, since
+      # only the tag of a definition can be updated. Migrating is the only way
+      # forward; leaving it in place would keep the old connection syncing the
+      # superseded extraction (or, for a mirror, failing to pull) while the
+      # repo claims otherwise.
       # bump_kind=patch, same as the cdk first-publish this effectively is: a
       # one-shot sync still fires (data changed), but never `dbt --full-refresh`
       # — that would drop and rebuild the connector's incremental SCD2 models

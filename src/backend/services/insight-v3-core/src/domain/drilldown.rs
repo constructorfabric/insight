@@ -51,6 +51,7 @@ pub(crate) struct Column {
     pub(crate) kind: ColumnKind,
     /// Whether its numbers are percentages, which the metric says.
     pub(crate) percent: bool,
+    pub(crate) exact: bool,
 }
 
 /// One page of a metric's rows, and how to ask for the next.
@@ -123,6 +124,7 @@ impl<'a> Drilldowns<'a> {
                 key: key.clone(),
                 kind: *kind,
                 percent: prepared.compiled.percents().contains(key),
+                exact: prepared.compiled.exacts().contains(key),
             })
             .collect();
         if let Some(taken) = columns

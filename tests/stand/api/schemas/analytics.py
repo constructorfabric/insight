@@ -192,13 +192,14 @@ class FeedbackEntry(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_name: str = Field(..., description='Empty when the sender has not been mirrored into the identity rows yet.')
+    display_name: str = Field(..., description="The roster's name when it lists the sender, as People shows it; else\nthe identity rows', empty when they hold none.")
+    email: str | None = Field(None, description="The roster's address; null for a sender the roster does not list.")
     feedback_id: str
     message: str
     path: str
     person_id: str
     ts: str
-    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+    username: str = Field(..., description="The roster's handle when it lists the sender; else the identity rows',\nempty when they hold none.")
 
 
 class FeedbackListResponse(BaseModel):
@@ -510,10 +511,22 @@ class View5(StrEnum):
 
 
 class View6(StrEnum):
-    error = 'error'
+    unattributed = 'unattributed'
+
+
+class MetricResultViewDto7(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    value: float | None = None
+    view: View6
 
 
 class View7(StrEnum):
+    error = 'error'
+
+
+class View8(StrEnum):
     not_ready = 'not_ready'
 
 
@@ -602,7 +615,7 @@ class MetricViewErrorCode(StrEnum):
     QUERY_FAILED = 'QUERY_FAILED'
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     period = 'period'
 
 
@@ -610,10 +623,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
+class View10(StrEnum):
     peer = 'peer'
 
 
@@ -622,10 +635,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View9
+    view: View10
 
 
-class View10(StrEnum):
+class View11(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -636,10 +649,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View10
+    view: View11
 
 
-class View11(StrEnum):
+class View12(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -648,10 +661,10 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View11
+    view: View12
 
 
-class View12(StrEnum):
+class View13(StrEnum):
     rollup = 'rollup'
 
 
@@ -661,10 +674,10 @@ class MetricViewRequest5(BaseModel):
     )
     dimensions: list[str]
     group_limit: MetricGroupLimitRequest | None = None
-    view: View12
+    view: View13
 
 
-class View13(StrEnum):
+class View14(StrEnum):
     histogram = 'histogram'
 
 
@@ -673,11 +686,27 @@ class MetricViewRequest6(BaseModel):
         extra='forbid',
     )
     dimensions: list[str] | None = None
-    view: View13
+    view: View14
 
 
-class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
-    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6
+class View15(StrEnum):
+    unattributed = 'unattributed'
+
+
+class MetricViewRequest7(BaseModel):
+    """
+    The tenant-wide sum of the work that resolves to no person: rows with no
+    person account or email, and accounts identity has not bound. Sum
+    metrics only; work bound to the excluded person is not counted.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    view: View15
+
+
+class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6 | MetricViewRequest7]):
+    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6 | MetricViewRequest7
 
 
 class NotReadyReason(StrEnum):
@@ -1079,11 +1108,12 @@ class UsagePerson(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_name: str = Field(..., description='Empty when the visitor has not been mirrored into the identity rows yet.')
+    display_name: str = Field(..., description="The roster's name when it lists the visitor, as People shows it; else\nthe identity rows', empty when they hold none.")
+    email: str | None = Field(None, description="The roster's address; null for a visitor the roster does not list.")
     last_seen: str
     page_views: int = Field(..., ge=0)
     person_id: str
-    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+    username: str = Field(..., description="The roster's handle when it lists the visitor; else the identity rows',\nempty when they hold none.")
     visits: int = Field(..., ge=0)
 
 
@@ -1345,7 +1375,7 @@ class MetricResultViewDto6(BaseModel):
     view: View5
 
 
-class MetricResultViewDto7(BaseModel):
+class MetricResultViewDto8(BaseModel):
     """
     This view's computation failed; sibling views and metrics are
     unaffected. `message` detail depends on the caller's role: admins get
@@ -1356,10 +1386,10 @@ class MetricResultViewDto7(BaseModel):
     )
     code: MetricViewErrorCode
     message: str
-    view: View6
+    view: View7
 
 
-class MetricResultViewDto8(BaseModel):
+class MetricResultViewDto9(BaseModel):
     """
     The data this view reads has not been built yet. It carries no values
     at all, which is what separates it from a view whose every reading is
@@ -1373,7 +1403,7 @@ class MetricResultViewDto8(BaseModel):
         extra='forbid',
     )
     reason: NotReadyReason
-    view: View7
+    view: View8
 
 
 class MetricResultsRequest(BaseModel):
@@ -1622,8 +1652,8 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7 | MetricResultViewDto8]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7 | MetricResultViewDto8
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7 | MetricResultViewDto8 | MetricResultViewDto9]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7 | MetricResultViewDto8 | MetricResultViewDto9
 
 
 class MetricDrilldownResponse(BaseModel):

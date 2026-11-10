@@ -5,6 +5,8 @@ import {
 } from "@tanstack/react-router";
 import { describe, expect, it } from "vitest";
 
+import { toISODate } from "@/api/period-to-date-range";
+
 import {
   PORTAL_SEARCH_KEYS,
   applySearchPatch,
@@ -17,7 +19,47 @@ import {
  * a computed default — never to error, because the alternative is an error
  * boundary in place of a dashboard over one mistyped character.
  */
+/**
+ * What a route reads: the router spreads the validated search over the parent
+ * match's, and the root route's is the raw query string. A key the validator
+ * drops therefore has to come back as `undefined`, not be omitted.
+ */
+function asMatched(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, ...validatePortalSearch(raw) };
+}
+
+function isoDaysFromToday(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return toISODate(d);
+}
+
 describe("validatePortalSearch", () => {
+  it("normalises the picked sources and drops an empty list", () => {
+    expect(validatePortalSearch({ src: " gitlab,github,github" }).src).toBe(
+      "github,gitlab",
+    );
+    expect(validatePortalSearch({ src: ",," }).src).toBeUndefined();
+    expect(validatePortalSearch({ src: 5 }).src).toBeUndefined();
+  });
+
+  it("degrades an oversized src to at most 20 entries of at most 30 characters", () => {
+    const many = Array.from({ length: 25 }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    const long = "x".repeat(31);
+    const fits = "y".repeat(30);
+
+    const kept = validatePortalSearch({ src: [...many, long, fits].join(",") }).src?.split(",");
+
+    expect(kept).toHaveLength(20);
+    expect(kept?.every((entry) => entry.length <= 30)).toBe(true);
+    expect(kept).not.toContain(long);
+    expect(validatePortalSearch({ src: `${long},${fits}` }).src).toBe(fits);
+  });
+
+  it("carries src across a route change", () => {
+    expect(PORTAL_SEARCH_KEYS).toContain("src");
+  });
+
   it("keeps the navigation keys it recognises", () => {
     expect(
       validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
@@ -42,8 +84,8 @@ describe("validatePortalSearch", () => {
   });
 
   it("omits `direct` unless it is truthy — no defaults in a shared URL", () => {
-    expect(validatePortalSearch({ direct: "false" })).not.toHaveProperty("direct");
-    expect(validatePortalSearch({})).not.toHaveProperty("direct");
+    expect(asMatched({ direct: "false" }).direct).toBeUndefined();
+    expect(validatePortalSearch({}).direct).toBeUndefined();
     expect(validatePortalSearch({ direct: "true" }).direct).toBe(true);
   });
 
@@ -58,32 +100,18 @@ describe("validatePortalSearch", () => {
       expect(out).toMatchObject({ from: "2026-01-01", to: "2026-01-31" });
     });
 
-    it("drops an INVERTED pair instead of letting it reach the range assert", () => {
-      // Well-formed and nonsensical: this used to pass validation and throw
-      // downstream, turning a bad link into an error boundary.
-      expect(
-        validatePortalSearch({ from: "2026-07-30", to: "2026-01-01" }),
-      ).not.toHaveProperty("from");
-    });
-
-    it("drops a pair that exceeds the maximum span", () => {
-      expect(
-        validatePortalSearch({ from: "2000-01-01", to: "2026-01-01" }),
-      ).not.toHaveProperty("from");
-    });
-
-    it("drops a half-specified range — one bound cannot resolve a window", () => {
-      expect(validatePortalSearch({ from: "2026-01-01" })).not.toHaveProperty("from");
-      expect(validatePortalSearch({ to: "2026-01-31" })).not.toHaveProperty("to");
-    });
-
-    it("drops malformed dates", () => {
-      expect(
-        validatePortalSearch({ from: "01/01/2026", to: "31/01/2026" }),
-      ).not.toHaveProperty("from");
-      expect(
-        validatePortalSearch({ from: "2026-13-45", to: "2026-13-46" }),
-      ).not.toHaveProperty("from");
+    it.each([
+      ["inverted", { from: "2026-07-30", to: "2026-01-01" }],
+      ["longer than the maximum span", { from: "2000-01-01", to: "2026-01-01" }],
+      ["past today", { from: "2026-01-01", to: isoDaysFromToday(2) }],
+      ["missing its end", { from: "2026-01-01" }],
+      ["missing its start", { to: "2026-01-31" }],
+      ["not ISO", { from: "01/01/2026", to: "31/01/2026" }],
+      ["not a calendar date", { from: "2026-13-45", to: "2026-13-46" }],
+    ])("drops a range that is %s, so the page opens on the preset", (_case, raw) => {
+      const search = asMatched(raw);
+      expect(search.from, JSON.stringify(raw)).toBeUndefined();
+      expect(search.to, JSON.stringify(raw)).toBeUndefined();
     });
   });
 });
@@ -107,6 +135,17 @@ describe("the ingestion drill-down key", () => {
   it("is retained across navigation", () => {
     // Without this the drill-down is lost the moment anything else navigates.
     expect(PORTAL_SEARCH_KEYS).toContain("conn");
+  });
+});
+
+describe("Metrics view links", () => {
+  it.each([
+    ["keeps well-formed metric keys and drops the rest", { metrics: "git.commits,<b>,ai.cost" }, { metrics: "git.commits,ai.cost" }],
+    ["keeps an empty pick", { metrics: "none" }, { metrics: "none" }],
+    ["drops a list with nothing usable", { metrics: ",," }, { metrics: undefined }],
+    ["keeps compared ids, lower-cased", { compare: "AB12-CD,x y" }, { compare: "ab12-cd" }],
+  ])("%s", (_case, raw, expected) => {
+    expect(validatePortalSearch(raw)).toMatchObject(expected);
   });
 });
 

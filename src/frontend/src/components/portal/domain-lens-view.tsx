@@ -1,6 +1,8 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
+import { resolveText } from "@/i18n/localized-text";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
@@ -20,8 +22,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -42,7 +42,9 @@ import {
   attentionSummary,
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
-import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
+import { useVisibleRoster } from "@/queries/visible-roster";
+import { showsUnattributedShare } from "@/lib/portal/unattributed-share";
 import {
   availableSlices,
   cohortKey,
@@ -124,12 +126,16 @@ import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
-import { useMetricCollection } from "@/queries/metric-results";
+import {
+  useMetricCollection,
+  useUnattributedShares,
+} from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
 import { TEXT_EYEBROW, TEXT_FIGURE, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+const NO_METRICS: readonly string[] = [];
 const DAY_MS = 86_400_000;
 const OWN_NAME = "You";
 
@@ -166,6 +172,7 @@ export function DomainLensView({
    */
   gridKeys?: readonly string[];
 }) {
+  const { t } = useTranslation();
   const { dateRange, compareTo } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
@@ -196,6 +203,7 @@ export function DomainLensView({
       ),
     [declared, showPlanned, scoped]
   );
+  const title = resolveText(t, config.title);
   // Every request the screen makes carries this, so no section can forget it
   // and quietly answer about the whole tenant instead.
   const scopeFilters = useMemo(
@@ -233,6 +241,25 @@ export function DomainLensView({
     () => members.map((m) => normalizePersonId(m.person_id)),
     [members]
   );
+  const { isAdmin } = useIsAdmin();
+  const visibleRoster = useVisibleRoster(personId === null);
+  const unattributedSpec = config.sections.find(
+    (section): section is Extract<SectionSpec, { kind: "headline" }> =>
+      section.kind === "headline" && section.unattributed === true
+  );
+  const readsOrganisation = showsUnattributedShare({
+    personal: personId !== null,
+    scoped: scoped !== null,
+    mayReadOrganisation: isFlat || isAdmin,
+    scopeMemberCount: memberIds.length,
+    visibleCount: visibleRoster.isPending ? 0 : visibleRoster.roster.length,
+  });
+  const unattributedShares = useUnattributedShares(
+    unattributedSpec?.metrics ?? NO_METRICS,
+    unattributedSpec && readsOrganisation ? (memberIds[0] ?? null) : null,
+    dateRange
+  );
+  const unattributedByKey = unattributedShares.byKey;
   // Metric rows are keyed by the normalized id; the display name rides along
   // so a drilldown row can say whose work it was.
   const scopedMembers = useMemo(
@@ -508,6 +535,15 @@ export function DomainLensView({
     isFlat
   );
 
+  const membersObserved = sourceConnected(
+    lensKeys,
+    grid.byKey,
+    memberIds,
+    personId ? personalReach : undefined
+  );
+  // INVARIANT: with no member observed, only the share can tell an unconnected
+  // source from work nobody reached, so the lens waits on it.
+  const sharesDecide = !membersObserved;
   const gate = orgScopeGate({
     "data-testid": testId,
     viewerLoading: !personId && orgScope.isLoading,
@@ -515,30 +551,28 @@ export function DomainLensView({
     membersLoading: false,
     membersError: false,
     memberCount: members.length,
-    gridPending: grid.isPending,
-    gridError: grid.isError,
+    gridPending: grid.isPending || (sharesDecide && unattributedShares.isPending),
+    gridError: grid.isError || (sharesDecide && unattributedShares.isError),
     emptyLabel:
       "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
+      unattributedShares.refetch();
     },
   });
   if (gate) return gate;
 
   // Rule 6: nothing in this family was ever observed → the source isn't wired.
-  const connected = sourceConnected(
-    lensKeys,
-    grid.byKey,
-    memberIds,
-    personId ? personalReach : undefined
-  );
+  const connected =
+    membersObserved ||
+    [...unattributedByKey.values()].some((value) => (value ?? 0) > 0);
   if (config.sections.length > 0 && !connected) {
     return (
       <Pending
         label={
           config.notIngested ??
-          `${config.title} — this data source is not connected yet.`
+          `${title} — this data source is not connected yet.`
         }
       />
     );
@@ -633,7 +667,7 @@ export function DomainLensView({
             onClick={() => openRepository("")}
             className="cursor-pointer text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
-            {declared.title}
+            {title}
           </button>
           <span aria-hidden className="text-muted-foreground">
             ›
@@ -644,7 +678,7 @@ export function DomainLensView({
       {!embedded ? <div className="relative flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
-            {scoped ? (scopedLabel ?? scoped) : config.title}
+            {scoped ? (scopedLabel ?? scoped) : title}
           </h1>
           <p className="text-sm text-muted-foreground">
             {personId
@@ -657,7 +691,7 @@ export function DomainLensView({
           <ExplainWithAi
             className="static"
             snapshot={trendSnapshot(drawable, {
-              title: config.title,
+              title,
               bucket: trendBucket,
               since: dateRange.from,
               until: dateRange.to,
@@ -685,6 +719,7 @@ export function DomainLensView({
           tableIsError={tableData.isError}
           tableRefetch={tableData.refetch}
           memberIds={memberIds}
+          unattributedByKey={unattributedByKey}
           personal={personId !== null}
           personalReach={personalReach}
           cohortOf={cohortOf}
@@ -767,6 +802,7 @@ function Section({
   tableIsError,
   tableRefetch,
   memberIds,
+  unattributedByKey,
   personal,
   personalReach,
   cohortOf,
@@ -792,6 +828,8 @@ function Section({
   tableIsError: boolean;
   tableRefetch: () => void;
   memberIds: readonly string[];
+  /** Organisation-wide work no person reaches, per metric; empty below org level. */
+  unattributedByKey: Map<string, number | null>;
   /** One person is read: nothing routes into an org view. */
   personal: boolean;
   personalReach: ReadonlySet<string> | null;
@@ -814,6 +852,7 @@ function Section({
           grid={grid}
           memberIds={memberIds}
           roster={{ nameByEntity, personIdByEntity }}
+          unattributedByKey={unattributedByKey}
         />
       );
     case "stat-tiles":
@@ -899,6 +938,7 @@ function Section({
           grid={grid}
           memberIds={memberIds}
           nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
         />
       );
     case "heatmap-hours":
@@ -1059,45 +1099,88 @@ function HeadlineSection({
   grid,
   memberIds,
   roster,
+  unattributedByKey,
 }: {
   metrics: readonly string[];
   labelSource?: "short";
   grid: GridData;
   memberIds: readonly string[];
   roster: RosterLookups;
+  unattributedByKey: Map<string, number | null>;
 }) {
   const cards = metrics
-    .map((key) => {
-      const r = grid.byKey.get(key);
-      const reading = perPersonReading(r, memberIds);
-      if (!r || !reading) return null;
-      const prev = perPersonReading(grid.previousByKey.get(key), memberIds);
-      const figure = formatMetricValue(reading.value, r.format, r.unit);
-      const title =
-        reading.kind === "median"
-          ? `${r.label} · median ${figure} per person`
-          : reading.active === 0
-            ? `${r.label} · no activity`
-            : `${r.label} · ${figure} per active person`;
-      const carrier = grid.byKey.get(evidenceMetricFor(key)) ?? null;
-      const people = peopleEvidenceView(r, memberIds, title, roster, carrier);
-      return { key, r, reading, prev: prev?.value ?? null, people };
-    })
+    .map((key) => headlineCard(key, grid, memberIds, roster, unattributedByKey))
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
 
   return (
     <section className="flex flex-col gap-3">
-      <p className={TEXT_EYEBROW}>
-        Per person
-      </p>
+      {cards.some((c) => c.kind === "members") && (
+        <p className={TEXT_EYEBROW}>
+          Per person
+        </p>
+      )}
       <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
-        {cards.map((c) => (
-          <HeadlineCard key={c.key} card={c} labelSource={labelSource} />
-        ))}
+        {cards.map((c) =>
+          c.kind === "members" ? (
+            <HeadlineCard key={c.key} card={c} labelSource={labelSource} />
+          ) : (
+            <UnattributedOnlyCard key={c.key} card={c} labelSource={labelSource} />
+          )
+        )}
       </div>
     </section>
   );
+}
+
+/** Work nobody reached, for a sum metric at organisation level; null otherwise. */
+function positiveShare(
+  r: NormalizedMetricResult,
+  key: string,
+  unattributedByKey: Map<string, number | null>
+): number | null {
+  if (r.computation !== "sum") return null;
+  const share = unattributedByKey.get(key) ?? null;
+  return share != null && share > 0 ? share : null;
+}
+
+function headlineCard(
+  key: string,
+  grid: GridData,
+  memberIds: readonly string[],
+  roster: RosterLookups,
+  unattributedByKey: Map<string, number | null>
+) {
+  const r = grid.byKey.get(key);
+  if (!r) return null;
+
+  const unattributed = positiveShare(r, key, unattributedByKey);
+  const reading = perPersonReading(r, memberIds);
+  if (!reading) {
+    return unattributed == null
+      ? null
+      : { kind: "share-only" as const, key, r, unattributed };
+  }
+
+  const prev = perPersonReading(grid.previousByKey.get(key), memberIds);
+  const figure = formatMetricValue(reading.value, r.format, r.unit);
+  const title =
+    reading.kind === "median"
+      ? `${r.label} · median ${figure} per person`
+      : reading.active === 0
+        ? `${r.label} · no activity`
+        : `${r.label} · ${figure} per active person`;
+  const carrier = grid.byKey.get(evidenceMetricFor(key)) ?? null;
+  const people = peopleEvidenceView(r, memberIds, title, roster, carrier);
+  return {
+    kind: "members" as const,
+    key,
+    r,
+    reading,
+    prev: prev?.value ?? null,
+    people,
+    unattributed,
+  };
 }
 
 function readingCaption(reading: PerPersonReading, r: NormalizedMetricResult): string[] {
@@ -1110,6 +1193,28 @@ function readingCaption(reading: PerPersonReading, r: NormalizedMetricResult): s
   return [`average of ${reading.active} active ${people}`, `${total} total`];
 }
 
+/** The share beside the members' total; null when there is none or no total to add it to. */
+function unattributedCaption(
+  reading: PerPersonReading,
+  unattributed: number | null,
+  r: NormalizedMetricResult
+): string[] | null {
+  if (unattributed == null || reading.kind === "median") return null;
+  return [
+    `+ ${formatMetricValue(unattributed, r.format, null)} unattributed`,
+    `${formatMetricValue(reading.total + unattributed, r.format, null)} in all`,
+  ];
+}
+
+function CaptionParts({ parts }: { parts: readonly string[] }) {
+  return parts.map((part, i) => (
+    <Fragment key={part}>
+      {i > 0 ? " · " : null}
+      <span className="inline-block">{part}</span>
+    </Fragment>
+  ));
+}
+
 function HeadlineCard({
   card,
   labelSource,
@@ -1119,11 +1224,14 @@ function HeadlineCard({
     reading: PerPersonReading;
     prev: number | null;
     people: EvidencePeopleView;
+    /** Organisation-wide work that reaches no person; null below org level. */
+    unattributed: number | null;
   };
   labelSource?: "short";
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
+  const share = unattributedCaption(c.reading, c.unattributed, c.r);
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
@@ -1144,13 +1252,15 @@ function HeadlineCard({
       </div>
       {/* Each part wraps as a unit, so a narrow card breaks between them. */}
       <div className="text-xs font-medium text-muted-foreground">
-        {readingCaption(c.reading, c.r).map((part, i) => (
-          <Fragment key={part}>
-            {i > 0 ? " · " : null}
-            <span className="inline-block">{part}</span>
-          </Fragment>
-        ))}
+        <CaptionParts parts={readingCaption(c.reading, c.r)} />
       </div>
+      {/* INVARIANT: the share stays outside the members' figures, or the
+        per-person reading would absorb work nobody did. */}
+      {share ? (
+        <div data-slot="headline-unattributed" className="text-xs text-muted-foreground">
+          <CaptionParts parts={share} />
+        </div>
+      ) : null}
     </CardContent>
   );
 
@@ -1166,6 +1276,39 @@ function HeadlineCard({
       >
         {body}
       </button>
+    </Card>
+  );
+}
+
+/**
+ * No member has a value, so the card carries only the work nobody reached. It
+ * opens nothing: no person's records hold that work.
+ */
+function UnattributedOnlyCard({
+  card: c,
+  labelSource,
+}: {
+  card: { r: NormalizedMetricResult; unattributed: number };
+  labelSource?: "short";
+}) {
+  return (
+    <Card className="py-0">
+      <CardContent className="flex flex-col gap-1 p-4">
+        <MetricName
+          metric={c.r}
+          text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
+          className={TEXT_NAME}
+        />
+        <div className={TEXT_FIGURE}>
+          {formatMetricValue(c.unattributed, c.r.format, c.r.unit)}
+        </div>
+        <div
+          data-slot="headline-unattributed"
+          className="text-xs font-medium text-muted-foreground"
+        >
+          all unattributed · no person reached
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -1740,12 +1883,20 @@ function ConcentrationSection({
   );
 }
 
+const CONCENTRATION_NAMES = 5;
+
+function concentrationNames(people: EvidencePeopleView): string {
+  const names = people.rows.map((row) => row.name);
+  const shown = names.slice(0, CONCENTRATION_NAMES).join(", ");
+  const rest = names.length - CONCENTRATION_NAMES;
+  return rest > 0 ? `${shown} +${rest} more` : shown;
+}
+
 /**
  * One concentration figure, and who the busiest tenth actually is.
  *
  * The card opens that subset rather than the roster: a list of everyone would
- * answer a different question from the one the card raises. Names stay inside
- * the dialog — the card itself still says nothing about any individual.
+ * answer a different question from the one the card raises.
  */
 function ConcentrationCard({
   card,
@@ -1770,6 +1921,9 @@ function ConcentrationCard({
       <div className="text-xs text-muted-foreground">
         carried by the {c.subset} · {note}
       </div>
+      {c.people.rows.length ? (
+        <div className="mt-2 text-sm">{concentrationNames(c.people)}</div>
+      ) : null}
     </CardContent>
   );
 
@@ -1922,31 +2076,40 @@ function CompositionSection({
   );
 }
 
-/* ── contributors + heatmap-hours (inside a drilldown) ───────────────── */
+/* ── contributors + heatmap-hours ────────────────────────────────────── */
 
 const CONTRIBUTOR_ROWS = 8;
 
-/**
- * The people who carried this one value, ranked.
- *
- * Named, unlike every roster-wide section: the subject is already one
- * repository, and "who works on this" is the question a reader descends to ask.
- * The roster-wide screens stay anonymous — see `AttentionSection` for the only
- * other place a name appears.
- */
 function ContributorsSection({
   spec,
   grid,
   memberIds,
   nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "contributors" }>;
   grid: GridData;
   memberIds: readonly string[];
   nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
+  const evidence = useMetricEvidenceOptional();
   const r = grid.byKey.get(spec.metric);
   if (!r) return null;
+
+  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric)) ?? null;
+  const people = peopleEvidenceView(
+    r,
+    memberIds,
+    spec.title,
+    { nameByEntity, personIdByEntity },
+    carrier
+  );
+  const targetByEntity = new Map(
+    people.rows.flatMap((row) =>
+      row.target ? [[row.entityId, row.target] as const] : []
+    )
+  );
 
   const ranked = entityValues(r, memberIds)
     .filter((e) => e.value > 0)
@@ -1969,12 +2132,19 @@ function ContributorsSection({
     });
   }
 
+  const openPerson = (row: BarRow) => {
+    const target = targetByEntity.get(row.key);
+    if (target) evidence?.openEvidence(target.selection, target.label);
+  };
+
   return (
     <BarList
       title={spec.title}
       rows={toBarRows(bucket)}
       format={r.format}
       unit={r.unit}
+      onOpen={evidence && targetByEntity.size ? openPerson : undefined}
+      canOpen={(row) => targetByEntity.has(row.key)}
     />
   );
 }

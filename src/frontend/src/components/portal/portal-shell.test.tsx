@@ -71,6 +71,9 @@ vi.mock("@/components/portal/report-builder-view", () => ({
 vi.mock("@/components/portal/team-state-view", () => ({
   TeamStateView: () => <div data-testid="team-state" />,
 }));
+vi.mock("@/components/portal/metrics-view", () => ({
+  MetricsView: () => <div data-testid="metrics-view" />,
+}));
 vi.mock("@/components/portal/employees-view", () => ({
   EmployeesView: () => <div data-testid="employees" />,
 }));
@@ -89,8 +92,15 @@ vi.mock("@/components/portal/person-header", () => ({
     <div data-testid="person-header">{person}</div>
   ),
 }));
-vi.mock("@/components/portal/lens-rail", () => ({ LensRail: () => <div /> }));
-vi.mock("@/components/portal/context-pane", () => ({ ContextPane: () => <div /> }));
+vi.mock("@/components/portal/lens-rail", () => ({
+  LensRail: () => <div />,
+  RailItems: () => <div />,
+  RailFooterItems: () => <div />,
+}));
+vi.mock("@/components/portal/context-pane", () => ({
+  ContextPane: () => <div />,
+  ZonePages: () => <div />,
+}));
 vi.mock("@/components/portal/portal-topbar", () => ({ PortalTopBar: () => <div /> }));
 vi.mock("@/components/mock-banner", () => ({ MockBanner: () => <div /> }));
 vi.mock("@/components/view-as-banner", () => ({
@@ -215,11 +225,13 @@ describe("PersonView", () => {
 });
 
 describe("PeopleView", () => {
-  it("routes items: roster (default), employees, median-by-role scaffold", () => {
+  it("routes items: roster (default), employees, metrics, median-by-role scaffold", () => {
     const { rerender } = render(<PeopleView person={pid("p1")} item={null} />);
     expect(screen.getByTestId("team-state")).toBeInTheDocument();
     rerender(<PeopleView person={pid("p1")} item="employees" />);
     expect(screen.getByTestId("employees")).toBeInTheDocument();
+    rerender(<PeopleView person={pid("p1")} item="metrics" />);
+    expect(screen.getByTestId("metrics-view")).toBeInTheDocument();
     rerender(<PeopleView person={pid("p1")} item="median-by-role" />);
     expect(screen.getByText(/Medians by role/)).toBeInTheDocument();
   });

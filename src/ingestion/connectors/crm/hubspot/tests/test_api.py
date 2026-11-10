@@ -150,7 +150,7 @@ class TestGenerateSchema:
         assert props["archived"] == {"type": ["boolean", "null"]}
         assert props["archivedAt"]["format"] == "date-time"
 
-    @pytest.mark.parametrize("object_type", ["leads", "unknown_object"])
+    @pytest.mark.parametrize("object_type", ["owners", "unknown_object"])
     def test_empty_allowlist_yields_base_fields_only(self, object_type):
         props = make_client().generate_schema(object_type)["properties"]
         assert not [k for k in props if k.startswith("properties_")], f"object: {object_type}"

@@ -1,3 +1,4 @@
+import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type {
   MetricCollectionConfig,
   MetricTimeseriesGroupLimitConfig,
@@ -119,6 +120,10 @@ const TASK_DELIVERY_COLLECTION: MetricCollectionConfig = {
     { key: "tasks.avg_slip", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "tasks.estimation_accuracy",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "tasks.logged_hours",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -460,8 +465,8 @@ export const GROUPS: readonly MetricGroup[] = [
     collection: GIT_OUTPUT_COLLECTION,
     card: {
       preview: [
-        "git.default_branch_commits",
         "git.default_branch_prs_merged",
+        "git.pr_size",
         "git.default_branch_code_lines",
       ],
     },
@@ -470,7 +475,6 @@ export const GROUPS: readonly MetricGroup[] = [
         id: "output-by-repository",
         view: "timeseries",
         metrics: [
-          "git.default_branch_commits",
           "git.default_branch_prs_merged",
           "git.default_branch_lines_added",
           "git.default_branch_lines_removed",
@@ -478,7 +482,6 @@ export const GROUPS: readonly MetricGroup[] = [
         defaultPresentation: "table",
         table: {
           columns: [
-            { metric: "git.default_branch_commits" },
             { metric: "git.default_branch_prs_merged", labelSource: "short" },
             GIT_LINES_TABLE_COLUMN,
           ],
@@ -488,7 +491,7 @@ export const GROUPS: readonly MetricGroup[] = [
           limits: {
             repository: {
               count: 10,
-              rankBy: "git.default_branch_commits",
+              rankBy: "git.default_branch_prs_merged",
               includeRemainder: true,
             },
           },
@@ -718,4 +721,21 @@ export function visibleGroups(
     });
   }
   return kept;
+}
+
+export function offeredMetricFilter(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): (metric: Pick<MetricDefinition, "metric_key" | "entity_type" | "origin">) => boolean {
+  const shown = new Set(
+    visibleGroups(showPlanned, policy).flatMap((group) =>
+      group.collection.metrics.map((m) => m.key)
+    )
+  );
+
+  return (metric) => {
+    if (!metricVisible(metric.metric_key, showPlanned, policy)) return false;
+    if (metric.origin === "custom" || metric.entity_type !== "person") return true;
+    return shown.has(metric.metric_key);
+  };
 }

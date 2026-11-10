@@ -21,7 +21,12 @@ name: m365
 #   m365_day_was_reported). MAJOR so reconcile dispatches the one-shot
 #   `dbt --full-refresh` that purges the copies already materialised in
 #   staging/silver/gold — incremental models never retro-delete.
-version: "3.0.0"
+# 3.1.0: the stream window ends at today-1 instead of today-3, and each sync
+#   re-reads the 4 days before the stored cursor (lookback P4D), so a recent
+#   day Microsoft published partially is fetched again and the newest extract
+#   wins per user. MINOR: reconcile republishes the manifest; nothing stored
+#   changes meaning.
+version: "3.1.0"
 schedule: 0 2 * * *
 dbt_select: tag:m365+
 workflow: sync

@@ -1,5 +1,5 @@
 import { CalendarIcon, CircleAlert } from "lucide-react";
-import { useState, type KeyboardEvent } from "react";
+import { useState } from "react";
 import type { DateRange as DayPickerRange } from "react-day-picker";
 
 import {
@@ -12,45 +12,19 @@ import {
 } from "@/api/period-to-date-range";
 import {
   Button,
+  Calendar,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@gears-frontx/ui-kit";
-import { Calendar } from "@/components/ui/calendar";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@gears-frontx/ui-kit";
+import { formatRange } from "@/lib/date-range-label";
+import { keepNavigationKeysInside } from "@/lib/keep-navigation-keys-inside";
 import type { CustomRange, PeriodValue } from "@/types/insight";
-
-function parseIso(iso: string): Date {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
-}
-
-/**
- * The active range, with the year shown only when it is in doubt.
- *
- * "31 Jul – 30 Jul" for a whole year read as a typo, or as a week, to everyone
- * who saw it: the reader has to already know the answer to decode the label.
- * The year appears when the range crosses a year boundary or sits outside the
- * current one, and stays out of the way when both ends are plainly this year.
- */
-function formatRange(fromIso: string, toIso: string): string {
-  const from = parseIso(fromIso);
-  const to = parseIso(toIso);
-  const thisYear = new Date().getFullYear();
-  const needsYear =
-    from.getFullYear() !== to.getFullYear() ||
-    from.getFullYear() !== thisYear ||
-    to.getFullYear() !== thisYear;
-  const opts: Intl.DateTimeFormatOptions = needsYear
-    ? { day: "numeric", month: "short", year: "numeric" }
-    : { day: "numeric", month: "short" };
-  return `${from.toLocaleDateString("en-GB", opts)} – ${to.toLocaleDateString("en-GB", opts)}`;
-}
 
 function formatLongDate(d: Date): string {
   return d.toLocaleDateString("en-GB", {
@@ -69,21 +43,6 @@ const TABS: { value: PeriodValue; label: string; short: string }[] = [
 
 const SEGMENT =
   "bg-card text-muted-foreground aria-pressed:bg-selection-subtle aria-pressed:text-foreground";
-
-const COMPOSITE_NAVIGATION_KEYS = new Set([
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "Home",
-  "End",
-]);
-
-// WORKAROUND: the popover is portalled out of the DOM but not out of the React
-// tree, so its key events bubble to the ToggleGroup, whose roving focus takes them.
-function keepNavigationKeysInside(event: KeyboardEvent<HTMLDivElement>) {
-  if (COMPOSITE_NAVIGATION_KEYS.has(event.key)) event.stopPropagation();
-}
 
 export interface PeriodSelectorBarProps {
   period: PeriodValue;
@@ -140,6 +99,7 @@ export function PeriodSelectorBar({
   return (
     <div className="flex items-center gap-2">
       <ToggleGroup
+        spacing={0}
         value={groupValue}
         onValueChange={(values) => {
           const next = Array.isArray(values) ? values[0] : values;
@@ -200,7 +160,7 @@ export function PeriodSelectorBar({
           />
           <PopoverContent
             align="end"
-            className="w-auto p-0"
+            className="w-auto gap-0 p-0"
             onKeyDown={keepNavigationKeysInside}
           >
             {tempRange?.from ? (
@@ -219,6 +179,11 @@ export function PeriodSelectorBar({
             ) : null}
             <Calendar
               mode="range"
+              weekStartsOn={1}
+              captionLayout="dropdown"
+              fixedWeeks
+              endMonth={latestPickableDay()}
+              className="p-3"
               resetOnSelect
               showOutsideDays={false}
               selected={tempRange}

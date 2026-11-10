@@ -27,6 +27,7 @@ import {
   getAttention,
   getPersonAccounts,
   listPeople,
+  listSources,
   mergePersons,
   QUEUE_FIRST_PAGE,
   searchAccounts,
@@ -40,8 +41,24 @@ import {
 } from "@/api/identity-client";
 import type { AccountRef } from "@/lib/identities/account-key";
 import { dropDecided } from "@/lib/identities/cases";
+import { normalizeSources } from "@/lib/identities/sources";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
+
+function sameList(previous: unknown, picked: readonly string[]): boolean {
+  return (
+    Array.isArray(previous) &&
+    previous.length === picked.length &&
+    previous.every((value, index) => value === picked[index])
+  );
+}
+
+function sameSources(
+  previousKey: readonly unknown[],
+  picked: readonly string[],
+): boolean {
+  return sameList(previousKey.at(-1), picked);
+}
 
 /** An operator works a queue; a minute of staleness is fine, losing edits is not. */
 const ATTENTION_STALE_TIME = 60 * 1000;
@@ -55,16 +72,23 @@ const ATTENTION_STALE_TIME = 60 * 1000;
  */
 export function useAttention(
   limit: number = QUEUE_FIRST_PAGE,
+  sources: readonly string[] = [],
+  kinds: readonly string[] = [],
 ): UseQueryResult<AttentionResponse> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
+  const picked = normalizeSources(sources);
+  const kept = normalizeSources(kinds);
   return useQuery({
-    queryKey: ["identity", "resolution", "attention", sessionScope, limit],
-    queryFn: () => getAttention(limit),
+    queryKey: ["identity", "resolution", "attention", sessionScope, limit, kept, picked],
+    queryFn: () => getAttention(limit, picked, kept),
     staleTime: ATTENTION_STALE_TIME,
     // A longer ask re-reads the rows already on screen: without this the queue
     // an operator is working blanks to a spinner every time they ask for more.
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery && sameSources(previousQuery.queryKey, picked)
+        ? previous
+        : undefined,
     enabled: sessionScope != null,
   });
 }
@@ -263,23 +287,51 @@ export function useAccountList(
   q: string,
   /** `browse` lists every open account on a blank query; `match` lists none. */
   intent: AccountListIntent = "browse",
+  sources: readonly string[] = [],
 ): UseInfiniteQueryResult<InfiniteData<AccountSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   const trimmed = q.trim();
+  const picked = normalizeSources(sources);
   return useInfiniteQuery({
     // The intent is part of the key for the same reason it is on the person
     // listing: `enabled: false` stops a request and NOT a cache read, so a
     // shared key would let the in-person field render the whole fold the
     // accounts mode had just browsed.
-    queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, intent, trimmed],
+    queryKey: [
+      ...RESOLUTION_KEY,
+      "account-search",
+      sessionScope,
+      intent,
+      trimmed,
+      picked,
+    ],
     queryFn: ({ pageParam, signal }) =>
-      searchAccounts(trimmed, { cursor: pageParam, limit: PAGE_SIZE }, signal),
+      searchAccounts(
+        trimmed,
+        { cursor: pageParam, limit: PAGE_SIZE },
+        signal,
+        picked,
+      ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery && sameSources(previousQuery.queryKey, picked)
+        ? previous
+        : undefined,
     enabled: sessionScope != null && listsAnyAccount(trimmed, intent),
+  });
+}
+
+export function useAccountSources(): UseQueryResult<string[]> {
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  return useQuery({
+    queryKey: [...RESOLUTION_KEY, "sources", sessionScope],
+    queryFn: ({ signal }) => listSources(signal),
+    staleTime: ATTENTION_STALE_TIME,
+    enabled: sessionScope != null,
   });
 }
 

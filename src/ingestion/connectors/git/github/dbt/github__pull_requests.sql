@@ -90,5 +90,5 @@ LEFT JOIN diff_stats AS ds
 WHERE greatest(
     pr._airbyte_extracted_at,
     COALESCE(ds._airbyte_extracted_at, pr._airbyte_extracted_at)
-) > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+) > {{ instance_incremental_watermark('_airbyte_extracted_at', ['pr.tenant_id', 'pr.source_id']) }}
 {% endif %}

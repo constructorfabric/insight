@@ -20,20 +20,19 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-} from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
-import {
+  Spinner,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { formatMetricNumber } from "@/lib/format";
+} from "@gears-frontx/ui-kit";
+import { formatMetricNumber, formatTimeMetricValue } from "@/lib/format";
 import { nextSort } from "@/lib/metrics/evidence-rows";
 import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";
 import { type BucketBreakdownRow } from "@/lib/portal/trend-drilldown";
+import { useMetricDefinition } from "@/queries/metric-definitions";
 
 const PAGE_LIMIT = 100;
 /** Where scrolling stops growing the table, as in the metric evidence dialog. */
@@ -233,6 +232,7 @@ function Records({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <MetricEvidenceTable
+        numbered
         metricKey={metricKey}
         rows={rows}
         columns={columns}
@@ -250,6 +250,7 @@ function Records({
 }
 
 function PeriodTable({ state }: { state: TrendDrilldownState }) {
+  const metric = useMetricDefinition(state.metricKey);
   if (!state.breakdown.length) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -285,7 +286,8 @@ function PeriodTable({ state }: { state: TrendDrilldownState }) {
               {row.date}
             </TableCell>
             <TableCell className="text-right whitespace-nowrap tabular-nums">
-              {formatMetricNumber(row.total, "decimal")}
+              {formatTimeMetricValue(row.total, metric) ??
+                formatMetricNumber(row.total, "decimal")}
             </TableCell>
             <TableCell className="text-right whitespace-nowrap tabular-nums">
               {row.contributors.length}

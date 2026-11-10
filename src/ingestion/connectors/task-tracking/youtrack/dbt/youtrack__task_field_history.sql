@@ -6,9 +6,10 @@
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     query_settings={
-        'max_bytes_before_external_group_by': 2000000000,
-        'max_bytes_before_external_sort': 2000000000,
-        'join_algorithm': 'grace_hash,hash',
+        'max_bytes_before_external_group_by': 300000000,
+        'max_bytes_before_external_sort': 300000000,
+        'join_algorithm': 'hash',
+        'max_threads': 4,
     },
 ) }}
 
@@ -18,10 +19,11 @@ WITH changes AS (
         'changelog' AS event_kind, r.entry_rank AS _seq, a.author_id AS author_id,
         a.field_id AS field_id, a.field_name AS field_name, a.field_cardinality AS field_cardinality,
         fs.pairs AS pairs, a.collected_at AS collected_at, 'set' AS delta_action
-    FROM {{ ref('youtrack__activities') }} AS a
+    -- INVARIANT: field_states stays on the left; a hash join holds its right side, and pairs in memory.
+    FROM {{ ref('youtrack__field_states') }} AS fs
+    INNER JOIN {{ ref('youtrack__activities') }} AS a USING (insight_source_id, issue_id, field_id, event_id)
     INNER JOIN {{ ref('youtrack__issues') }} AS i USING (insight_source_id, issue_id)
     INNER JOIN {{ ref('youtrack__activity_order') }} AS r USING (insight_source_id, issue_id, event_id)
-    INNER JOIN {{ ref('youtrack__field_states') }} AS fs USING (insight_source_id, issue_id, field_id, event_id)
 ), field_events AS (
     SELECT insight_source_id, issue_id, field_id, event_at FROM {{ ref('youtrack__activities') }}
 ), snapshots AS (
@@ -31,7 +33,9 @@ WITH changes AS (
 ), resolutions AS (
     SELECT insight_source_id, issue_id, observed_at,
         {{ youtrack_timestamp("JSONExtractRaw(payload, 'resolved')") }} AS resolved_at
-    FROM {{ ref('youtrack__issue_observations') }} FINAL
+    -- INVARIANT: deduplicated by key, not FINAL; FINAL merges whole payloads in memory.
+    FROM {{ ref('youtrack__issue_observations') }}
+    LIMIT 1 BY insight_source_id, issue_id, observed_at
 ), bounded_snapshots AS (
     -- known_at: the field's last event before the snapshot, or its previous snapshot.
     SELECT s.*, r.resolved_at AS resolved_at, nullIf(e.event_at, toDateTime64(0, 3)) AS last_event_at,
