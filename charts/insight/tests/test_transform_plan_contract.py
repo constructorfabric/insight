@@ -40,45 +40,48 @@ def render(*overrides: str) -> list[dict]:
     return [document for document in yaml.safe_load_all(result.stdout) if document]
 
 
-def cron(documents: list[dict], suffix: str) -> dict:
+def resource(documents: list[dict], kind: str, suffix: str) -> dict:
     matches = [
-        document
-        for document in documents
-        if document["kind"] == "CronWorkflow" and document["metadata"]["name"].endswith(suffix)
+        document for document in documents if document["kind"] == kind and document["metadata"]["name"].endswith(suffix)
     ]
-    assert len(matches) == 1, f"expected one {suffix} CronWorkflow"
+    assert len(matches) == 1, f"expected one {suffix} {kind}"
     return matches[0]
 
 
 def env(document: dict) -> dict[str, dict]:
-    entries = document["spec"]["workflowSpec"]["templates"][0]["container"]["env"]
+    spec = document["spec"]
+    workflow = spec.get("workflowSpec", spec)
+    entries = workflow["templates"][0]["container"]["env"]
     return {entry["name"]: entry for entry in entries}
 
 
-def test_planner_has_an_independent_bounded_loop_and_warehouse_credentials(chart_dependencies: None) -> None:
+def test_planner_template_has_bounded_attempts_and_warehouse_credentials(chart_dependencies: None) -> None:
     documents = render()
-    planner = cron(documents, "-transform-plan")
-    reconcile = cron(documents, "-reconcile-loop")
-    spec = planner["spec"]
-    workflow = spec["workflowSpec"]
-    container = workflow["templates"][0]["container"]
+    planner = resource(documents, "WorkflowTemplate", "-transform")
+    reconcile = resource(documents, "CronWorkflow", "-reconcile-loop")
+    workflow = planner["spec"]
+    attempt = workflow["templates"][0]
+    container = attempt["container"]
     values = yaml.safe_load((CHART / "values.yaml").read_text())
     version = yaml.safe_load((CHART / "Chart.yaml").read_text())["version"]
 
-    assert planner["metadata"]["name"] == "contract-test-transform-plan"
+    assert values["ingestion"]["transformPlan"]["retry"] == {"attempts": 3, "wait": "15m"}
+    assert planner["metadata"]["name"] == "contract-test-transform"
     assert planner["metadata"]["namespace"] == "example"
     assert planner["metadata"]["labels"]["app.kubernetes.io/component"] == "transform-plan"
     for key, value in reconcile["metadata"]["labels"].items():
         if key != "app.kubernetes.io/component":
             assert planner["metadata"]["labels"][key] == value, key
     assert INSTANCE_LABEL not in planner["metadata"]["labels"]
-    assert spec["schedules"] == ["*/15 * * * *"]
-    assert spec["timezone"] == "UTC"
-    assert spec["concurrencyPolicy"] == "Forbid"
-    assert workflow["activeDeadlineSeconds"] == 900
+    assert "helm.sh/hook" not in planner["metadata"].get("annotations", {})
+    assert "activeDeadlineSeconds" not in workflow
+    assert attempt["activeDeadlineSeconds"] == 900
+    assert attempt["retryStrategy"] == {"limit": 2, "retryPolicy": "Always", "backoff": {"duration": "15m"}}
+    assert workflow["ttlStrategy"] == {"secondsAfterSuccess": 86400}
+    assert workflow["podGC"] == {"strategy": "OnPodCompletion"}
     assert workflow["serviceAccountName"] == "argo-workflow"
     assert workflow["entrypoint"] == "run"
-    assert "synchronization" not in yaml.safe_dump(planner)
+    assert workflow["synchronization"] == {"mutexes": [{"name": "contract-test-transform"}]}
     assert workflow["templates"][0]["name"] == "run"
     assert container["command"] == ["bash", "/ingestion/reconcile-connectors/transform-plan.sh"]
     assert container["image"] == values["ingestion"]["toolboxImage"]
@@ -100,10 +103,15 @@ def test_planner_has_an_independent_bounded_loop_and_warehouse_credentials(chart
     )
 
 
-def test_planner_honors_schedule_resources_instance_and_connection_overrides(chart_dependencies: None) -> None:
+@pytest.mark.parametrize("attempts", [1, 5])
+def test_planner_honors_retry_resources_instance_and_connection_overrides(
+    chart_dependencies: None, attempts: int
+) -> None:
     documents = render(
-        "--set-string",
-        "ingestion.transformPlan.schedule=7 * * * *",
+        "--set",
+        f"ingestion.transformPlan.retry.attempts={attempts}",
+        "--set",
+        "ingestion.transformPlan.retry.wait=2m",
         "--set",
         "ingestion.transformPlan.resources.requests.cpu=200m",
         "--set",
@@ -137,13 +145,19 @@ def test_planner_honors_schedule_resources_instance_and_connection_overrides(cha
         "--set",
         "clickhouse.clusterName=example_cluster",
     )
-    planner = cron(documents, "-transform-plan")
-    reconcile = cron(documents, "-reconcile-loop")
-    workflow = planner["spec"]["workflowSpec"]
+    planner = resource(documents, "WorkflowTemplate", "-transform")
+    hook = resource(documents, "Workflow", "-transform")
+    reconcile = resource(documents, "CronWorkflow", "-reconcile-loop")
+    workflow = planner["spec"]
     container = workflow["templates"][0]["container"]
 
-    assert planner["spec"]["schedules"] == ["7 * * * *"]
+    assert workflow["templates"][0]["retryStrategy"] == {
+        "limit": attempts - 1,
+        "retryPolicy": "Always",
+        "backoff": {"duration": "2m"},
+    }
     assert planner["metadata"]["labels"][INSTANCE_LABEL] == "example-controller"
+    assert hook["metadata"]["labels"][INSTANCE_LABEL] == "example-controller"
     assert workflow["imagePullSecrets"] == [{"name": "example-registry"}]
     assert container["image"] == "example/toolbox:test"
     assert container["resources"] == {
@@ -159,11 +173,56 @@ def test_planner_honors_schedule_resources_instance_and_connection_overrides(cha
     }
 
 
+def test_transform_hook_starts_after_every_other_release_hook(chart_dependencies: None) -> None:
+    documents = render(
+        "--set",
+        "clickhouse.fieldValueMap.enabled=true",
+        "--set",
+        "keycloakConfig.enabled=true",
+        "--set",
+        "keycloakConfig.url=https://idp.example.test",
+    )
+    hook = resource(documents, "Workflow", "-transform")
+    planner = resource(documents, "WorkflowTemplate", "-transform")
+    annotations = hook["metadata"]["annotations"]
+
+    assert hook["metadata"]["name"] == "contract-test-transform"
+    assert hook["metadata"]["namespace"] == "example"
+    assert hook["metadata"]["labels"] == planner["metadata"]["labels"]
+    assert INSTANCE_LABEL not in hook["metadata"]["labels"]
+    assert annotations["helm.sh/hook"] == "post-install,post-upgrade,post-rollback"
+    assert annotations["helm.sh/hook-delete-policy"] == "before-hook-creation"
+    assert hook["spec"] == {"workflowTemplateRef": {"name": planner["metadata"]["name"]}}
+    for event in ("post-install", "post-upgrade"):
+        other_weights = []
+        for document in documents:
+            if document is hook:
+                continue
+            other_annotations = document["metadata"].get("annotations", {})
+            if event in other_annotations.get("helm.sh/hook", "").split(","):
+                other_weights.append(int(other_annotations.get("helm.sh/hook-weight", "0")))
+
+        assert other_weights, f"expected other {event} hooks"
+        assert int(annotations["helm.sh/hook-weight"]) > max(other_weights), event
+
+
+def test_planning_has_no_schedule(chart_dependencies: None) -> None:
+    documents = render()
+    assert not any(
+        document["kind"] == "CronWorkflow" and document["metadata"]["name"].endswith("-transform-plan")
+        for document in documents
+    )
+    values = yaml.safe_load((CHART / "values.yaml").read_text())
+    assert "schedule" not in values["ingestion"]["transformPlan"]
+
+
 @pytest.mark.parametrize("gate", ["ingestion.templates.enabled", "ingestion.transformPlan.enabled"])
 def test_disabled_planning_renders_no_planner(chart_dependencies: None, gate: str) -> None:
     documents = render("--set", f"{gate}=false")
-    assert not any(document["metadata"]["name"].endswith("-transform-plan") for document in documents), gate
+    assert not any(
+        document["metadata"]["name"].endswith(("-transform", "-transform-plan")) for document in documents
+    ), gate
 
 
 def test_reconcile_no_longer_carries_the_planner_release(chart_dependencies: None) -> None:
-    assert "INSIGHT_VERSION" not in env(cron(render(), "-reconcile-loop"))
+    assert "INSIGHT_VERSION" not in env(resource(render(), "CronWorkflow", "-reconcile-loop"))

@@ -244,10 +244,12 @@ ingestion:
     ttlSecondsAfterCompletion: 1800
     ttlSecondsAfterSuccess: 600
     ttlSecondsAfterFailure: 3600
-  # Transform planner: compare dbt model versions independently of Airbyte reconciliation.
+  # Transform planner: compare dbt model versions per release, with 3 attempts 15m apart.
   transformPlan:
     enabled: true
-    schedule: "*/15 * * * *"
+    retry:
+      attempts: 3
+      wait: 15m
     resources:
       requests:
         cpu: "100m"
