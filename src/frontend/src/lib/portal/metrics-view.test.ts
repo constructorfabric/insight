@@ -8,6 +8,8 @@ import { identityPerson, pid } from "@/test/identity";
 import {
   chunkKeys,
   compareGaps,
+  compareReference,
+  directionLabel,
   formatGap,
   headerUnit,
   rolesById,
@@ -253,6 +255,34 @@ describe("compareGaps", () => {
       { best: true, gap: null },
       { best: false, gap: null },
     ]);
+  });
+});
+
+describe("directionLabel", () => {
+  it.each([
+    ["higher_is_better", "Higher is better"],
+    ["lower_is_better", "Lower is better"],
+    ["neutral", null],
+  ] as const)("reads %s as %j", (direction, label) => {
+    expect(directionLabel(direction)).toBe(label);
+  });
+});
+
+describe("compareReference", () => {
+  it("skips missing values and keeps the median apart from the average", () => {
+    expect(compareReference([10, null, 20, 30, 100])).toEqual({ median: 25, average: 40 });
+  });
+
+  it("averages the middle pair when an even count has no single middle", () => {
+    expect(compareReference([10, 40])).toEqual({ median: 25, average: 25 });
+  });
+
+  it("uses the only value as both figures", () => {
+    expect(compareReference([7, null])).toEqual({ median: 7, average: 7 });
+  });
+
+  it("is empty when nobody has a value", () => {
+    expect(compareReference([null, null])).toEqual({ median: null, average: null });
   });
 });
 

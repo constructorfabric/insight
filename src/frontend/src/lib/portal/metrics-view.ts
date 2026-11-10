@@ -1,6 +1,7 @@
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { MetricDirection, MetricFormat } from "@/api/metric-results-client";
 import { metricDisplayUnit } from "@/lib/format";
+import { quantile } from "@/lib/insight/within-team-peer";
 import {
   personDisplayName,
   type PersonNaming,
@@ -199,6 +200,37 @@ export function compareGaps(
       gap: best === 0 ? null : Math.round(((value - best) / Math.abs(best)) * 100),
     };
   });
+}
+
+export function directionLabel(direction: MetricDirection): string | null {
+  switch (direction) {
+    case "higher_is_better":
+      return "Higher is better";
+    case "lower_is_better":
+      return "Lower is better";
+    case "neutral":
+      return null;
+  }
+}
+
+export interface CompareReference {
+  median: number | null;
+  average: number | null;
+}
+
+export function compareReference(values: ReadonlyArray<number | null>): CompareReference {
+  const present = values.filter(
+    (value): value is number => value != null && Number.isFinite(value),
+  );
+  if (present.length === 0) return { median: null, average: null };
+
+  const sorted = [...present].sort((a, b) => a - b);
+  const total = present.reduce((sum, value) => sum + value, 0);
+
+  return {
+    median: quantile(sorted, 0.5),
+    average: total / present.length,
+  };
 }
 
 export function formatGap(gap: number | null): string {

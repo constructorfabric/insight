@@ -6,7 +6,10 @@ import { MetricsCompareTable } from "@/components/portal/metrics-compare-table";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
 
 const PEOPLE = [
-  { entityId: "019e27bc-dec0-7626-81a9-c5524662a6a9", displayName: "Alexandra Fernandez" },
+  {
+    entityId: "019e27bc-dec0-7626-81a9-c5524662a6a9",
+    displayName: "Alexandra Fernandez",
+  },
   { entityId: "019e27bc-dec0-7626-81a9-c5524662a6b0", displayName: "Bo Ng" },
 ];
 
@@ -35,6 +38,40 @@ const BY_KEY = normalizeMetricResults([
       },
     ],
   },
+  {
+    metric_key: "git.commit_size",
+    label: "Commit size",
+    unit: "lines",
+    format: "integer",
+    computation: "median",
+    direction: "lower_is_better",
+    views: [
+      {
+        view: "period",
+        values: [
+          { entity_id: PEOPLE[0]!.entityId, value: 40 },
+          { entity_id: PEOPLE[1]!.entityId, value: 12 },
+        ],
+      },
+    ],
+  },
+  {
+    metric_key: "collab.messages_sent",
+    label: "Chat messages sent",
+    unit: "messages",
+    format: "integer",
+    computation: "sum",
+    direction: "neutral",
+    views: [
+      {
+        view: "period",
+        values: [
+          { entity_id: PEOPLE[0]!.entityId, value: 3 },
+          { entity_id: PEOPLE[1]!.entityId, value: 9 },
+        ],
+      },
+    ],
+  },
 ]);
 
 const meta: Meta<typeof MetricsCompareTable> = {
@@ -42,7 +79,7 @@ const meta: Meta<typeof MetricsCompareTable> = {
   component: MetricsCompareTable,
   args: {
     people: PEOPLE,
-    keys: ["git.commits"],
+    keys: ["git.commits", "git.commit_size", "collab.messages_sent"],
     byKey: BY_KEY,
     helpByKey: new Map(),
     roles: new Map([[PEOPLE[0]!.entityId, "Software Engineer"]]),
@@ -50,7 +87,11 @@ const meta: Meta<typeof MetricsCompareTable> = {
   decorators: [
     (Story) => (
       <EvidenceDialogContext.Provider
-        value={{ openEvidence: () => {}, openEvidenceTargets: () => {}, openEvidencePeople: () => {} }}
+        value={{
+          openEvidence: () => {},
+          openEvidenceTargets: () => {},
+          openEvidencePeople: () => {},
+        }}
       >
         <div style={{ width: 900 }}>
           <Story />
@@ -73,14 +114,18 @@ export const TestEachNameLinesUpWithItsValues: Story = {
       ["Alexandra Fernandez", "210 commits"],
       ["Bo Ng", "822 commits"],
     ] as const) {
-      const nameEdge = canvas.getByRole("link", { name }).getBoundingClientRect().right;
+      const nameEdge = canvas
+        .getByRole("link", { name })
+        .getBoundingClientRect().right;
       const text = document.createRange();
-      text.selectNodeContents(canvas.getByRole("button", { name: new RegExp(`${value}$`) }));
+      text.selectNodeContents(
+        canvas.getByRole("button", { name: new RegExp(`${value}$`) })
+      );
       const valueEdge = text.getBoundingClientRect().right;
 
       await expect(
         Math.abs(nameEdge - valueEdge),
-        `${name} does not end where its values end`,
+        `${name} does not end where its values end`
       ).toBeLessThanOrEqual(1);
     }
   },

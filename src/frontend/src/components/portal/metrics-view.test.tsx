@@ -145,6 +145,11 @@ const rowHeaders = () =>
     .getAllByRole("rowheader")
     .map((header) => header.textContent);
 
+const headerText = (table: HTMLElement) =>
+  within(table)
+    .getAllByRole("columnheader")
+    .map((header) => header.textContent?.replace(/\s+/g, " ").trim());
+
 beforeEach(() => {
   const tree = identityPerson("boss", {}, [
     identityPerson("a", {}, [identityPerson("c")]),
@@ -488,16 +493,18 @@ describe("MetricsView", () => {
 
     const table = screen.getByRole("table");
     expect(rowHeaders()).toEqual(["Default branch commits", "Messages"]);
-    expect(
-      within(table)
-        .getAllByRole("columnheader")
-        .map((header) => header.textContent),
-    ).toEqual(["Metric", "a", "b"]);
+    expect(headerText(table)).toEqual([
+      "Metric",
+      "a",
+      "b",
+      "Median aggregate",
+      "Average aggregate",
+    ]);
     expect(
       within(within(table).getByRole("row", { name: /Default branch commits/ }))
         .getAllByRole("cell")
         .map((cell) => cell.textContent),
-    ).toEqual(["10−50%", "20 (best)"]);
+    ).toEqual(["10−50%", "20 (best)", "15", "15"]);
   });
 
   it("marks the smallest value best when lower is better", async () => {
@@ -513,11 +520,13 @@ describe("MetricsView", () => {
 
     await compare(user, ["a", "b"]);
 
-    expect(
-      within(within(screen.getByRole("table")).getByRole("row", { name: /PR cycle time/ }))
-        .getAllByRole("cell")
-        .map((cell) => cell.textContent),
-    ).toEqual(["10 (best)", "40+300%"]);
+    const cells = within(
+      within(screen.getByRole("table")).getByRole("row", { name: /PR cycle time/ }),
+    ).getAllByRole("cell");
+
+    expect(cells.map((cell) => cell.textContent)).toEqual(["10 (best)", "40+300%", "25", "25"]);
+    expect(cells[0]).toHaveClass("text-success");
+    expect(cells[1]).not.toHaveClass("text-success");
   });
 
   it("adds a whole team to the comparison in one pick", async () => {
@@ -528,11 +537,13 @@ describe("MetricsView", () => {
     await user.click(screen.getByRole("checkbox", { name: "a's team" }));
     await user.click(screen.getByRole("button", { name: "Compare (2)" }));
 
-    expect(
-      within(screen.getByRole("table"))
-        .getAllByRole("columnheader")
-        .map((header) => header.textContent),
-    ).toEqual(["Metric", "a", "c"]);
+    expect(headerText(screen.getByRole("table"))).toEqual([
+      "Metric",
+      "a",
+      "c",
+      "Median aggregate",
+      "Average aggregate",
+    ]);
   });
 
   it("opens the records behind a compared value when it is clicked", async () => {
