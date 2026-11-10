@@ -138,3 +138,28 @@ def test_a_story_point_estimate_of_zero_is_still_a_value(scenario: Scenario) -> 
     structure, and a zero there is something somebody typed."""
     assert scenario.states(STORY_POINTS) == [["0"]]
     assert scenario.round_trip_holds()
+
+
+# ── status: a transition out of an empty value ──────────────────────────────
+
+STATUS = "status"
+STATUS_FIELD = field(STATUS, name="Status", schema_type="status")
+CLOSED_AT = "2026-01-07T10:00:00"
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[issue("TST-1", fields={STATUS: {"id": "6", "name": "Closed"}})],
+    events=[event("TST-1", 101, CLOSED_AT, [item(STATUS, frm=None, frm_str=None, to="6", to_str="Closed")])],
+)
+def test_a_status_set_from_an_empty_value_is_recorded_when_it_happened(scenario: Scenario) -> None:
+    """A status item whose previous side is null still dates the arrival of the
+    new status — that row is what close detection reads. Without it the issue
+    would look Closed from creation, or never closed at all."""
+    rows = scenario.journal(issue="TST-1", field=STATUS)
+
+    assert [(r["event_kind"], r["event_at"], r["value_ids"], r["value_displays"]) for r in rows] == [
+        ("synthetic_initial", "2026-01-05 09:00:00.000", [], []),
+        ("changelog", "2026-01-07 10:00:00.000", ["6"], ["Closed"]),
+    ]
+    assert scenario.round_trip_holds()

@@ -12621,6 +12621,179 @@ alerting:
           severity: warning
         annotations:
           summary: '{{ "{{ $labels.persistentvolumeclaim }}" }} is over 80% full'
+    # Data-quality alerts (#4222) read the lines src/ingestion/scripts/data_quality_findings.py
+    # emits after every connector-checks step (scope post_sync) and every scheduled
+    # data-quality-test run (scope scheduled). Each rule takes the LATEST line per series in
+    # a 26h window, so it fires while the newest run still fails and resolves on the next
+    # passing run; the family=data-quality route below groups per check and re-notifies daily.
+    - orgId: 1
+      name: insight-data-quality
+      folder: Insight Alerts
+      interval: 5m
+      rules:
+      # Tier threshold: only checks with meta.tier = error alert. warn and info findings stay
+      # log-only — query them in Loki with | json | fields_event="data_quality_finding".
+      - uid: insight-dq-finding
+        title: Data-quality check failing
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 93600
+            to: 0
+          datasourceUid: loki
+          model:
+            refId: A
+            expr: last_over_time({namespace="${NS_APP}"} |= `data_quality_finding` | json event="fields.event",
+              scope="fields.scope", connector="fields.connector", check_id="fields.check_id", title="fields.title",
+              tier="fields.tier", rows="fields.rows_violating" | event=`data_quality_finding` | tier=`error`
+              | unwrap rows | __error__="" [26h]) by (scope, connector, check_id, title, tier)
+            queryType: instant
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+          family: data-quality
+        annotations:
+          summary: >-
+            {{`{{$labels.check_id}}`}} (tier {{`{{$labels.tier}}`}}): {{`{{$values.B}}`}}
+            failing rows {{`{{if $labels.connector}}`}}after the {{`{{$labels.connector}}`}}
+            sync{{`{{else}}`}}in the scheduled catalog{{`{{end}}`}} — {{`{{$labels.title}}`}}
+          description: >-
+            The newest run of this check found violating rows; it resolves on the next run that
+            finds none. The finding line carries the remediation and the store_failures audit
+            relation: query Loki with | json | fields_event="data_quality_finding" |
+            fields_check_id="{{`{{$labels.check_id}}`}}".
+      - uid: insight-dq-run-failed
+        title: Data-quality run failed
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 93600
+            to: 0
+          datasourceUid: loki
+          model:
+            refId: A
+            expr: last_over_time({namespace="${NS_APP}"} |= `data_quality_run` | json event="fields.event",
+              scope="fields.scope", connector="fields.connector", failed="fields.failed" | event=`data_quality_run`
+              | unwrap failed | __error__="" [26h]) by (scope, connector)
+            queryType: instant
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+          family: data-quality
+        annotations:
+          summary: >-
+            Data-quality {{`{{$labels.scope}}`}} run{{`{{if $labels.connector}}`}} for
+            {{`{{$labels.connector}}`}}{{`{{end}}`}} failed — its checks did not all report,
+            so silence from insight-dq-finding is not a clean result
+          description: >-
+            dbt could not run, or a check errored instead of passing or failing. The reason is on
+            the run line: query Loki with | json | fields_event="data_quality_run" | fields_failed="1".
+      # INVARIANT: insight-dq-run-failed cannot see a run that logged nothing (pod OOM-killed,
+      # deadline exceeded, cron never fired); this rule reports that gap for the scheduled
+      # catalog. An install with ingestion.dataQuality.enabled=false should silence it.
+      - uid: insight-dq-scheduled-run-missing
+        title: Scheduled data-quality run missing
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 93600
+            to: 0
+          datasourceUid: loki
+          model:
+            refId: A
+            expr: absent_over_time({namespace="${NS_APP}"} |= `data_quality_run` | json event="fields.event",
+              scope="fields.scope" | event=`data_quality_run` | scope=`scheduled` [26h])
+            queryType: instant
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+          family: data-quality
+        annotations:
+          summary: No scheduled data-quality run reported in 26h — the catalog is unmeasured, not clean
+          description: >-
+            The daily data-quality-test run logged no data_quality_run line. Check the CronWorkflow
+            and its last workflow in Argo: a killed pod or a schedule that never fired logs nothing.
   contactpoints.yaml:
     apiVersion: 1
     contactPoints:
@@ -12641,6 +12814,16 @@ alerting:
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 4h
+      routes:
+      - receiver: zulip
+        object_matchers:
+        - ['family', '=', 'data-quality']
+        group_by:
+        - alertname
+        - scope
+        - connector
+        - check_id
+        repeat_interval: 24h
 
 # Seal a `grafana-creds` Secret (keys: admin-user, admin-password); `make system-grafana`
 # applies any environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml.

@@ -77,5 +77,5 @@ LEFT JOIN environment_tiers AS et
 WHERE greatest(
     ls._airbyte_extracted_at,
     COALESCE(et._airbyte_extracted_at, ls._airbyte_extracted_at)
-) > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+) > {{ instance_incremental_watermark('_airbyte_extracted_at', ['ls.tenant_id', 'ls.source_id']) }}
 {% endif %}

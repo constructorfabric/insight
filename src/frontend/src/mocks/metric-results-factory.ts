@@ -283,6 +283,11 @@ export function buildMetricResultsResponse(
               };
             }),
           };
+        case "unattributed":
+          return {
+            view: "unattributed",
+            value: valueFor("unattributed", key, "share") % 20,
+          };
         default:
           return view satisfies never;
       }

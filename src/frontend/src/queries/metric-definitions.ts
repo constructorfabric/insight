@@ -68,15 +68,21 @@ export function useMetricDefinitionsResponse(): UseQueryResult<MetricDefinitionL
  * Rides the one cached catalogue query, so it costs no extra request.
  */
 export function useCollectionBoundary(metricKey: string): CollectionBoundary {
-  const { data } = useMetricDefinitionsResponse();
-  const definition = data?.metrics.find(
-    (metric) => metric.metric_key === metricKey
-  );
+  const definition = useMetricDefinition(metricKey);
   return {
     collectedFrom: definition?.first_observed_date ?? null,
     collectedThrough: definition?.last_observed_date ?? null,
     settledThrough: definition?.settled_through ?? null,
   };
+}
+
+export function useMetricDefinition(
+  metricKey: string | null
+): MetricDefinition | null {
+  const { data } = useMetricDefinitionsResponse();
+  return (
+    data?.metrics.find((metric) => metric.metric_key === metricKey) ?? null
+  );
 }
 
 export interface CollectionBoundary {

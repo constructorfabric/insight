@@ -38,6 +38,24 @@ export function isDurationUnit(unit?: string | null): boolean {
   return unit === HOURS_UNIT;
 }
 
+const TIME_UNITS: ReadonlySet<string> = new Set([HOURS_UNIT, "min", "d"]);
+
+export interface MetricValueFormat {
+  format: MetricFormat;
+  unit: string | null;
+}
+
+export function formatTimeMetricValue(
+  value: unknown,
+  metric: MetricValueFormat | null,
+): string | null {
+  return metric?.unit != null &&
+    TIME_UNITS.has(metric.unit) &&
+    typeof value === "number"
+    ? formatMetricValue(value, metric.format, metric.unit)
+    : null;
+}
+
 /** "45 min", "1 h 15 min", "3 h", "1,234 h". */
 export function formatHoursDuration(hours: number): string {
   const sign = hours < 0 ? "-" : "";

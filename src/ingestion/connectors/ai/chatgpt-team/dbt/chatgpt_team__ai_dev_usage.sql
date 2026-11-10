@@ -405,16 +405,5 @@ WHERE email IS NOT NULL
      OR coalesce(toUInt32OrNull(toString(lines_added)), 0) > 0
   )
 {% if is_incremental() %}
-  -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
-  -- tests) `max(day)` is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`
-  -- underflows the Date range, wrapping to ~2149-06-04 — which filters out every
-  -- row and leaves the model empty. Short-circuit when empty so the full set is
-  -- (re)loaded. Mirrors the cursor / claude_team / m365__collab_* guard.
-  AND (
-    (SELECT count() FROM {{ this }}) = 0
-    OR toDate(date) > (
-        SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-        FROM {{ this }}
-    )
-  )
+  AND toDate(date) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
 {% endif %}

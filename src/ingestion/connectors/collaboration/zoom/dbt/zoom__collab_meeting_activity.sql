@@ -184,7 +184,7 @@ deduped_participants AS (
         {%- endif %}
         -- WORKAROUND: Airbyte re-emits identical participant rows; keep the latest one.
         ORDER BY _airbyte_extracted_at DESC
-        LIMIT 1 BY meeting_uuid, participant_uuid, joined_at
+        LIMIT 1 BY tenant_id, source_id, meeting_uuid, participant_uuid, joined_at
     ) AS p
     LEFT JOIN zoom_user_emails AS u
         ON u.tenant_id = p.tenant_id

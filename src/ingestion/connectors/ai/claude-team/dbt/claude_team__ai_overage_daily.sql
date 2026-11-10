@@ -84,8 +84,5 @@ FROM latest_per_seat_day
 {% if is_incremental() %}
   -- Re-read the current and previous month: a reading inside the current month
   -- still arrives daily, and a correction can land after a month has turned.
-  WHERE toStartOfMonth(_airbyte_extracted_at) >= (
-      SELECT coalesce(max(period_month), toDate('1970-01-01')) - INTERVAL 1 MONTH
-      FROM {{ this }}
-  )
+  WHERE toStartOfMonth(_airbyte_extracted_at) >= {{ instance_incremental_watermark('period_month', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '1 MONTH') }}
 {% endif %}

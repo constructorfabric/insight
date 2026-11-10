@@ -52,6 +52,13 @@ vi.mock("@/components/metric-evidence-table", () => ({
   },
 }));
 
+vi.mock("@/queries/metric-definitions", () => ({
+  useMetricDefinition: (metricKey: string | null) =>
+    metricKey === "collab.meeting_hours"
+      ? { metric_key: metricKey, format: "decimal", unit: "h" }
+      : null,
+}));
+
 vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -321,6 +328,17 @@ describe("TrendDrilldownDialog", () => {
 
     expect(screen.queryByText("evidence table")).not.toBeInTheDocument();
     expect(screen.getByText("2026-07-06")).toBeInTheDocument();
+  });
+
+  it("totals a period of hours in hours and minutes", () => {
+    renderDialog({
+      ...state,
+      metricKey: "collab.meeting_hours",
+      label: "Meeting hours",
+      breakdown: [{ date: "2026-07-06", total: 2.75, contributors: ["Ada"] }],
+    });
+
+    expect(screen.getByText("2 h 45 min")).toBeInTheDocument();
   });
 
   it("says so when the chart has no readings to break down", () => {

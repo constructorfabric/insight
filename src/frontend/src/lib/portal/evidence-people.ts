@@ -6,7 +6,7 @@ import type {
   EvidencePeopleView,
   EvidencePersonRow,
 } from "@/components/metric-evidence-context";
-import { formatMetricValue } from "@/lib/format";
+import { formatMetricFigure } from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { entityValues } from "@/lib/portal/metric-stats";
 
@@ -50,8 +50,8 @@ export function peopleEvidenceView(
       value: entry.value,
       // Unit dropped, sign kept: the column is headed with the metric, so a
       // unit in every cell would repeat it ("Commits" over "142 commits") —
-      // but a percent's "%" is part of the number, not a unit beside it.
-      valueText: formatMetricValue(entry.value, r.format, null),
+      // but a percent's "%" and a duration's "h" are part of the number.
+      valueText: formatMetricFigure(entry.value, r.format, r.unit),
       target: selection ? { selection, label: `${r.label} · ${name}` } : null,
     };
   });

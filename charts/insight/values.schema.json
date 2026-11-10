@@ -30,6 +30,7 @@
             "destinationName": { "type": "string" },
             "argoInstanceId": { "type": "string" },
             "tenantId": { "type": "string" },
+            "imageMirrors": { "type": "object", "additionalProperties": { "type": "string" } },
             "resources": {
               "type": "object",
               "properties": {

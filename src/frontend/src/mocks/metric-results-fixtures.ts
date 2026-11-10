@@ -151,7 +151,7 @@ export const MEDIAN_METRIC_FIXTURE: MedianMetricResult = {
   description: "Hours from a pull request's first commit to merge",
   explanation:
     "Median hours between a merged PR's first commit and its merge, over the person's PRs in the period.",
-  unit: "hours",
+  unit: "h",
   format: "decimal",
   direction: "lower_is_better",
   computation: "median",
@@ -405,6 +405,17 @@ export const TASK_METRIC_FIXTURES: MetricResult[] = [
     scale: 100,
     views: [
       { view: "period", values: [{ entity_id: "alice@example.com", value: 82.0 }] },
+    ],
+  },
+  {
+    metric_key: "tasks.logged_hours",
+    label: "Logged time",
+    unit: "h",
+    format: "decimal",
+    direction: "higher_is_better",
+    computation: "sum",
+    views: [
+      { view: "period", values: [{ entity_id: "alice@example.com", value: 31.5 }] },
     ],
   },
   {

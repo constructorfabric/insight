@@ -42,6 +42,8 @@ WITH source_identities AS (
 
     SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('task_metric_evidence') }}
+    -- An unassigned issue's row names no identity, so it is no binding gap.
+    WHERE entity_id != '' OR account_id != ''
 
     UNION ALL
 

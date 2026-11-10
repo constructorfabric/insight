@@ -38,5 +38,5 @@ FROM {{ source('bronze_bitbucket_cloud', 'pull_requests') }} AS pr FINAL
 ARRAY JOIN JSONExtractArrayRaw(COALESCE(toString(pr.participants), '[]')) AS p
 WHERE JSONExtractString(p, 'role') = 'REVIEWER'
 {% if is_incremental() %}
-    AND pr._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+    AND pr._airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at', ['pr.tenant_id', 'pr.source_id']) }}
 {% endif %}

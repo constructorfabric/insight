@@ -98,12 +98,10 @@ WHERE ag.person_key != ''
   -- before T, so the boundary holds whatever the sync/dbt cadence, where a
   -- bronze anchor strands rows extracted more than 3 days before the newest
   -- extract whenever dbt skipped a few nightly runs.
-  -- SAFETY: the count() guard is load-bearing. A sync whose bronze carried no
-  -- matching row leaves the target existing and empty; max() over it is
-  -- 1970-01-01, and DateTime minus an interval wraps past 2106, which would
-  -- exclude every row forever.
-  AND (
-    (SELECT count() FROM {{ this }}) = 0
-    OR e._airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
-  )
+  AND e._airbyte_extracted_at > {{ instance_incremental_watermark(
+      'collected_at',
+      ['e.tenant_id', 'e.source_id'],
+      ['tenant_id', 'insight_source_id'],
+      '3 DAY'
+  ) }}
 {% endif %}

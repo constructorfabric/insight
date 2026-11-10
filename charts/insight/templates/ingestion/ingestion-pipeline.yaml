@@ -209,6 +209,8 @@ spec:
               parameters:
                 - name: dbt_select
                   value: {{ `"tag:connector_quality,tag:{{inputs.parameters.data_source}}"` }}
+                - name: connector
+                  value: {{ `"{{inputs.parameters.data_source}}"` }}
                 - name: toolbox_image
                   value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
                 - name: clickhouse_host

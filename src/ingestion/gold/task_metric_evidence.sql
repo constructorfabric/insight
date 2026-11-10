@@ -1,10 +1,13 @@
 {{ metric_evidence_table(query_settings_overrides={'max_memory_usage': 3221225472}) }}
 
+{% set account_keys = ['account_source_type', 'account_source_id', 'account_id'] %}
+
 -- Keyed by the source identity, not by person: the tracker account of the
 -- assignee or worklog author, plus its email when the tracker states one. The
 -- analytics runtime resolves account-first through `identity.account_assignment`
 -- and falls back to `identity.person_map` while it serves. An unresolvable row
--- stays and starts counting the moment it resolves.
+-- stays and starts counting the moment it resolves; until then it, and every
+-- unassigned issue's row, counts only in the unattributed share.
 SELECT
     src.tenant_id,
     src.source_key,
@@ -354,6 +357,20 @@ issue_measures AS (
     WHERE (status_category IS NULL OR status_category != 'done')
       AND last_status_event_at IS NOT NULL
       AND dateDiff('day', last_status_event_at, now()) > 14
+),
+-- Account grain, not the person-day of worklog_flow: a sum needs no gate, so
+-- each account's hours keep its key and resolve account-first.
+logged_work AS (
+    SELECT
+        tenant_id,
+        entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
+        metric_date,
+        worklog_seconds,
+        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+    FROM ({{ task_worklog_per_account_day() }})
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,
@@ -398,7 +415,6 @@ SELECT
 FROM issue_measures
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
-  AND (entity_id != '' OR account_id != '')
   AND metric_date IS NOT NULL
 
 UNION ALL
@@ -430,7 +446,6 @@ SELECT
 FROM issue_item_evidence
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
-  AND (entity_id != '' OR account_id != '')
   AND metric_date IS NOT NULL
 
 UNION ALL
@@ -473,6 +488,44 @@ ARRAY JOIN arrayConcat(
 ) AS issue_measure
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
-  AND (entity_id != '' OR account_id != '')
+  AND metric_date IS NOT NULL
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'task' AS source_key,
+    'person' AS entity_type,
+    assumeNotNull(entity_id) AS entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
+    assumeNotNull(metric_date) AS metric_date,
+    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
+    measure_key,
+    concat(
+        toString(metric_date),
+        ':',
+        measure_key,
+        ':',
+        -- INVARIANT: the account is part of the key. Email-less accounts share
+        -- entity_id '', so without it their day rows collide on one record_id.
+        hex(sipHash128(
+            toString(arrayMap(d -> tuple(d.1, d.2), dimensions)),
+            coalesce(account_source_type, ''),
+            coalesce(account_source_id, ''),
+            coalesce(account_id, '')
+        ))
+    ) AS record_id,
+    measure_key AS record_kind,
+    'derived_population' AS granularity,
+    replaceAll(measure_key, '_', ' ') AS record_label,
+    value AS contribution,
+    CAST(NULL AS Nullable(String)) AS subject_key,
+    dimensions,
+    CAST(map() AS Map(String, String)) AS details
+FROM ({{ sum_measure('logged_hours', 'logged_work', 'worklog_seconds / 3600.0', 'no_dimensions', where='worklog_seconds > 0', keys=account_keys) }})
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src

@@ -14,6 +14,8 @@ staging.github__issue_links_snapshot
 staging.github__project_fields_snapshot
 staging.github__project_items_snapshot
 staging.github_directory__org_members_snapshot
+staging.hubspot__crm_pipeline_stages
+staging.hubspot__owners_snapshot
 staging.jira__catalogue_first_seen
 staging.jira__comment_snapshot
 staging.jira__issue_availability_snapshot

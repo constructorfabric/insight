@@ -6,7 +6,9 @@ use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 use crate::api::error::MetricError;
-use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition, load_definitions};
+use crate::domain::metric_definitions::{
+    ComputationSpec, MetricDefinition, ObservationSource, load_definitions,
+};
 use crate::domain::metric_key::parse_metric_key;
 
 use super::dto::{
@@ -115,6 +117,15 @@ pub struct ValidatedMetricResultsRequest {
     pub enforce_tenant_scope: bool,
 }
 
+impl ValidatedMetricResultsRequest {
+    pub fn asks_unattributed(&self) -> bool {
+        self.metrics
+            .iter()
+            .flat_map(|metric| &metric.views)
+            .any(|view| matches!(view, ValidatedMetricView::Unattributed))
+    }
+}
+
 #[derive(Debug)]
 pub struct ValidatedMetricRequest {
     pub def: MetricDefinition,
@@ -158,6 +169,7 @@ pub enum ValidatedMetricView {
         /// over all selected entities' events (no entity grain), like rollup.
         dimensions: Vec<String>,
     },
+    Unattributed,
 }
 
 struct RequestShape {
@@ -274,6 +286,29 @@ pub async fn validate_request(
     Ok(validated)
 }
 
+/// Views that read people: a peer pool, or the work that reaches none of them.
+fn reject_person_only_views(req: &MetricResultsRequest) -> Result<(), CanonicalError> {
+    for view in req.metrics.iter().flat_map(|metric| &metric.views) {
+        match view {
+            MetricViewRequest::Peer { .. } => {
+                return invalid("metrics.views", "tenant metrics do not support peer views");
+            }
+            MetricViewRequest::Unattributed => {
+                return invalid(
+                    "metrics.views",
+                    "tenant metrics do not support unattributed views",
+                );
+            }
+            MetricViewRequest::Period
+            | MetricViewRequest::Timeseries { .. }
+            | MetricViewRequest::Breakdown { .. }
+            | MetricViewRequest::Rollup { .. }
+            | MetricViewRequest::Histogram { .. } => {}
+        }
+    }
+    Ok(())
+}
+
 fn validate_request_shape(
     req: &MetricResultsRequest,
     tenant_id: Uuid,
@@ -307,14 +342,8 @@ fn validate_request_shape(
             return invalid("entity.type", "unsupported entity type");
         }
     };
-    if entity.is_tenant()
-        && req
-            .metrics
-            .iter()
-            .flat_map(|metric| &metric.views)
-            .any(|view| matches!(view, MetricViewRequest::Peer { .. }))
-    {
-        return invalid("metrics.views", "tenant metrics do not support peer views");
+    if entity.is_tenant() {
+        reject_person_only_views(req)?;
     }
     let from = parse_date("period.from", &req.period.from)?;
     let to = parse_date("period.to", &req.period.to)?;
@@ -496,7 +525,35 @@ fn validate_view_with_context(
                 dimensions: validate_dimensions(def, "metrics.views.dimensions", dimensions)?,
             })
         }
+        MetricViewRequest::Unattributed => validate_unattributed_view(def),
     }
+}
+
+/// Only an additive reading has a share that adds to the members' values, and
+/// only a managed source resolves identity while it serves: a custom source's
+/// rows already name their person, so none of them reaches nobody.
+fn validate_unattributed_view(
+    def: &MetricDefinition,
+) -> Result<ValidatedMetricView, CanonicalError> {
+    if !matches!(def.spec, ComputationSpec::Sum { .. }) {
+        return invalid(
+            "metrics.views",
+            format!(
+                "metric {} does not support the unattributed view; it requires a sum computation",
+                def.key()
+            ),
+        );
+    }
+    if !matches!(def.observation_source(), ObservationSource::Managed(_)) {
+        return invalid(
+            "metrics.views",
+            format!(
+                "metric {} does not support the unattributed view; its source names its people",
+                def.key()
+            ),
+        );
+    }
+    Ok(ValidatedMetricView::Unattributed)
 }
 
 #[cfg(test)]
@@ -728,6 +785,7 @@ fn validate_projected_view_limits(
         for (view_index, view) in metric.views.iter().enumerate() {
             let projected = match view {
                 ValidatedMetricView::Period | ValidatedMetricView::Peer { .. } => req.entity.len(),
+                ValidatedMetricView::Unattributed => 1,
                 ValidatedMetricView::Timeseries {
                     bucket,
                     group_limit,
@@ -1435,6 +1493,44 @@ mod tests {
             validate_view(&percentile_definition(), histogram()),
             Ok(ValidatedMetricView::Histogram { dimensions }) if dimensions.is_empty()
         ));
+    }
+
+    #[test]
+    fn unattributed_view_needs_an_additive_metric_on_a_resolving_source() {
+        assert!(matches!(
+            validate_view(&sum_definition(vec![]), MetricViewRequest::Unattributed),
+            Ok(ValidatedMetricView::Unattributed)
+        ));
+
+        let mut custom = sum_definition(vec![]);
+        let ComputationSpec::Sum { value } = &mut custom.spec else {
+            panic!("fixture must be sum");
+        };
+        value.observation = ObservationSource::Custom(
+            crate::domain::metric_definitions::definition::CustomObservationSql::new(
+                "SELECT 1".to_owned(),
+            ),
+        );
+        let refused = [
+            ("ratio", ratio_definition()),
+            ("median", median_definition()),
+            ("custom source", custom),
+        ];
+        for (name, def) in refused {
+            assert!(
+                validate_view(&def, MetricViewRequest::Unattributed).is_err(),
+                "should reject: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn shape_rejects_unattributed_for_the_tenant_entity() {
+        let mut req = shape_request(vec![], "2026-01-01", "2026-01-31", vec!["ai.x"]);
+        req.entity = MetricResultsEntity::Tenant {};
+        req.metrics[0].views = vec![MetricViewRequest::Unattributed];
+
+        assert!(validate_request_shape(&req, Uuid::from_u128(1)).is_err());
     }
 
     #[test]

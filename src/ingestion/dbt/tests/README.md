@@ -95,11 +95,13 @@ Conventions:
   (blocks the run). Default to `warn`; use `error` only when a violation must
   stop the pipeline.
 - **`meta.tier`** is independent of the gate — how alarming a violation is to a
-  human, surfaced in the finding regardless of the gate.
+  human, surfaced in the finding regardless of the gate. Only `tier: error`
+  findings raise a Grafana alert (rule `insight-dq-finding` in
+  `deploy/gitops/system/grafana/values.yaml`); `warn` and `info` stay log-only.
 - Register any new gold view in `silver/_shared/gold_sources.yml` before
   referencing it with `source('gold', '<view>')`.
 - Read `ReplacingMergeTree` tables with `FINAL` (or the project's dedup pattern)
   so transient duplicates don't show up as false violations.
 
-The emitted finding's fields are documented in the python emitter in
-`charts/insight/templates/ingestion/data-quality-test.yaml`.
+The emitted finding's fields are documented in the python emitter,
+`src/ingestion/scripts/data_quality_findings.py`.
