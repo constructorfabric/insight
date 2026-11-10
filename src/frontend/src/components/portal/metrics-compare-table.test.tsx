@@ -56,9 +56,11 @@ function renderTable(metrics: NormalizedMetricResult[]) {
 }
 
 const cells = (label: string) =>
-  within(screen.getByRole("row", { name: new RegExp(label) })).getAllByRole(
-    "cell"
-  );
+  within(
+    screen.getByRole("row", {
+      name: (accessibleName) => accessibleName.includes(label),
+    })
+  ).getAllByRole("cell");
 
 describe("MetricsCompareTable", () => {
   const metrics = [
