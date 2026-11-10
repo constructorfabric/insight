@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,6 +33,7 @@ vi.mock("@/components/app-sidebar-footer", () => ({
 }));
 
 import { Sidebar, SidebarProvider, useSidebar } from "@gears-frontx/ui-kit";
+import { setPortalRailLabels } from "@/lib/portal/portal-store";
 import { LensRail } from "./lens-rail";
 
 function OpenState() {
@@ -58,6 +59,8 @@ const tooltipFor = (label: string) =>
     .find((node) => !node.closest('[data-testid="lens-rail"]'));
 
 beforeEach(() => {
+  act(() => setPortalRailLabels(false));
+  localStorage.clear();
   mocks.selected = [];
   mocks.activeItem = "home";
   mocks.openFeedback.mockClear();
@@ -134,5 +137,39 @@ describe("LensRail", () => {
 
     await user.click(settings);
     expect(screen.getByRole("button", { name: "Go somewhere" })).toBeInTheDocument();
+  });
+});
+
+describe("LensRail names", () => {
+  it("starts with icons only", () => {
+    rail(true);
+    expect(screen.getByRole("button", { name: "Show navigation labels" })).toBeInTheDocument();
+  });
+
+  it("keeps the reader's choice across a remount", async () => {
+    const user = userEvent.setup();
+    const first = rail(true);
+
+    await user.click(screen.getByRole("button", { name: "Show navigation labels" }));
+    first.unmount();
+    rail(true);
+
+    expect(screen.getByRole("button", { name: "Hide navigation labels" })).toBeInTheDocument();
+    expect(localStorage.getItem("insight.portal.railLabels")).toBe("true");
+  });
+
+  it("drops the item tooltips once the names show", async () => {
+    const user = userEvent.setup();
+    act(() => setPortalRailLabels(true));
+    rail(true);
+
+    await user.hover(screen.getByRole("button", { name: "People" }));
+
+    expect(tooltipFor("People")).toBeUndefined();
+  });
+
+  it("offers no toggle while the sidebar is collapsed to icons", () => {
+    collapsedRail();
+    expect(screen.queryByRole("button", { name: /navigation labels/ })).not.toBeInTheDocument();
   });
 });

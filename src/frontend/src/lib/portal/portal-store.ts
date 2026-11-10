@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 /**
  * Portal PREFERENCES.
  *
- * `showPlanned` persists to localStorage (mirroring the metrics-v2 flag pattern
+ * `showPlanned` and `railLabels` persist to localStorage (mirroring the metrics-v2 flag pattern
  * in feature-flags.ts). Nothing else lives here: every piece of navigation
  * state — zone, item, scope, slice, period — rides in the URL
  * (`portal-search.ts`, `portal-nav.ts`), because it describes the view rather
@@ -30,10 +30,13 @@ export interface OrgScope {
 /** Retired: read by nothing, removed wherever it is still stored. */
 const RETIRED_ENABLED_KEY = "insight.portal";
 const SHOW_PLANNED_KEY = "insight.portal.showPlanned";
+const RAIL_LABELS_KEY = "insight.portal.railLabels";
 
 interface PortalState {
   /** Whether navigation shows entries we have not built yet (`unbuilt` in the nav model). */
   showPlanned: boolean;
+  /** Whether the rail shows each item's name beside its icon. */
+  railLabels: boolean;
 }
 
 /**
@@ -74,6 +77,7 @@ forgetRetiredPreference();
 
 let state: PortalState = {
   showPlanned: readOptInPref(SHOW_PLANNED_KEY),
+  railLabels: readOptInPref(RAIL_LABELS_KEY),
 };
 
 const listeners = new Set<() => void>();
@@ -110,6 +114,22 @@ export function usePortalShowPlanned(): boolean {
   return useSyncExternalStore(
     subscribe,
     () => state.showPlanned,
+    () => false,
+  );
+}
+
+/** Show or hide the rail's item names for this reader. */
+export function setPortalRailLabels(show: boolean): void {
+  state = { ...state, railLabels: show };
+  persist(RAIL_LABELS_KEY, show ? "true" : "false");
+  emit();
+}
+
+/** Whether this reader wants the rail's item names shown. */
+export function usePortalRailLabels(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => state.railLabels,
     () => false,
   );
 }

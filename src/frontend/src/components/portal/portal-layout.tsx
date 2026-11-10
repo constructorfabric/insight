@@ -22,7 +22,10 @@ import {
 import { useMetricsViewHidesPane } from "@/lib/portal/metrics-view-pane";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
 import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
-import { usePortalShowPlanned } from "@/lib/portal/portal-store";
+import {
+  usePortalRailLabels,
+  usePortalShowPlanned,
+} from "@/lib/portal/portal-store";
 import {
   useShellLayout,
   type ShellLayout,
@@ -54,6 +57,7 @@ export function PortalLayout() {
   const homeShown = bareLandingZone(usePortalShowPlanned()) === "overview";
   const landed = useRef(false);
   const paneHidden = useMetricsViewHidesPane();
+  const railWidth = usePortalRailLabels() ? RAIL_WIDTH_LABELS : RAIL_WIDTH_ICONS;
   useEffect(() => {
     if (landed.current) return;
     const decision = landingDecision({
@@ -85,9 +89,13 @@ export function PortalLayout() {
   return (
     <SidebarProvider
       className="h-svh overflow-hidden"
+      // Rail plus pane: the provider's width is the whole open sidebar.
       style={
         {
-          "--sidebar-width": paneHidden ? RAIL_WIDTH : SHELL_SIDEBAR_WIDTH,
+          "--rail-width": railWidth,
+          "--sidebar-width": paneHidden
+            ? railWidth
+            : `calc(${railWidth} + ${PANE_WIDTH})`,
         } as CSSProperties
       }
     >
@@ -108,9 +116,9 @@ export function PortalLayout() {
   );
 }
 
-/** Rail plus pane: the provider's width is the whole open sidebar. */
-const RAIL_WIDTH = "calc(var(--sidebar-width-icon) + 1px)";
-const SHELL_SIDEBAR_WIDTH = `calc(${RAIL_WIDTH} + 16rem)`;
+const RAIL_WIDTH_ICONS = "calc(var(--sidebar-width-icon) + 1px)";
+const RAIL_WIDTH_LABELS = "12rem";
+const PANE_WIDTH = "16rem";
 
 /**
  * Collapsible to the icon rail: the rail column stays, the pane beside it goes.

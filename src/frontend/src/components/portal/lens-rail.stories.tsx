@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { CSSProperties } from "react";
 
 import { SidebarProvider } from "@gears-frontx/ui-kit";
 import { handlers } from "@/mocks/handlers";
@@ -12,7 +13,13 @@ const meta: Meta<typeof LensRail> = {
   parameters: { layout: "fullscreen", msw: { handlers } },
   decorators: [
     (Story) => (
-      <SidebarProvider>
+      <SidebarProvider
+        style={
+          {
+            "--rail-width": "calc(var(--sidebar-width-icon) + 1px)",
+          } as CSSProperties
+        }
+      >
         <Story />
       </SidebarProvider>
     ),

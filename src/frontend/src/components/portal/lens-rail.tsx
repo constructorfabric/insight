@@ -1,4 +1,4 @@
-import { MessageSquare, Settings } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, MessageSquare, Settings } from "lucide-react";
 import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import brandSymbol from "@/assets/brand-symbol.svg";
@@ -23,20 +23,25 @@ import {
   TooltipTrigger,
   useSidebar,
 } from "@gears-frontx/ui-kit";
+import {
+  setPortalRailLabels,
+  usePortalRailLabels,
+} from "@/lib/portal/portal-store";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { cn } from "@/lib/utils";
 
 /**
- * The icon rail: the first column of the shell sidebar (`ShellSidebar`), one
- * icon per rail item (`rail-model.ts`). Collapsing the shell sidebar leaves
- * only this column; picking an item opens the pane beside it again.
+ * The rail: the first column of the shell sidebar (`ShellSidebar`), one row
+ * per rail item (`rail-model.ts`), icons only unless the reader asks for the
+ * names beside them. Collapsing the shell sidebar leaves only this column, as
+ * icons; picking an item opens the pane beside it again.
  */
 export function LensRail() {
   return (
     <Sidebar
       collapsible="none"
       data-testid="lens-rail"
-      className="w-[calc(var(--sidebar-width-icon)+1px)] border-e"
+      className="w-(--rail-width) border-e"
     >
       <SidebarHeader>
         <img
@@ -52,8 +57,50 @@ export function LensRail() {
       </SidebarContent>
       <SidebarFooter>
         <RailFooterItems />
+        <SidebarMenu>
+          <LabelsToggle />
+        </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+/** Whether the rail's rows show their names right now. */
+function useRailLabelsShown(): boolean {
+  const labels = usePortalRailLabels();
+  const { state } = useSidebar();
+  return labels && state === "expanded";
+}
+
+/** Shows or hides the rail's names; collapsed to icons, there is no room. */
+function LabelsToggle() {
+  const { t } = useTranslation();
+  const labels = usePortalRailLabels();
+  const { state } = useSidebar();
+
+  if (state === "collapsed") return null;
+
+  const label = labels
+    ? t("common.a11y.hide_navigation_labels")
+    : t("common.a11y.show_navigation_labels");
+  const Icon = labels ? ChevronsLeft : ChevronsRight;
+  return (
+    <SidebarMenuItem>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuButton
+              aria-label={label}
+              onClick={() => setPortalRailLabels(!labels)}
+            >
+              <Icon />
+              <span>{label}</span>
+            </SidebarMenuButton>
+          }
+        />
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    </SidebarMenuItem>
   );
 }
 
@@ -164,9 +211,9 @@ function SettingsItem() {
 }
 
 /**
- * The rail's labels at every desktop width. The kit's own `tooltip` prop shows
- * only while the whole sidebar is collapsed, and the rail is visible open or
- * not. The phone drawer's rows carry their labels, so it gets none.
+ * The rail's labels while it shows icons only, open or collapsed. The kit's own
+ * `tooltip` prop shows only while the whole sidebar is collapsed. Rows that
+ * carry their names, in the phone drawer or a labelled rail, get none.
  */
 function RailTooltip({
   label,
@@ -176,7 +223,8 @@ function RailTooltip({
   children: ReactElement;
 }) {
   const { isMobile } = useSidebar();
-  if (isMobile) return children;
+  const labelsShown = useRailLabelsShown();
+  if (isMobile || labelsShown) return children;
 
   return (
     <Tooltip>
