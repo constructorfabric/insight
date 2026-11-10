@@ -140,7 +140,7 @@ dependencies = [
  "insight-migration",
  "insight-openapi",
  "jsonwebtoken",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "p256",
  "redis",
  "reqwest 0.12.28",
@@ -552,7 +552,7 @@ dependencies = [
  "insight-openapi",
  "jsonwebtoken",
  "openidconnect",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "p256",
  "rand 0.10.3",
  "rdkafka",
@@ -979,9 +979,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-api-gateway"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "622cb1e843f39cfc15b74cacb9321aa16fa969ba02d59747c22a74842d607111"
+checksum = "da4ba4bfceeb11b253ca3609e18cdc4250b23689108b77a16531e944ae387f54"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -995,7 +995,7 @@ dependencies = [
  "cf-gears-toolkit",
  "cf-gears-toolkit-canonical-errors",
  "cf-gears-toolkit-gateway",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-http",
  "cf-gears-toolkit-http-middleware",
  "cf-gears-toolkit-macros",
@@ -1011,7 +1011,7 @@ dependencies = [
  "inventory",
  "matchit 0.9.2",
  "nanoid",
- "opentelemetry",
+ "opentelemetry 0.33.1",
  "parking_lot",
  "rust-embed",
  "serde",
@@ -1019,7 +1019,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
- "tower-http 0.6.11",
+ "tower-http 0.7.1",
  "tracing",
  "ureq",
  "utoipa",
@@ -1027,9 +1027,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authn-resolver"
-version = "0.2.40"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47c26a4b423897023edb483a9ba1dfca9638a7d1f5972ff5e3591112accf695c"
+checksum = "a53094e6eae7c23ce43c8caedf2c259ca00fbebc81988543486eb5bae71a5f62"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1049,13 +1049,13 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authn-resolver-sdk"
-version = "0.3.40"
+version = "0.3.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "509c084e65d34a870eda6b0cd1393440766678247943132465d7064bf866de9c"
+checksum = "c7fccfb9eb80b1c052237a69b2afaa8a89f193f9dce13ae29f7e6324da9a8f1d"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-security",
  "gts",
  "schemars 1.2.3",
@@ -1067,9 +1067,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authz-resolver"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "423fd75e23c7889ced73e5fda574647105a89b4fd9a1c5e6f3dcb19755f6aab6"
+checksum = "1457d55d852c4f7c0df82719a137d32a861b5d95e130051d3e3820e351b59f31"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1091,9 +1091,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-authz-resolver-sdk"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cbdf3355867887eda37eef8ed1707c304ea053536f0f7048d8d3e9cb8b9ecbe"
+checksum = "02805ebb206db6c8621e94e18877ae433a699f0e54beb9009a67425c157ba88e"
 dependencies = [
  "async-trait",
  "axum",
@@ -1101,7 +1101,7 @@ dependencies = [
  "cf-gears-toolkit",
  "cf-gears-toolkit-canonical-errors",
  "cf-gears-toolkit-contract",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-http",
  "cf-gears-toolkit-security",
  "gts",
@@ -1118,9 +1118,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-grpc-hub"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2f73f712d51831b0a2d7b464b1f0b19d7b353a6e9d42f92c318d4189cb0776a"
+checksum = "136343617fca9c1530764bd40cd2029aa32590c3929ca60eb4f432ea262d62bd"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1144,9 +1144,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-oidc-authn-plugin"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3121f381042c11f229e819885c434ac2db1a538f8ab593f623f78ed036dca449"
+checksum = "712de44db1f90e824d8bf3ca964606006c6ace24ef1f1e3a3eb05e9ee88ce09e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1154,7 +1154,7 @@ dependencies = [
  "cf-gears-authn-resolver",
  "cf-gears-authn-resolver-sdk",
  "cf-gears-toolkit",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-macros",
  "cf-gears-toolkit-security",
  "cf-gears-types-registry",
@@ -1164,7 +1164,7 @@ dependencies = [
  "humantime",
  "inventory",
  "jsonwebtoken",
- "opentelemetry",
+ "opentelemetry 0.33.1",
  "parking_lot",
  "regex",
  "reqwest 0.13.4",
@@ -1181,9 +1181,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-service-discovery"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "299cded2921995dfed7d5c45db820b4010967346fa49730c4c4bcc15c7e0f357"
+checksum = "fa0e18ff28f343ea79e5148e7e9197285897cb8d15979243df98f4be0614b70a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1204,9 +1204,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-single-tenant-tr-plugin"
-version = "0.1.43"
+version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4159a70180e65e12dfd43068f875a218ecfc50c92e8006407323f38e6d0b03ab"
+checksum = "3ea4c5931b45a1c78976cba29c7187eac66a09970bb74d905bb4e7fa534e9c97"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1224,15 +1224,15 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-static-authz-plugin"
-version = "0.1.41"
+version = "0.1.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c59879f3507b49c991a3f6a313d0d7943f8b41337990c16dd9ab7350264eced5"
+checksum = "59521c661c5f3dc20f28cf725bbe13208467d2abdecda7cfe338979ac5a42125"
 dependencies = [
  "anyhow",
  "async-trait",
  "cf-gears-authz-resolver-sdk",
  "cf-gears-toolkit",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-macros",
  "cf-gears-toolkit-security",
  "cf-gears-types-registry",
@@ -1246,9 +1246,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-system-sdk-directory"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b664841f6edf124b7e6809662448fc193e173c0df3cca471aa13f3bd310f99e1"
+checksum = "134c346a4963ab4574eaa75eef7053b265ba8475475131412fc84f72dccdbbba"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1262,18 +1262,18 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-system-sdks"
-version = "0.1.50"
+version = "0.1.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e4347d89fa1f427b4a97dc661ccb642c98b156a4a3314a403842dc22af088aa"
+checksum = "a3ad7685f7e5539753a13bb3474ad3a0f59c54d9560e1b9d3fb4460f362cca39"
 dependencies = [
  "cf-gears-system-sdk-directory",
 ]
 
 [[package]]
 name = "cf-gears-tenant-resolver"
-version = "0.1.44"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89a1b653ad262be85c69ef9ff86e48073a2dc8e84148c3697c64ee8d03909a34"
+checksum = "5e0bd830d1ae4c82ba2a723782b5a3cebcfe619b52a2d108662d710601f7d41b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1294,13 +1294,13 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-tenant-resolver-sdk"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "156e4dba9919f6ccbd155e6578b7b67657e88a72458d4295ad963393e3a24782"
+checksum = "a8c3c8173e23efa8c7f1dd8d4bdbf3139bb05ab235632d848f3ed944a5d0164c"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-security",
  "gts",
  "schemars 1.2.3",
@@ -1313,9 +1313,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db12812b7cb7a6e35b7786cb92e8075cbb0775fee07d5d9357c6d88d5e22715a"
+checksum = "6f85cf44f13b2fa8e4fdf601d02712a3d955bbf70545cd6d3d694cfdef7de093"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1325,7 +1325,7 @@ dependencies = [
  "cf-gears-toolkit-canonical-errors",
  "cf-gears-toolkit-contract",
  "cf-gears-toolkit-db",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-http-middleware",
  "cf-gears-toolkit-macros",
  "cf-gears-toolkit-odata",
@@ -1346,9 +1346,9 @@ dependencies = [
  "http",
  "inventory",
  "nix 0.31.3",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
+ "opentelemetry 0.33.1",
+ "opentelemetry-otlp 0.33.1",
+ "opentelemetry_sdk 0.33.1",
  "parking_lot",
  "rustls",
  "sea-orm-migration",
@@ -1382,7 +1382,7 @@ checksum = "b4dc3613d85d018769cda8ee2fe4ba5a5bbf4ca4fb8c2eb697ebff1c6874e35a"
 dependencies = [
  "axum",
  "cf-gears-toolkit-canonical-errors-macro",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.1.7",
  "http",
  "sea-orm",
  "serde",
@@ -1407,9 +1407,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-contract"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5194de86093c8e8bc5e5ed57d2f84058724c9140c127ffaa9deef0d4e53734fb"
+checksum = "b0575ceb0e91e2010ab98a528be377389f7f3c784493caebd2515e619d034c06"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1438,9 +1438,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-contract-macros"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6104b086f5fb411ce1cfd65edfc4754c64e293c7590674627691ca87902b3ed6"
+checksum = "c666653eeacc588ab975913c7e136679540343ac98782b94d286b0acf0d79c96"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-crate",
@@ -1451,9 +1451,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-db"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a5f4af49f256d2515cf95b18b573939eb8e3cefd679fdee53cf8ae3a99b65e7"
+checksum = "b1a60ab0e39bc84dde37f15b594247a9c004d9660a223dfa92fcae064e907b2a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1500,9 +1500,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-gateway"
-version = "0.2.11"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673f086ca6a974d5de99a5082f1f83c8ec3d87f940eaccf6586cba8767a03de0"
+checksum = "0f0d8c7207c1d69f1844ba927274065359f369d977cb0f71c57e543e03f9f37b"
 dependencies = [
  "async-trait",
  "axum",
@@ -1527,7 +1527,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37480bfd51f3474176ffe7782d97cb539cddee0e2078b2588f9a354322733f73"
 dependencies = [
  "anyhow",
- "cf-gears-toolkit-gts-macros",
+ "cf-gears-toolkit-gts-macros 0.1.6",
+ "gts",
+ "gts-macros",
+ "inventory",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cf-gears-toolkit-gts"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e18b41796139709178ee5cccfbe6d289855f41d9c94807e29fa6648b22f1d03"
+dependencies = [
+ "anyhow",
+ "cf-gears-toolkit-gts-macros 0.2.0",
  "gts",
  "gts-macros",
  "inventory",
@@ -1551,10 +1567,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-gears-toolkit-http"
-version = "0.8.0"
+name = "cf-gears-toolkit-gts-macros"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d9e79fdd9a4da464242e00317013f84b8b280a8ae873efcb5e91c98be174b2a"
+checksum = "2f2489e71c209e1192935847e2901ed7d1bc17d42cf7529390745838fd30ad92"
+dependencies = [
+ "gts",
+ "gts-id",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
+name = "cf-gears-toolkit-http"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcb9f091177c64e56fc685ea85219085116381463804cc816b80acdceb61ddf2"
 dependencies = [
  "bytes",
  "cf-gears-toolkit-security",
@@ -1578,16 +1608,16 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tower",
- "tower-http 0.6.11",
+ "tower-http 0.7.1",
  "tracing",
  "webpki-roots",
 ]
 
 [[package]]
 name = "cf-gears-toolkit-http-middleware"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04de9b4d4a5a3d5391a2106ed025bb738ee6a643b6ae3e9c33b8742ab8302dfe"
+checksum = "dec4c6e7d3f00927123c9fb0c62e9bceb18ca904e5fde9ed14a1bd52e4c167f1"
 dependencies = [
  "axum",
  "cf-gears-toolkit-canonical-errors",
@@ -1600,9 +1630,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-macros"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6445ce1e41e226cd90921e1953cb9cc8c76f1892d76d949d85f0858f33ec206"
+checksum = "03a3a4c0e9a6a20d51ac2dba072edd9af9dc8a0290500a94b2ff5464c3c8d0f1"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -1613,14 +1643,14 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-odata"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c1de3d52576e0bc6c5eccfca48fed5633ca78a8ddc8fbe3da8c46960dd197e8"
+checksum = "128b58c23ae273cfba5fcc9ff9b22a673dfd173a86b92128f64f613d2dedb2d6"
 dependencies = [
  "base64 0.22.1",
  "bigdecimal",
  "cf-gears-toolkit-canonical-errors",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "chrono",
  "chrono-tz",
  "peg",
@@ -1632,9 +1662,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-sdk"
-version = "0.7.15"
+version = "0.7.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b46f36e0fee904547f8ac33bdac22acda62c14534e3fa33de21cd88cf272396d"
+checksum = "6efd37da0358848c0ca62dc1e3aec13db4bcd8773242686d044c58f5e2ec0868"
 dependencies = [
  "cf-gears-toolkit-odata",
  "cf-gears-toolkit-security",
@@ -1644,28 +1674,37 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-security"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d691734b4c17e6c00d386027c3c5a6480ce4091729fed6159b1c4bbac614851"
+checksum = "63b4f1bd750f12ed859e16f94f174dcc081f5664bffec42c6be2e8ae955f88fb"
 dependencies = [
+ "aws-lc-rs",
  "base64 0.22.1",
+ "jsonwebtoken",
  "parking_lot",
+ "pem-rfc7468 1.0.0",
+ "pkcs1",
+ "pkcs8 0.11.0",
  "postcard",
+ "rustls",
+ "sec1",
  "secrecy",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "spki 0.7.3",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
 name = "cf-gears-toolkit-taskward"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91fbceac4c8b10685103bc1d49c71726e49d68a2a325c7e7a2de094c733f7507"
+checksum = "d65f584cf83f6cf24685488b87dc745d2e061614fb0e581bb961d6862ee51f44"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1676,12 +1715,12 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-trace-context"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "893f03db1cac1e249418dd2a2c9f3b33584c3f413c5389b5c3776855e1d659a4"
+checksum = "f019c6db602cc005cde8a9fb05283f9d644629e4380145c1d0180ab2562a2ba5"
 dependencies = [
  "http",
- "opentelemetry",
+ "opentelemetry 0.33.1",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
@@ -1689,9 +1728,9 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-toolkit-transport-grpc"
-version = "0.9.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be41ba2b33cbd74c897d66e9a229c1f66b61c537fa64125287a69dd852e4969f"
+checksum = "d6e7f5acaa1cc6d14bdd591a122a06a1c362e67d914050c2b2f20781830a0fed"
 dependencies = [
  "anyhow",
  "cf-gears-toolkit-security",
@@ -1726,13 +1765,12 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-types-registry"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c7bb9911370e418a3afbf27e7b0edd375cc3f9a011804725bd8b4653cb270ed"
+checksum = "4ab7237913546faf7e102364141b4da6e0194c5854173b7d7b350c8ada96b00c"
 dependencies = [
  "anyhow",
  "async-trait",
- "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "cf-gears-toolkit",
@@ -1740,7 +1778,7 @@ dependencies = [
  "cf-gears-toolkit-contract",
  "cf-gears-toolkit-db",
  "cf-gears-toolkit-db-macros",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-macros",
  "cf-gears-toolkit-odata",
  "cf-gears-toolkit-security",
@@ -1750,7 +1788,7 @@ dependencies = [
  "heck 0.5.0",
  "inventory",
  "lru",
- "opentelemetry",
+ "opentelemetry 0.33.1",
  "parking_lot",
  "sea-orm",
  "sea-orm-migration",
@@ -1767,15 +1805,15 @@ dependencies = [
 
 [[package]]
 name = "cf-gears-types-registry-sdk"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2a880afe291b959889e45767ffab095358259c7f07097033686cef95b79fa5b"
+checksum = "bbb6c4ea8f65b3eeb546c71324bf919a0895cc6bf1243df001902a8a45e84641"
 dependencies = [
  "async-trait",
  "bytes",
  "cf-gears-toolkit-canonical-errors",
  "cf-gears-toolkit-contract",
- "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-gts 0.2.0",
  "cf-gears-toolkit-http",
  "cf-gears-toolkit-security",
  "gts",
@@ -3147,7 +3185,7 @@ dependencies = [
  "insight-http-metrics",
  "insight-log-context",
  "insight-openapi",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "reqwest 0.12.28",
  "rustix",
  "serde",
@@ -3715,9 +3753,9 @@ dependencies = [
  "insight-log-context",
  "insight-migration",
  "insight-openapi",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
+ "opentelemetry 0.32.0",
+ "opentelemetry-otlp 0.32.0",
+ "opentelemetry_sdk 0.32.1",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -3819,8 +3857,8 @@ name = "insight-http-metrics"
 version = "0.1.0"
 dependencies = [
  "axum",
- "opentelemetry",
- "opentelemetry_sdk",
+ "opentelemetry 0.32.0",
+ "opentelemetry_sdk 0.32.1",
  "tokio",
  "tower",
 ]
@@ -4488,11 +4526,11 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "nanoid"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
+checksum = "8628de41fe064cc3f0cf07f3d299ee3e73521adaff72278731d5c8cae3797873"
 dependencies = [
- "rand 0.8.7",
+ "rand 0.9.4",
 ]
 
 [[package]]
@@ -4832,6 +4870,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c1f1a6ac9c875a4941e4c7c085b61e8f4daa326de03b4701768c3491a6ad9ee"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "opentelemetry-http"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4840,7 +4892,20 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
- "opentelemetry",
+ "opentelemetry 0.32.0",
+ "reqwest 0.13.4",
+]
+
+[[package]]
+name = "opentelemetry-http"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "302249bd8ee804789faaa7b5b2cbf79bc61cb864714079c644e3828af5b7e811"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "http",
+ "opentelemetry 0.33.1",
  "reqwest 0.13.4",
 ]
 
@@ -4851,10 +4916,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
  "http",
- "opentelemetry",
- "opentelemetry-http",
- "opentelemetry-proto",
- "opentelemetry_sdk",
+ "opentelemetry 0.32.0",
+ "opentelemetry-http 0.32.0",
+ "opentelemetry-proto 0.32.0",
+ "opentelemetry_sdk 0.32.1",
+ "prost",
+ "reqwest 0.13.4",
+ "thiserror 2.0.21",
+ "tokio",
+ "tonic",
+ "tonic-types",
+]
+
+[[package]]
+name = "opentelemetry-otlp"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0756af24841e367128ef31c831999937b8b5c5197d47914590d8f4e2e88c2e1a"
+dependencies = [
+ "http",
+ "httpdate",
+ "opentelemetry 0.33.1",
+ "opentelemetry-http 0.33.1",
+ "opentelemetry-proto 0.33.1",
+ "opentelemetry_sdk 0.33.1",
  "prost",
  "reqwest 0.13.4",
  "thiserror 2.0.21",
@@ -4869,8 +4954,21 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
 dependencies = [
- "opentelemetry",
- "opentelemetry_sdk",
+ "opentelemetry 0.32.0",
+ "opentelemetry_sdk 0.32.1",
+ "prost",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d576f5dddc3299341bcd85a04be17b2564844c0c9563214f02d85f2524d1afae"
+dependencies = [
+ "opentelemetry 0.33.1",
+ "opentelemetry_sdk 0.33.1",
  "prost",
  "tonic",
  "tonic-prost",
@@ -4885,7 +4983,25 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
- "opentelemetry",
+ "opentelemetry 0.32.0",
+ "percent-encoding",
+ "portable-atomic",
+ "rand 0.9.4",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "372a912db2974d1990207006fd0e3aa0ef3fd4ad3be43c65cfaadf2206866061"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "opentelemetry 0.33.1",
  "percent-encoding",
  "portable-atomic",
  "rand 0.9.4",
@@ -7804,7 +7920,26 @@ version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
+ "bitflags 2.11.1",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "pin-project-lite",
+ "tower",
+ "tower-layer",
+ "tower-service",
+ "url",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
+dependencies = [
  "async-compression",
+ "base64 0.22.1",
  "bitflags 2.11.1",
  "bytes",
  "futures-core",
@@ -7812,6 +7947,8 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "mime",
+ "percent-encoding",
  "pin-project-lite",
  "tokio",
  "tokio-util",
@@ -7821,28 +7958,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "tower-http"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
-dependencies = [
- "base64 0.22.1",
- "bitflags 2.11.1",
- "bytes",
- "futures-util",
- "http",
- "http-body",
- "http-body-util",
- "mime",
- "percent-encoding",
- "pin-project-lite",
- "tower",
- "tower-layer",
- "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -7916,12 +8031,12 @@ dependencies = [
 
 [[package]]
 name = "tracing-opentelemetry"
-version = "0.33.0"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
+checksum = "0a904802a1b902f43638b677ff2a650847e3b4404101b6c586d648e8c1e3e8fe"
 dependencies = [
  "js-sys",
- "opentelemetry",
+ "opentelemetry 0.33.1",
  "smallvec",
  "tracing",
  "tracing-core",
