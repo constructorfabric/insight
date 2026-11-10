@@ -10,12 +10,14 @@ MAX_MESSAGE_LENGTH = 200
 
 @dataclass(frozen=True)
 class Lane:
+    suite_stage: str
     stages: tuple[tuple[str, str], ...]
     artifacts: tuple[str, ...]
 
 
 LANES = {
     "api-smoke": Lane(
+        suite_stage="API_TESTS",
         stages=(
             ("STAND", "Bring the stand up"),
             ("API_TESTS", "Run the API suite"),
@@ -26,6 +28,7 @@ LANES = {
         artifacts=("api-smoke-compose-logs", "api-smoke-coverage"),
     ),
     "ui-journeys": Lane(
+        suite_stage="UI_TESTS",
         stages=(
             ("STAND", "Bring the stand up"),
             ("BROWSER_INSTALL", "Install the suite's browser"),
@@ -99,7 +102,12 @@ def report(lane_name: str, path: Path, job_url: str) -> str:
     status = "stages not successful: " + "; ".join(unsuccessful) if unsuccessful else "all stages succeeded"
     lines = [f"{lane_name}: {status}", "", f"[Stand runner job log]({job_url})", ""]
     tests = failing_tests(path)
-    if tests is None:
+    if os.environ.get(lane.suite_stage) == "failure" and (tests is None or tests[1] == 0):
+        suite_name = dict(lane.stages)[lane.suite_stage]
+        lines.append(
+            f"{suite_name} failed before or outside any test (collection, setup or a crash) — read that step's log."
+        )
+    elif tests is None:
         lines.append("The JUnit report could not be read.")
     else:
         failures, count = tests
