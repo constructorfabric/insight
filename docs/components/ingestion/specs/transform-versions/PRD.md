@@ -78,7 +78,7 @@ Authors act through pull requests and operators through Helm values. Everyone el
 3. The rebuild builds each model in the set anew from bronze. A history model in the set runs incrementally instead.
 4. The rebuild builds no model outside the set anew.
 5. A model whose sources the install has never loaded is skipped and recorded at its deployed version. Its connector's first sync builds it.
-6. An author can mark a changed model as needing its connector's next sync. The rebuild leaves that model and its downstream out. The last step of the transform run waits for that connector's next sync, then rebuilds them.
+6. An author can mark a changed model as needing its connector's next sync, for a model that reads a bronze column the same release adds. The rebuild leaves that model and its downstream out. The last step of the transform run checks every 15 minutes for a sync of that connector that finished after the run started, for up to 24 hours, then rebuilds them.
 7. When a rebuild fails, the models it built keep their new versions.
 8. A failed step is retried 15 minutes later, for at most 3 attempts. A retried rebuild builds only the models whose versions are not yet applied.
 9. When the attempts run out, the transform run shows as a failed Workflow. It stays failed until the next install, upgrade or rollback, or a run started by hand.
@@ -103,8 +103,8 @@ Authors act through pull requests and operators through Helm values. Everyone el
 3. A rebuild uses the bronze already loaded. Where bronze lacks old data, the rebuilt model lacks it too.
 4. A rebuild holds its connectors for its whole run. Models near identity resolution are fed by most connectors, so rebuilding one of them pauses most syncs.
 5. The first transform run records versions without looking at the tables. A model changed in the release that first ships the transform run is recorded as applied and is not rebuilt.
-6. A model marked as needing its connector's sync waits only as long as the attempts last, about 30 minutes. If the connector has not synced by then, the transform run fails.
-7. Operators configure the transform run with `ingestion.transformPlan.enabled` (default `true`), `ingestion.transformPlan.retry` (default 3 attempts, 15 minutes apart) and `ingestion.transformPlan.resources` (default requests 100m CPU and 256 MiB, limits 500m CPU and 512 MiB). The transform run exists only when `ingestion.templates.enabled` is also `true`.
+6. A model marked as needing its connector's sync waits at most 24 hours. If the connector has not synced by then, the transform run fails, and the model waits for the next install, upgrade or rollback, or a run started by hand.
+7. Operators configure the transform run with `ingestion.transformPlan.enabled` (default `true`), `ingestion.transformPlan.retry` (default 3 attempts, 15 minutes apart), `ingestion.transformPlan.syncWait` (default 24 hours) and `ingestion.transformPlan.resources` (default requests 100m CPU and 256 MiB, limits 500m CPU and 512 MiB). The transform run exists only when `ingestion.templates.enabled` is also `true`.
 8. A plan attempt that takes longer than 15 minutes fails.
 
 ## 6. Acceptance criteria
