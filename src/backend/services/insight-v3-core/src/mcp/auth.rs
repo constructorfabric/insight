@@ -6,8 +6,9 @@ use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::jwk::JwkSet;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode_header};
 use serde::Deserialize;
 use tokio::sync::{Mutex, RwLock};
 
@@ -137,8 +138,8 @@ impl TokenVerifier {
         validation.set_issuer(&[self.inner.issuer.as_str()]);
         validation.set_audience(&[self.inner.audience.as_str()]);
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-        let claims = decode::<McpAccessClaims>(token, &key, &validation)
-            .map_err(|_| AuthFailure::Unauthorized)?
+        let claims = toolkit_security::jwt::decode::<McpAccessClaims>(token, &key, &validation)
+            .map_err(|error| decode_failure(&error))?
             .claims;
 
         if claims.sub_type != "user"
@@ -309,4 +310,15 @@ pub(crate) fn validate_public_url(
     );
 
     Ok(())
+}
+
+/// A backend outage is not a bad token: `Provider` means the crypto facade
+/// could not run, so the caller gets 503, not 401.
+fn decode_failure(error: &jsonwebtoken::errors::Error) -> AuthFailure {
+    if matches!(error.kind(), ErrorKind::Provider(_)) {
+        tracing::error!(error = %error, "crypto backend unavailable for MCP token");
+        AuthFailure::Unavailable
+    } else {
+        AuthFailure::Unauthorized
+    }
 }

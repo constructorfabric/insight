@@ -122,7 +122,7 @@ clap = { version = "4.5", features = ["derive"] }
 # family moves together with the opentelemetry major (see INVARIANT below).
 toolkit = { package = "cf-gears-toolkit", version = "=0.12.1" }
 toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.8.4" }
-toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.12.1" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.12.1", features = ["jwt"] }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.10.0", features = ["axum", "sea-orm"] }
 
 # gears-rust SDKs (crates.io)

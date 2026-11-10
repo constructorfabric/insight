@@ -31,7 +31,8 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use jsonwebtoken::errors::ErrorKind;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use toolkit_canonical_errors::CanonicalError;
@@ -184,9 +185,16 @@ fn verify_assertion(
 
     let mut verified: Option<AssertionClaims> = None;
     for key in &entry.keys {
-        if let Ok(data) = decode::<AssertionClaims>(assertion, key, &validation) {
-            verified = Some(data.claims);
-            break;
+        match toolkit_security::jwt::decode::<AssertionClaims>(assertion, key, &validation) {
+            Ok(data) => {
+                verified = Some(data.claims);
+                break;
+            }
+            // A backend failure is not a bad assertion; stop and say so.
+            Err(error) if matches!(error.kind(), ErrorKind::Provider(_)) => {
+                return Err("crypto_unavailable");
+            }
+            Err(_) => {}
         }
     }
     let claims = verified.ok_or("assertion_verification_failed")?;

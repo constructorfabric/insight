@@ -8,8 +8,9 @@
 //! (`jti`, one-shot) lives in the session store; this module is the pure
 //! validation half, unit-tested with locally-signed tokens.
 
+use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::jwk::JwkSet;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode_header};
 use serde::Deserialize;
 
 /// The back-channel logout event URI (OIDC BCL §2.4).
@@ -88,9 +89,16 @@ pub fn validate_logout_token(
         let Ok(key) = DecodingKey::from_jwk(jwk) else {
             continue;
         };
-        if let Ok(data) = decode::<RawClaims>(raw, &key, &validation) {
-            claims = Some(data.claims);
-            break;
+        match toolkit_security::jwt::decode::<RawClaims>(raw, &key, &validation) {
+            Ok(data) => {
+                claims = Some(data.claims);
+                break;
+            }
+            // A backend failure is not a bad token; stop and say so.
+            Err(error) if matches!(error.kind(), ErrorKind::Provider(_)) => {
+                return Err("crypto_unavailable");
+            }
+            Err(_) => {}
         }
     }
     let claims = claims.ok_or("signature_verification_failed")?;

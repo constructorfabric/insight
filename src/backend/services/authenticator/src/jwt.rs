@@ -14,7 +14,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, encode};
 use p256::SecretKey;
 use p256::elliptic_curve::sec1::ToSec1Point as _;
 use p256::pkcs8::DecodePrivateKey as _;
@@ -227,7 +227,8 @@ impl KeyStore {
 
         let mut last_err = None;
         for key in std::iter::once(&self.current).chain(self.previous.iter()) {
-            match decode::<GatewayClaims>(token, &key.decoding, &validation) {
+            match toolkit_security::jwt::decode::<GatewayClaims>(token, &key.decoding, &validation)
+            {
                 Ok(data) => return Ok(data.claims),
                 Err(e) => last_err = Some(e),
             }
