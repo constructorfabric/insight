@@ -232,7 +232,6 @@ export function MetricValue({
   result: NormalizedMetricResult | undefined;
   entityId: string;
   personName: string;
-  /** Abbreviate millions. The full figure stays on the tooltip. */
   compact?: boolean;
 }) {
   const evidence = useMetricEvidenceOptional();

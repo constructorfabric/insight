@@ -264,8 +264,8 @@ describe("formatGap", () => {
     [63, "+63%"],
     [-47, "−47%"],
     [9_999, "+9999%"],
-    [10_000, "101×"],
-    [312_500_023, "3.1M×"],
+    [10_000, "+10K%"],
+    [312_500_023, "+312.5M%"],
   ] as const)("writes a gap of %s as %j", (gap, text) => {
     expect(formatGap(gap)).toBe(text);
   });

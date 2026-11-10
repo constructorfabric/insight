@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   NO_METRIC_VALUE,
-  formatHoursDuration,
   formatCompactMetricFigure,
-  formatCompactMultiple,
+  formatHoursDuration,
   formatMetricFigure,
   formatMetricNumber,
   formatMetricValue,
@@ -82,12 +81,6 @@ describe("formatMetricNumber / formatMetricValue / metricDisplayUnit", () => {
     expect(formatCompactMetricFigure(99.6, "percent")).toBe("100%");
     expect(formatCompactMetricFigure(-2_500_000, "integer")).toBe("-2.5M");
     expect(formatCompactMetricFigure(null, "integer", "lines")).toBe(NO_METRIC_VALUE);
-  });
-
-  it("keeps a modest multiple and compacts one that would overflow a column", () => {
-    expect(formatCompactMultiple(2.54)).toBe("2.5×");
-    expect(formatCompactMultiple(101)).toBe("101×");
-    expect(formatCompactMultiple(3_125_001.23)).toBe("3.1M×");
   });
 
   it("formatMetricFigure leaves the unit to the side element when one renders", () => {

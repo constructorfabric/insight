@@ -1,6 +1,7 @@
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { MetricDirection, MetricFormat } from "@/api/metric-results-client";
-import { formatCompactMultiple, metricDisplayUnit } from "@/lib/format";
+import { LOCALE } from "@/config/constants";
+import { metricDisplayUnit } from "@/lib/format";
 import {
   personDisplayName,
   type PersonNaming,
@@ -201,23 +202,27 @@ export function compareGaps(
   });
 }
 
-const GROUPED = new Intl.NumberFormat("en-US");
+const THOUSANDS = new Intl.NumberFormat(LOCALE);
+const COMPACT_PERCENT = new Intl.NumberFormat(LOCALE, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
-/** A percent this wide no longer fits the gap slot beside a compared value. */
 const GAP_PERCENT_LIMIT = 10_000;
 
 export function formatGap(gap: number | null): string {
   if (gap == null) return "";
   if (gap === 0) return "≈";
-  if (Math.abs(gap) >= GAP_PERCENT_LIMIT) return formatCompactMultiple(1 + gap / 100);
-  return `${gap > 0 ? "+" : "−"}${Math.abs(gap)}%`;
+  const sign = gap > 0 ? "+" : "−";
+  const magnitude = Math.abs(gap);
+  if (magnitude >= GAP_PERCENT_LIMIT) return `${sign}${COMPACT_PERCENT.format(magnitude)}%`;
+  return `${sign}${magnitude}%`;
 }
 
-/** The exact percent when `formatGap` shortened it; null when the cell already shows it. */
 export function formatGapDetail(gap: number | null): string | null {
   if (gap == null || Math.abs(gap) < GAP_PERCENT_LIMIT) return null;
   const sign = gap > 0 ? "+" : "−";
-  return `${sign}${GROUPED.format(Math.abs(gap))}%`;
+  return `${sign}${THOUSANDS.format(Math.abs(gap))}%`;
 }
 
 export function headerUnit(

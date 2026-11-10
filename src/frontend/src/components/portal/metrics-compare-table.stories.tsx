@@ -188,7 +188,7 @@ export const Stress: Story = {
       name: "Alexandra Fernandez-Montgomery — Review cost: $1,250,000",
     });
     const gap = cost.parentElement?.querySelector("span[title]");
-    await expect(gap?.textContent).toBe("3.1M×");
+    await expect(gap?.textContent).toBe("+312.5M%");
     await expect(gap?.getAttribute("title")).toMatch(/%$/);
 
     const hours = canvas.getByRole("button", {
