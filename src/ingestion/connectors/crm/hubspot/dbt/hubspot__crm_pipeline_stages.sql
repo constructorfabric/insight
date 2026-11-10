@@ -1,11 +1,12 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
+    full_refresh=false,
     schema='staging',
     engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by='(unique_key)',
     settings={'allow_nullable_key': 1},
-    tags=['hubspot', 'silver:class_crm_pipeline_stages']
+    tags=['hubspot', 'silver:class_crm_pipeline_stages', 'history']
 ) }}
 
 -- Stages come only inside their pipeline, so a stage HubSpot removed simply
