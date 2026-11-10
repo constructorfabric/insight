@@ -13,6 +13,7 @@ authenticator's own suite the same way, over its own tables.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -404,3 +405,83 @@ def test_the_ledger_merges_rather_than_overwrites(tmp_path: Any) -> None:
     merged = coverage.by_label(coverage.load_ledger(target))
     assert merged["GET /api/analytics/v1/queries"] == {200, 404}
     assert merged["GET /api/identity/v1/subchart"] == {200}
+
+
+V3_METRICS = coverage.Operation(method="GET", path="/api/v3/v1/metrics")
+
+
+def _write(tmp_path: Any, name: str, payload: object) -> str:
+    target = tmp_path / name
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    return str(target)
+
+
+def test_a_second_contract_keeps_its_own_exclusions() -> None:
+    assert "GET /v1/metrics" in coverage.BLOCKED
+
+    report = coverage.SpecReport(
+        spec_ops=coverage.spec_operations(_spec({"/v1/metrics": {"get": [200, 403, 409]}})),
+        validated={"GET /v1/metrics": {200}},
+        unmatched=[],
+        prefix="/api/v3",
+        blocked={},
+    )
+
+    assert report.required["GET /v1/metrics"] == {200, 403, 409}
+    assert not report.stale_blocked
+    assert not report.blocked_undeclared
+
+
+def test_the_gateways_refusal_is_not_a_code_the_service_omits() -> None:
+    report = coverage.SpecReport(
+        spec_ops=coverage.spec_operations(_spec({"/v1/metrics": {"get": [200]}})),
+        validated={"GET /v1/metrics": {200, 401}},
+        unmatched=[],
+        prefix="/api/v3",
+        blocked={},
+    )
+
+    assert not report.undeclared
+
+
+def test_every_spec_is_measured_against_its_own_prefix(tmp_path: Any) -> None:
+    catalogue = [QUERIES, V3_METRICS]
+    ledger = _ledger({(op.method, op.path): [200, 401] for op in catalogue})
+    analytics = _spec({"/v1/queries": {"get": [200]}})
+    v3 = _spec({"/v1/metrics": {"get": [200]}, "/v1/folders": {"get": [200]}})
+
+    exit_code = coverage.main(
+        [
+            "--observed",
+            _write(tmp_path, "ledger.json", ledger),
+            "--catalogue",
+            _write(tmp_path, "catalogue.json", [vars(op) for op in catalogue]),
+            "--spec",
+            _write(tmp_path, "analytics.json", analytics),
+            "--spec",
+            "/api/v3=" + _write(tmp_path, "v3.json", v3),
+        ]
+    )
+
+    assert exit_code == 1, "GET /v1/folders is documented by v3 and nothing called it"
+
+
+def test_a_contract_with_nothing_catalogued_under_its_prefix_is_not_measured(
+    tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ledger = _ledger({(QUERIES.method, QUERIES.path): [200, 401]})
+    v3 = _spec({"/v1/metrics": {"get": [200]}})
+
+    exit_code = coverage.main(
+        [
+            "--observed",
+            _write(tmp_path, "ledger.json", ledger),
+            "--catalogue",
+            _write(tmp_path, "catalogue.json", [vars(QUERIES)]),
+            "--spec",
+            "/api/v3=" + _write(tmp_path, "v3.json", v3),
+        ]
+    )
+
+    assert exit_code == 0
+    assert "not measured" in capsys.readouterr().out
