@@ -20,13 +20,58 @@ PROJECT = Path("src/ingestion/dbt")
 INPUTS = (PROJECT, PROJECT.parent / "silver", PROJECT.parent / "gold", PROJECT.parent / "connectors")
 DOCUMENTATION_KEYS = {"tags", "docs", "description", "persist_docs", "meta"}
 TOKEN = re.compile(
-    r"(?P<quoted>'(?:''|\\.|[^'\\])*'|\"(?:\"\"|\\.|[^\"\\])*\"|`(?:``|\\.|[^`\\])*`)"
+    r"(?P<quoted>'(?:''|\\.|[^'\\])*'|\"(?:\"\"|\\.|[^\"\\])*\"|`(?:``|\\.|[^`\\])*`"
+    r"|(?P<heredoc>\$(?:[a-zA-Z_][a-zA-Z_0-9]*)?\$).*?(?P=heredoc))"
     r"|(?P<comment>--[^\n]*|/\*.*?\*/|\{\#.*?\#\})"
     r"|(?P<space>\s+)|(?P<other>.)",
     re.DOTALL,
 )
 CONFIG_START = re.compile(r"\{\{[-+]?\s*config\s*\(")
 CONFIG_END = re.compile(r"\s*[-+]?\}\}")
+JOINING_PAIRS = frozenset(
+    [
+        "--",
+        "/*",
+        "*/",
+        "<=",
+        ">=",
+        "!=",
+        "<>",
+        "==",
+        "||",
+        "&&",
+        "::",
+        "->",
+        "=>",
+        "**",
+        "//",
+        "<<",
+        ">>",
+        ":=",
+        "{{",
+        "}}",
+        "{%",
+        "%}",
+        "{#",
+        "#}",
+        "{-",
+        "{+",
+        "%-",
+        "%+",
+        "#-",
+        "#+",
+        "-}",
+        "+}",
+        "-%",
+        "+%",
+        "-#",
+        "+#",
+    ]
+)
+NUMERIC_EXPONENT = re.compile(
+    r"(?:(?<![\w.])(?:[0-9]+(?:\.[0-9]*)?[eE]|0[xX][0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?[pP])|\.[0-9]+[eE])[+-]?$"
+)
+NUMERIC_POINT = re.compile(r"(?<![\w.])(?:[0-9]+|0[xX][0-9a-fA-F]+)\.$")
 
 
 @dataclass(frozen=True)
@@ -82,23 +127,46 @@ def config_end(text: str, start: int) -> int:
     raise ValueError("cannot locate the end of a model config() expression")
 
 
+def separator_required(parts: list[str], part: str) -> bool:
+    left = parts[-1][-1]
+    right = part[0]
+    left_word = left.isalnum() or ("a" + left).isidentifier()
+    right_word = right.isalnum() or ("a" + right).isidentifier()
+    quotes = "'\"`$"
+    if (left_word or left in quotes) and (right_word or right in quotes):
+        return True
+    if left + right in JOINING_PAIRS or (left.isdecimal() and right == ".") or (left == "." and right.isdecimal()):
+        return True
+    if left == "." and right_word:
+        return NUMERIC_POINT.search("".join(parts)) is not None
+    if (left in "eEpP" and right in "+-") or (left in "+-" and right.isdecimal()):
+        return NUMERIC_EXPONENT.search("".join(parts)) is not None
+    return False
+
+
 def normalize(text: str, *, model_sql: bool = False) -> str:
     parts: list[str] = []
     position = 0
+    separated = False
     while position < len(text):
         config = CONFIG_START.match(text, position) if model_sql else None
         if config is not None:
             position = config_end(text, config.end())
-            if not parts or parts[-1] != " ":
-                parts.append(" ")
+            separated = True
             continue
 
         token = TOKEN.match(text, position)
         assert token is not None
-        part = " " if token.lastgroup in {"comment", "space"} else token.group()
-        if part != " " or not parts or parts[-1] != " ":
-            parts.append(part)
         position = token.end()
+        if token.lastgroup in {"comment", "space"}:
+            separated = True
+            continue
+
+        part = token.group()
+        if separated and parts and separator_required(parts, part):
+            parts.append(" ")
+        parts.append(part)
+        separated = False
     return "".join(parts).strip()
 
 

@@ -5,6 +5,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import transform_versions as guard
@@ -54,6 +56,101 @@ def union_manifest(contributing: bool, *, hint: bool, version: int = 1) -> guard
         guard.object_value(consumer["depends_on"])["nodes"] = ["model.example.producer"]
     nodes = {"model.example.consumer": consumer, "model.example.producer": producer}
     return manifest(nodes, {"macro.example.union_by_tag": macro("SELECT 1")})
+
+
+@pytest.mark.parametrize("macro_sql", [False, True], ids=["model", "macro"])
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        pytest.param("SELECT (1)", "SELECT ( 1 )", id="parentheses"),
+        pytest.param("SELECT a,b", "SELECT a, b", id="comma"),
+        pytest.param("SELECT 1+2", "SELECT 1/* note */+2", id="inline-comment"),
+        pytest.param("SELECT a,\nb", "SELECT a,b", id="line-join"),
+        pytest.param("SELECT 1+2", "SELECT 1{# note #}+2", id="jinja-comment"),
+        pytest.param("SELECT 1+2", "SELECT 1-- note\n+2", id="line-comment"),
+        pytest.param("SELECT a+b", "SELECT a + b", id="operator-spacing"),
+        pytest.param("SELECT a+-1", "SELECT a + -1", id="unary-spacing"),
+        pytest.param("SELECT a.b", "SELECT a . b", id="qualified-name"),
+        pytest.param("{{ leaf(1,2) }}", "{{ leaf( 1, 2 ) }}", id="jinja-expression"),
+        pytest.param("SELECT a b", "SELECT a/* note */b", id="word-comment"),
+        pytest.param("SELECT a - -1", "SELECT a -/* note */-1", id="operator-comment"),
+    ],
+)
+def test_harmless_spacing_does_not_require_a_bump(before: str, after: str, macro_sql: bool) -> None:
+    assert text_findings(before, after, macro_sql=macro_sql) == [], (before, after)
+
+
+@pytest.mark.parametrize("macro_sql", [False, True], ids=["model", "macro"])
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        pytest.param("SELECT 1+2", "SELECT 1-2", id="operator-change"),
+        pytest.param("SELECT 'a b'", "SELECT 'a  b'", id="string-space"),
+        pytest.param('SELECT "a b"', 'SELECT "a  b"', id="quoted-identifier-space"),
+        pytest.param("SELECT `a b`", "SELECT `a  b`", id="backtick-space"),
+        pytest.param("SELECT $q$a b$q$", "SELECT $q$a  b$q$", id="heredoc-space"),
+        pytest.param("SELECT $q$a--x\nb$q$", "SELECT $q$a--y\nb$q$", id="heredoc-comment-text"),
+        pytest.param("SELECT ab", "SELECT a b", id="identifier-split"),
+        pytest.param("{{ a\u0301 }}", "{{ a \u0301 }}", id="unicode-identifier-split"),
+        pytest.param("SELECT a - -1", "SELECT a --1", id="line-comment-opener"),
+        pytest.param("SELECT a / * b */ 1", "SELECT a /* b */ 1", id="block-comment-opener"),
+        pytest.param("SELECT a < = b", "SELECT a <= b", id="comparison"),
+        pytest.param("SELECT a ! = b", "SELECT a != b", id="inequality"),
+        pytest.param("SELECT a | | b", "SELECT a || b", id="concatenation"),
+        pytest.param("SELECT a : : Int64", "SELECT a :: Int64", id="cast"),
+        pytest.param("SELECT a - > b", "SELECT a -> b", id="lambda"),
+        pytest.param("{{ 2 * * 3 }}", "{{ 2 ** 3 }}", id="power"),
+        pytest.param("{{ 2 / / 3 }}", "{{ 2 // 3 }}", id="floor-division"),
+        pytest.param("{ { leaf() }}", "{{ leaf() }}", id="jinja-expression-opener"),
+        pytest.param("{{ leaf() } }", "{{ leaf() }}", id="jinja-expression-closer"),
+        pytest.param("{ % set a = 1 %}", "{% set a = 1 %}", id="jinja-statement-opener"),
+        pytest.param("{% set a = 1 % }", "{% set a = 1 %}", id="jinja-statement-closer"),
+        pytest.param("{ # note #}", "{# note #}", id="jinja-comment-opener"),
+        pytest.param("{{ -1 }}", "{{-1 }}", id="jinja-trim-opener"),
+        pytest.param("{{ 1 - }}", "{{ 1 -}}", id="jinja-trim-closer"),
+        pytest.param("{% + set a = 1 %}", "{%+ set a = 1 %}", id="jinja-keep-opener"),
+        pytest.param("{% set a = 1 + %}", "{% set a = 1 +%}", id="jinja-keep-closer"),
+        pytest.param("SELECT x '61'", "SELECT x'61'", id="hex-literal"),
+        pytest.param("SELECT b '01'", "SELECT b'01'", id="binary-literal"),
+        pytest.param("SELECT 'a' 'b'", "SELECT 'a''b'", id="adjacent-quotes"),
+        pytest.param("SELECT 1 .2", "SELECT 1.2", id="decimal-point-left"),
+        pytest.param("SELECT 1. 2", "SELECT 1.2", id="decimal-point-right"),
+        pytest.param("SELECT 1e +2", "SELECT 1e+2", id="exponent-sign"),
+        pytest.param("SELECT 1e+ 2", "SELECT 1e+2", id="exponent-digits"),
+        pytest.param("SELECT .1e -2", "SELECT .1e-2", id="fraction-exponent-sign"),
+        pytest.param("SELECT .1e- 2", "SELECT .1e-2", id="fraction-exponent-digits"),
+        pytest.param("SELECT 1. e2", "SELECT 1.e2", id="decimal-exponent"),
+        pytest.param("SELECT 0x1. fp2", "SELECT 0x1.fp2", id="hex-fraction"),
+        pytest.param("SELECT 0x1.fp +2", "SELECT 0x1.fp+2", id="hex-exponent-sign"),
+        pytest.param("SELECT 0x1.fp+ 2", "SELECT 0x1.fp+2", id="hex-exponent-digits"),
+    ],
+)
+def test_meaningful_text_changes_require_a_bump(before: str, after: str, macro_sql: bool) -> None:
+    changes = ("macro macro.example.leaf",) if macro_sql else ("sql",)
+    expected = [guard.Finding("model.example.one", 1, 1, changes)]
+    assert text_findings(before, after, macro_sql=macro_sql) == expected, (before, after)
+
+
+def text_findings(before: str, after: str, *, macro_sql: bool) -> list[guard.Finding]:
+    if not macro_sql:
+        return judge(model(before), model(after))
+
+    node = model()
+    node["depends_on"] = {"macros": ["macro.example.leaf"], "nodes": []}
+    old = manifest({"model.example.one": node}, {"macro.example.leaf": macro(before)})
+    new = manifest({"model.example.one": node}, {"macro.example.leaf": macro(after)})
+    return guard.compare(old, new)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        pytest.param("SELECT(1)", "SELECT{{ config(tags=['example']) }}(1)", id="parentheses"),
+        pytest.param("SELECT a,b", "SELECT a,{{ config(tags=['example']) }}b", id="comma"),
+    ],
+)
+def test_inline_config_does_not_introduce_significant_spacing(before: str, after: str) -> None:
+    assert judge(model(before), model(after)) == [], (before, after)
 
 
 class TransformVersionTests(unittest.TestCase):
