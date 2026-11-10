@@ -196,13 +196,6 @@ same limitation the analytics and authenticator documents carry.
 
 @dataclass(frozen=True)
 class HandWritten:
-    """Success bodies a generated document declares untyped, modelled by hand in `module`.
-
-    `--check` re-derives `operations` from the document rather than trusting it:
-    an operation the document starts typing belongs to the generated module, and
-    one it adds untyped has no model yet.
-    """
-
     module: Path
     operations: frozenset[str]
 
@@ -370,7 +363,6 @@ TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
 
 
 def _success_bodies(spec_path: Path) -> list[tuple[str, dict[str, Any]]]:
-    """`("METHOD /path STATUS", schema)` for every JSON success response, in order."""
     spec: dict[str, Any] = json.loads(spec_path.read_text(encoding="utf-8"))
     found: list[tuple[str, dict[str, Any]]] = []
 
@@ -409,7 +401,6 @@ def modellable_bodies(spec_path: Path) -> list[str]:
 
 
 def untyped_bodies(spec_path: Path) -> frozenset[str]:
-    """The success responses that carry a body the document does not describe."""
     return frozenset(
         operation
         for operation, schema in _success_bodies(spec_path)
@@ -418,7 +409,6 @@ def untyped_bodies(spec_path: Path) -> frozenset[str]:
 
 
 def check_hand_written(target: Generated) -> str | None:
-    """None while `hand_written` lists exactly the bodies the document leaves untyped."""
     if target.hand_written is None:
         return None
 

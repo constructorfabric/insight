@@ -40,9 +40,7 @@ leave `extra` at its default, because there they would only tax every benign
 upstream addition — except `v3_untyped.py`, which mirrors the serializing structs
 field for field and forbids extras like a generated module.
 
-The v3 modules are imported by name (`from ..schemas.v3_untyped import Folder`)
-rather than re-exported here: their names are the service's own, and `Folder`,
-`Dataset` or `Page` would read as belonging to every service.
+Import v3 models from their modules (`from ..schemas.v3_untyped import Folder`).
 """
 
 from __future__ import annotations

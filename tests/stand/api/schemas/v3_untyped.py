@@ -11,9 +11,6 @@ response structs in `api/` (`definitions.rs`, `duplicate.rs`, `sharing.rs`,
 types they embed — `RunResult` (`domain/query/metric_query/runner.rs`),
 `EffectiveClock` (`domain/kinds/metric/answerable.rs`) and `Record`
 (`store/dataset_tables.rs`).
-
-`extra="forbid"` throughout: each model mirrors one serializing type, so an
-undeclared field is drift.
 """
 
 from __future__ import annotations
