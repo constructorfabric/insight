@@ -9,7 +9,6 @@ import {
   chunkKeys,
   compareGaps,
   compareReference,
-  directionLabel,
   formatGap,
   headerUnit,
   rolesById,
@@ -255,16 +254,6 @@ describe("compareGaps", () => {
       { best: true, gap: null },
       { best: false, gap: null },
     ]);
-  });
-});
-
-describe("directionLabel", () => {
-  it.each([
-    ["higher_is_better", "Higher is better"],
-    ["lower_is_better", "Lower is better"],
-    ["neutral", null],
-  ] as const)("reads %s as %j", (direction, label) => {
-    expect(directionLabel(direction)).toBe(label);
   });
 });
 

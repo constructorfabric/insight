@@ -1,4 +1,17 @@
+import type { MetricDirection } from "@/api/metric-results-client"
+
 export type Status = "good" | "warn" | "bad" | "neutral"
+
+export function directionLabel(direction: MetricDirection): string | null {
+  switch (direction) {
+    case "higher_is_better":
+      return "Higher is better"
+    case "lower_is_better":
+      return "Lower is better"
+    case "neutral":
+      return null
+  }
+}
 
 export const STATUS_BG_CLASS: Record<Status, string> = {
   good: "bg-success",

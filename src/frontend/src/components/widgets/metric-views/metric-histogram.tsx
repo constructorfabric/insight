@@ -22,7 +22,7 @@ import { ChartEmpty } from "@/components/widgets/metric-views/chart-empty";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import { formatMetricNumber, formatMetricValue } from "@/lib/format";
 import { forEntity, type NormalizedMetricResult } from "@/lib/metrics/collection";
-import { STATUS_COLOR_VAR, statusVsMedian, type Status } from "@/lib/status";
+import { STATUS_COLOR_VAR, directionLabel, statusVsMedian, type Status } from "@/lib/status";
 
 export interface MetricHistogramProps {
   metric: NormalizedMetricResult;
@@ -43,12 +43,6 @@ type BinRow = {
   opacity: number;
   straddlesPivot: boolean;
 };
-
-function directionText(metric: NormalizedMetricResult): string | null {
-  if (metric.direction === "higher_is_better") return "Higher is better";
-  if (metric.direction === "lower_is_better") return "Lower is better";
-  return null;
-}
 
 /**
  * Classify each bin against the peer (cohort) median and shade it: bins on the
@@ -109,7 +103,7 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
   const bins = data.histogram[0]?.bins ?? [];
   const ownMedian = data.value;
   const peerMedian = data.peer?.median ?? null;
-  const direction = directionText(metric);
+  const direction = directionLabel(metric.direction);
   const evidence = metric.drilldown
     ? evidenceSelection(metric.selection, entityId)
     : null;

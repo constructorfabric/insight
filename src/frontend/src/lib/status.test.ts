@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { statusVsMedian } from "@/lib/status";
+import { directionLabel, statusVsMedian } from "@/lib/status";
+
+describe("directionLabel", () => {
+  it.each([
+    ["higher_is_better", "Higher is better"],
+    ["lower_is_better", "Lower is better"],
+    ["neutral", null],
+  ] as const)("reads %s as %j", (direction, label) => {
+    expect(directionLabel(direction)).toBe(label);
+  });
+});
 
 describe("statusVsMedian", () => {
   it("is neutral when either operand is not finite", () => {

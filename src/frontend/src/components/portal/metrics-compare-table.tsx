@@ -15,11 +15,11 @@ import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
   compareGaps,
   compareReference,
-  directionLabel,
   finiteValue,
   formatGap,
   type CompareReference,
 } from "@/lib/portal/metrics-view";
+import { directionLabel } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 const STICKY_START = "sticky start-0 z-10 bg-card";

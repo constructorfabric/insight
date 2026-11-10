@@ -202,17 +202,6 @@ export function compareGaps(
   });
 }
 
-export function directionLabel(direction: MetricDirection): string | null {
-  switch (direction) {
-    case "higher_is_better":
-      return "Higher is better";
-    case "lower_is_better":
-      return "Lower is better";
-    case "neutral":
-      return null;
-  }
-}
-
 export interface CompareReference {
   median: number | null;
   average: number | null;
