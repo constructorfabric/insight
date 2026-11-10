@@ -12,18 +12,23 @@ RUN echo "security epoch ${SECURITY_EPOCH}" \
 COPY . /airbyte/integration_code
 RUN pip install --no-cache-dir /airbyte/integration_code
 
-# airbyte-cdk pins nltk==3.9.1 (fixable CVE-2025-14009, CVE-2026-0846,
-# CVE-2026-33231, CVE-2026-54293, CVE-2026-79675) but only uses it in the
-# file-based unstructured parser, which this connector never loads; defusedxml is
-# nltk 3.10's added runtime dependency. poetry/dulwich are base-image build
-# tooling unused at runtime (CVE-2026-34591, CVE-2026-42305). cryptography
-# arrives with the base image's keyring stack (SecretStorage); its wheel
-# bundles OpenSSL, and 50.0.1 is the first built against 4.0.2 (CVE-2026-63072).
-# certifi ships with the base image too; 2026.10.19 drops the compromised emSign
-# roots (GHSA-6q48-6c7w-9gw2).
-RUN pip install --no-cache-dir --no-deps nltk==3.10.3 defusedxml==0.7.1 cryptography==50.0.1 \
-    certifi==2026.10.19 \
-    && pip uninstall -y poetry dulwich
+# airbyte-cdk 7.48 pins nltk==3.9.4, which OSV still flags (e.g. CVE-2026-54293),
+# but imports it only in the file-based unstructured parser, which this connector
+# never loads; 3.10.4 has no advisories, and defusedxml is nltk 3.10's added
+# runtime dependency. poetry 1.8.4 and dulwich 0.21.7 are base-image build tooling
+# unused at runtime (CVE-2026-34591, CVE-2026-42305); so are the packages only poetry
+# needs: virtualenv (CVE-2026-113718 and 10 more), filelock (CVE-2026-112940; the
+# CDK's pyrate-limiter wants it only as an extra) and msgpack (CVE-2026-114613),
+# with CacheControl and poetry-plugin-export that hold them. The base image's keyring stack
+# brings cryptography 49.0.0 (CVE-2026-69247, fixed in 50.0.0); its wheel bundles
+# OpenSSL, and 50.0.1 is the first built against 4.0.2 (CVE-2026-63072).
+# pip keeps the base image's urllib3 2.7.0 (CVE-2026-97687, CVE-2026-97689)
+# because it already satisfies requests' range, so it is pinned here.
+# certifi needs no pin: airbyte-cdk requires >=2026.10.23, above the base's
+# 2026.7.22, so the install above already upgrades it.
+RUN pip install --no-cache-dir --no-deps nltk==3.10.4 defusedxml==0.7.1 cryptography==50.0.1 \
+    urllib3==2.8.0 \
+    && pip uninstall -y poetry dulwich poetry-plugin-export cachecontrol virtualenv filelock msgpack
 
 RUN useradd --create-home --no-log-init --shell /bin/bash airbyte_user
 USER airbyte_user
