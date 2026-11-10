@@ -7,6 +7,11 @@ from datetime import UTC, datetime
 STREAMS = ("mock_events", "mock_updates")
 
 
+class TimingError(ValueError):
+    def __init__(self, field: str, maximum: float) -> None:
+        super().__init__(f"{field} must be a number between 0 and {maximum}")
+
+
 def object_map(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("expected object")
@@ -19,9 +24,9 @@ def integer(value: object, minimum: int, maximum: int) -> int:
     return value
 
 
-def seconds(value: object, maximum: float) -> float:
-    if type(value) not in {int, float} or not math.isfinite(value) or not 0 <= value <= maximum:
-        raise ValueError("duration outside range")
+def seconds(value: object, maximum: float, field: str) -> float:
+    if type(value) not in {int, float} or not 0 <= value <= maximum:
+        raise TimingError(field, maximum)
     return float(value)
 
 
@@ -54,8 +59,8 @@ class Stream:
             raise ValueError("expected complete stream controls")
         count = integer(data["record_count"], 0, 1_000_000)
         size = integer(data["page_size"], 1, 1000)
-        latency = seconds(data["latency_seconds"], 10)
-        duration = seconds(data["duration_minutes"], 60)
+        latency = seconds(data["latency_seconds"], 10, "latency_seconds")
+        duration = seconds(data["duration_minutes"], 60, "duration_minutes")
         pages = max(1, math.ceil(count / size))
         if duration * 60 / pages > 10:
             raise ValueError("duration requires more pages (maximum ten seconds per page)")

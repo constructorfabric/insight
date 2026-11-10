@@ -446,7 +446,10 @@ Methods are uppercase or `*`. Path patterns use Python `fnmatchcase` glob
 semantics (`*`, `?`, brackets), match the complete path and exclude the query.
 Connection/job filters match UUIDs or decimal ids under `/connections/{id}` or
 `/jobs/{id}`, or recursive JSON body keys `connectionId`, `connection_id`, `jobId`,
-`job_id` and `job.id`. Query parameters are forwarded but are not id match inputs.
+`job_id` and `job.id`. The top-level `id` in a `/api/v1/jobs/get` request body
+also matches a job id, so a barrier can select one job's polls. Generic `id`
+keys on other endpoints or nested outside `job.id` are not job match inputs.
+Query parameters are forwarded but are not id match inputs.
 Malformed/non-JSON bodies still forward and can match method/path rules.
 
 Every matching method/path/id candidate increments that rule's counter, even

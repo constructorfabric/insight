@@ -10,7 +10,7 @@ from http import HTTPStatus
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from configuration import STREAMS, Scenario, integer, object_map, timestamp
+from configuration import STREAMS, Scenario, TimingError, integer, object_map, timestamp
 from state import Refusal, Response, State
 
 MAX_BODY_BYTES = 65536
@@ -112,6 +112,8 @@ class Server:
                 response = await self.request(reader)
             except Refusal as exc:
                 response = Response(exc.status, {"error": HTTPStatus(exc.status).phrase})
+            except TimingError as exc:
+                response = Response(400, {"error": str(exc)})
             except (ValueError, KeyError, UnicodeError, asyncio.IncompleteReadError):
                 response = Response(400, {"error": "invalid request"})
             except (TimeoutError, asyncio.LimitOverrunError):

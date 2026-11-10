@@ -64,8 +64,11 @@ def identities(value: object) -> dict[str, list[str]]:
 
 
 def request_ids(path: str, body: object) -> dict[str, list[str]]:
+    target = urlsplit(path).path
+    if target == "/api/v1/jobs/get" and isinstance(body, dict):
+        body = [body, {"jobId": body.get("id")}]
     found = identities(body)
-    parts = urlsplit(path).path.split("/")
+    parts = target.split("/")
     for previous, current in zip(parts, parts[1:]):
         if previous not in {"connections", "jobs"} or not ID.fullmatch(current):
             continue
