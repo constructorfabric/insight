@@ -527,6 +527,37 @@ jobs:
           echo "lines above."
           exit 1
 
+      # INVARIANT: a candidate keeps the stand's data and a deploy never runs dbt,
+      # so gold is the previous release's build until this stands in for a sync.
+      - name: 'Stage 3/5 — rebuild gold over the retained dataset'
+        id: gold
+        if: inputs.candidate_artifact != '' && (steps.stages.outputs.run_smoke == 'true' || steps.stages.outputs.run_suite == 'true')
+        timeout-minutes: 20
+        env:
+          SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
+        run: |
+          set -euo pipefail
+          email_args=()
+          if [ -n "${SEED_EMAIL:-}" ]; then
+            email_args+=(--email "$SEED_EMAIL")
+          fi
+          kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
+          gold_rc=0
+          ./src/ingestion/tools/seed/seed-stand.sh \
+            -n "$STAND_NAMESPACE" \
+            --context "$kube_context" \
+            "${email_args[@]}" \
+            --step gold \
+            > "$RUNNER_TEMP/gold.log" 2>&1 || gold_rc=$?
+          if [ "$gold_rc" -ne 0 ]; then
+            echo "::error::rebuilding gold over the retained dataset failed (seed-stand.sh exited $gold_rc)."
+            grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/gold.log" | python3 "$REDACT" || true
+            exit 1
+          fi
+          kubectl -n "$STAND_NAMESPACE" rollout restart "deploy/${STAND_RELEASE}-analytics"
+          kubectl -n "$STAND_NAMESPACE" rollout status "deploy/${STAND_RELEASE}-analytics" --timeout=5m
+          echo "==> gold rebuilt over the retained dataset; analytics restarted to re-validate it"
+
       # Chromium and its system libraries, resolved by the locked test
       # environment so every runner drives the same build. Its own step: a
       # failed install is an infrastructure problem, not a red suite.
