@@ -75,6 +75,67 @@ destination already needs.
 
 Spec: `docs/components/backend/analytics/specs/connector-health`.
 
+## The transform planner
+
+Helm starts the `<fullname>-transform` hook Workflow after the release's
+ClickHouse migrations on each install and upgrade, and also starts it on rollback
+from the target revision's hooks. A failed migration stops the hook chain before
+the transform Workflow is created. Helm returns without waiting for the Workflow
+to finish. The next install, upgrade or rollback replaces a run still in progress.
+Both the Workflow and its WorkflowTemplate are gated by
+`ingestion.templates.enabled` and `ingestion.transformPlan.enabled`.
+
+The `<fullname>-transform` WorkflowTemplate runs `transform-plan.sh`, which
+executes `python3 -m transform_plan`. Argo retries failed attempts using
+`ingestion.transformPlan.retry`: by default, at most 3 attempts, waiting 15 minutes
+between attempts. Configure the attempt limit with `attempts`
+and the fixed interval with `wait`. Each attempt has a
+900-second deadline; there is no Workflow-level deadline. Succeeded Workflows
+remain for a day; failed Workflows have no TTL and the next release replaces them.
+Container resources come from `ingestion.transformPlan.resources`.
+
+Start a run by hand in the release's namespace:
+
+```bash
+argo submit --from workflowtemplate/<fullname>-transform
+```
+
+All transform runs share the `<fullname>-transform` mutex, so manual and hook
+runs cannot overlap. The planner takes no reconcile mutex and uses the
+`argo-workflow` ServiceAccount. Planning remains independent of connector Secret
+reads and Airbyte availability.
+
+It parses the image's dbt project with a temporary
+profile from `scripts/dbt_profiles.py`, then compares effective
+`meta.transform_version` values with the latest rows in
+`ingestion_history.transform_versions`. The table is append-only, migration-owned,
+and has no TTL: `argMax(transform_version, applied_at)` selects each model's
+applied version. Rows hold the dbt unique ID, resolved database/schema/alias,
+version, optional release, application time and application identity.
+
+An empty table receives one `applied_by=baseline` row per deployed model, with
+no rebuild planned. The release comes from `INSIGHT_VERSION`, set to
+`.Chart.Version` by the transform planner container; an unset variable is recorded as
+NULL. Subsequent passes report version differences in
+either direction, new and removed models, and the changed/new models plus their
+model descendants. Removed models are reported only. Models whose effective
+`full_refresh` is false are listed separately as incremental-only.
+
+The plan's connector locks follow model parents to bronze sources, then use
+the declaring connector directory's descriptor `name`. Other sources, including
+`config`, require no lock. The planner trusts dbt's graph: reads hidden behind
+`adapter.get_relation` are not represented.
+
+The shared Python logger emits one `transform.planned` event with names and
+counts for `baseline`, `changed`, `new`, `removed`, `rebuild`, `incremental_only`
+and `connectors`, correlated by `RECONCILE_RUN_ID` set to the Workflow name.
+`transform-plan.sh --dry-run` reports without
+writing a baseline. Planning reuses the sweep's ClickHouse transport and existing
+`RECONCILE_DEST_CLICKHOUSE_*` credentials and consistency settings. Failures emit
+`transform.failed` and fail the attempt with the planner's exit code; Argo retries
+it until the attempt limit is reached, then leaves the Workflow failed.
+This planner submits no Workflow, runs no `dbt run`, and writes only a baseline.
+
 ## Environment variables
 
 | Var | Default | Purpose |

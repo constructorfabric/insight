@@ -1,0 +1,91 @@
+{{- if and .Values.ingestion.templates.enabled .Values.ingestion.transformPlan.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: {{ include "insight.fullname" . }}-transform
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: transform-plan
+    {{- include "insight.labels" . | nindent 4 }}
+    {{- with .Values.ingestion.reconcile.argoInstanceId }}
+    workflows.argoproj.io/controller-instanceid: {{ . | quote }}
+    {{- end }}
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: run
+  synchronization:
+    mutexes:
+      - name: {{ include "insight.fullname" . }}-transform
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+  podGC:
+    strategy: OnPodCompletion
+  {{- with .Values.global.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  templates:
+    - name: run
+      activeDeadlineSeconds: 900
+      retryStrategy:
+        limit: {{ sub .Values.ingestion.transformPlan.retry.attempts 1 }}
+        retryPolicy: Always
+        backoff:
+          duration: {{ .Values.ingestion.transformPlan.retry.wait | quote }}
+      container:
+        image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+        command: [bash, /ingestion/reconcile-connectors/transform-plan.sh]
+        env:
+          - name: RECONCILE_RUN_ID
+            value: {{ `"{{workflow.name}}"` }}
+          - name: INSIGHT_LOG_LEVEL
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: INSIGHT_LOG_LEVEL
+          - name: INSIGHT_VERSION
+            value: {{ .Chart.Version | quote }}
+          - name: CONNECTORS_DIR
+            value: "/ingestion/connectors"
+          - name: RECONCILE_DEST_CLICKHOUSE_HOST
+            value: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_PORT
+            value: {{ include "insight.clickhouse.port" . | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_PROTOCOL
+            value: {{ include "insight.clickhouse.protocol" . | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_DATABASE
+            value: {{ include "insight.clickhouse.database" . | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_USERNAME
+            value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key: {{ required "clickhouse.passwordSecret.key is required" .Values.clickhouse.passwordSecret.key | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE
+            value: {{ include "insight.clickhouse.clusterMode" . | quote }}
+          - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME
+            value: {{ include "insight.clickhouse.clusterName" . | quote }}
+        resources:
+          {{- toYaml .Values.ingestion.transformPlan.resources | nindent 10 }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: {{ include "insight.fullname" . }}-transform
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade,post-rollback
+    helm.sh/hook-delete-policy: before-hook-creation
+    # INVARIANT: stay above every post-install/post-upgrade hook so migration failures prevent creation.
+    helm.sh/hook-weight: "400"
+  labels:
+    app.kubernetes.io/component: transform-plan
+    {{- include "insight.labels" . | nindent 4 }}
+    {{- with .Values.ingestion.reconcile.argoInstanceId }}
+    workflows.argoproj.io/controller-instanceid: {{ . | quote }}
+    {{- end }}
+spec:
+  workflowTemplateRef:
+    name: {{ include "insight.fullname" . }}-transform
+{{- end }}
