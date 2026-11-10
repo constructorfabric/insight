@@ -7,7 +7,7 @@ import { useMetricEvidenceOptional } from "@/components/metric-evidence-context"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { formatRange } from "@/lib/date-range-label";
-import { formatMetricFigure, formatMetricValue } from "@/lib/format";
+import { formatCompactMetricFigure, formatMetricFigure, formatMetricValue } from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
   finiteValue,
@@ -227,10 +227,13 @@ export function MetricValue({
   result,
   entityId,
   personName,
+  compact = false,
 }: {
   result: NormalizedMetricResult | undefined;
   entityId: string;
   personName: string;
+  /** Abbreviate millions. The full figure stays on the tooltip. */
+  compact?: boolean;
 }) {
   const evidence = useMetricEvidenceOptional();
   const value = result ? finiteValue(result, entityId) : null;
@@ -238,12 +241,15 @@ export function MetricValue({
     return <span className="text-muted-foreground">—</span>;
   }
 
-  const text = formatMetricFigure(value, result.format, result.unit);
   const fullText = formatMetricValue(value, result.format, result.unit);
+  const text = compact
+    ? formatCompactMetricFigure(value, result.format, result.unit)
+    : formatMetricFigure(value, result.format, result.unit);
+  const title = compact && text !== fullText ? fullText : undefined;
   const selection = result.drilldown
     ? evidenceSelection(result.selection, entityId)
     : null;
-  if (!selection || !evidence) return <span>{text}</span>;
+  if (!selection || !evidence) return <span title={title}>{text}</span>;
 
   return (
     <button
@@ -260,6 +266,7 @@ export function MetricValue({
           ].join(" · "),
         })
       }
+      title={title}
       className="cursor-pointer hover:text-primary hover:underline"
     >
       {text}

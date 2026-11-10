@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   NO_METRIC_VALUE,
   formatHoursDuration,
+  formatCompactMetricFigure,
+  formatCompactMultiple,
   formatMetricFigure,
   formatMetricNumber,
   formatMetricValue,
@@ -67,6 +69,25 @@ describe("formatMetricNumber / formatMetricValue / metricDisplayUnit", () => {
       number: "1 h 15 min",
       unit: "",
     });
+  });
+
+  it("abbreviates a million or more and leaves a smaller figure whole", () => {
+    expect(formatCompactMetricFigure(18_432_109, "integer", "lines")).toBe("18.4M");
+    expect(formatCompactMetricFigure(1_000_000, "integer")).toBe("1M");
+    expect(formatCompactMetricFigure(980_442, "integer", "lines")).toBe("980,442");
+    expect(formatCompactMetricFigure(12_345_678.9, "currency", "USD")).toBe("$12.3M");
+    expect(formatCompactMetricFigure(1_500_000.75, "decimal", "h")).toBe("1.5M h");
+    expect(formatCompactMetricFigure(1.25, "decimal", "h")).toBe("1 h 15 min");
+    expect(formatCompactMetricFigure(1_234_567.891, "decimal")).toBe("1.2M");
+    expect(formatCompactMetricFigure(99.6, "percent")).toBe("100%");
+    expect(formatCompactMetricFigure(-2_500_000, "integer")).toBe("-2.5M");
+    expect(formatCompactMetricFigure(null, "integer", "lines")).toBe(NO_METRIC_VALUE);
+  });
+
+  it("keeps a modest multiple and compacts one that would overflow a column", () => {
+    expect(formatCompactMultiple(2.54)).toBe("2.5×");
+    expect(formatCompactMultiple(101)).toBe("101×");
+    expect(formatCompactMultiple(3_125_001.23)).toBe("3.1M×");
   });
 
   it("formatMetricFigure leaves the unit to the side element when one renders", () => {

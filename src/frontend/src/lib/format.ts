@@ -6,6 +6,21 @@ import { LOCALE } from "@/config/constants";
 
 const NF_THOUSANDS = new Intl.NumberFormat(LOCALE);
 
+/** A million is where a full "1,234,567" stops fitting a comparison column. */
+const COMPACT_FROM = 1_000_000;
+
+const COMPACT_NUMBER = new Intl.NumberFormat(LOCALE, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const COMPACT_CURRENCY = new Intl.NumberFormat(LOCALE, {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
 const METRIC_CURRENCY_FORMAT = new Intl.NumberFormat(LOCALE, {
   style: "currency",
   currency: "USD",
@@ -116,6 +131,37 @@ export function formatMetricFigure(
   return metricDisplayUnit(fmt, unit)
     ? formatMetricNumber(v, fmt)
     : formatMetricValue(v, fmt, unit);
+}
+
+/**
+ * The same figure, shortened once it is wide enough to collide with the next
+ * column. Below a million the full figure is returned unchanged. The caller
+ * keeps `formatMetricValue` for hover, so the shortened form adds no rounding
+ * of its own.
+ */
+export function formatCompactMetricFigure(
+  v: number | null | undefined,
+  fmt: MetricFormat,
+  unit?: string | null,
+): string {
+  if (v == null || !Number.isFinite(v)) return NO_METRIC_VALUE;
+  if (isDurationUnit(unit)) {
+    const hours = Math.round(Math.abs(v));
+    if (hours < COMPACT_FROM) return formatMetricFigure(v, fmt, unit);
+    const sign = v < 0 ? "-" : "";
+    return `${sign}${COMPACT_NUMBER.format(hours)} ${HOURS_UNIT}`;
+  }
+  const rounded = roundMetricValue(v, fmt);
+  if (Math.abs(rounded) < COMPACT_FROM) return formatMetricFigure(v, fmt, unit);
+  if (fmt === "currency") return COMPACT_CURRENCY.format(rounded);
+  if (fmt === "percent") return `${COMPACT_NUMBER.format(rounded)}%`;
+  return COMPACT_NUMBER.format(rounded);
+}
+
+/** "2.5×" and "101×"; past 10,000 a compact "3.1M×" a narrow slot can hold. */
+export function formatCompactMultiple(ratio: number): string {
+  if (Math.abs(ratio) >= 10_000) return `${COMPACT_NUMBER.format(ratio)}×`;
+  return formatMultiple(ratio);
 }
 
 /**

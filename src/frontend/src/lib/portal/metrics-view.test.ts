@@ -9,6 +9,7 @@ import {
   chunkKeys,
   compareGaps,
   formatGap,
+  formatGapDetail,
   headerUnit,
   rolesById,
   keysWithData,
@@ -262,8 +263,18 @@ describe("formatGap", () => {
     [0, "≈"],
     [63, "+63%"],
     [-47, "−47%"],
+    [9_999, "+9999%"],
+    [10_000, "101×"],
+    [312_500_023, "3.1M×"],
   ] as const)("writes a gap of %s as %j", (gap, text) => {
     expect(formatGap(gap)).toBe(text);
+  });
+
+  it("keeps the exact percent for a gap the cell shortened", () => {
+    expect(formatGapDetail(63)).toBeNull();
+    expect(formatGapDetail(null)).toBeNull();
+    expect(formatGapDetail(312_500_023)).toBe("+312,500,023%");
+    expect(formatGapDetail(-10_000)).toBe("−10,000%");
   });
 });
 
