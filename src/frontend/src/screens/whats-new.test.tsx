@@ -27,9 +27,9 @@ describe("WhatsNewBody", () => {
   it("renders the release header and stamp", () => {
     renderScreen();
     expect(
-      screen.getByRole("heading", { name: "What's new · November 2026" })
+      screen.getByRole("heading", { name: "What's new · 10 November 2026" })
     ).toBeInTheDocument();
-    expect(screen.getByText("26.11")).toBeInTheDocument();
+    expect(screen.getByText("26.11.10")).toBeInTheDocument();
     expect(screen.queryByText("Highlights")).not.toBeInTheDocument();
     expect(screen.queryByText("Focus")).not.toBeInTheDocument();
   });
@@ -37,24 +37,14 @@ describe("WhatsNewBody", () => {
   it("groups the release into sections, as the written notes do", () => {
     renderScreen();
     const release = within(sectionFor("Improvements you'll notice"));
-    for (const title of [
-      "Dashboards",
-      "Connectors",
-      "AI & Cost",
-      "Collaboration",
-      "New UI",
-    ]) {
+    for (const title of ["People", "Development", "Delivery", "Connectors"]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
     for (const title of [
-      "Custom dashboards",
-      "Allure TestOps",
-      "YouTrack",
-      "GitLab",
-      "Codex spend",
-      "Meeting counts",
-      "New sidebar",
-      "Home",
+      "Metrics view",
+      "Merged PRs over commits",
+      "Unattributed work",
+      "HubSpot",
     ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
@@ -63,16 +53,16 @@ describe("WhatsNewBody", () => {
     expect(screen.queryByText("Git output")).not.toBeInTheDocument();
   });
 
-  it("tells who builds dashboards, how they share them and file them", () => {
+  it("says why merged PRs lead over commits", () => {
     renderScreen();
     const entry = screen
-      .getByRole("heading", { name: "Custom dashboards" })
+      .getByRole("heading", { name: "Merged PRs over commits" })
       .closest("article");
-    expect(entry).toHaveTextContent(/^Custom dashboardsBuild custom metrics/);
-    expect(entry).toHaveTextContent("through MCP");
-    expect(entry).toHaveTextContent("Share them to view or edit");
-    expect(entry).toHaveTextContent("folders and tags");
-    expect(entry).toHaveTextContent("Building requires administrator access.");
+    expect(entry).toHaveTextContent(
+      /^Merged PRs over commitsCommit counts carry less weight/
+    );
+    expect(entry).toHaveTextContent("AI-assisted work");
+    expect(entry).toHaveTextContent("PRs merged and PR size");
   });
 
   it("keeps smaller changes in a closed Other changes and fixes block", async () => {
@@ -90,41 +80,21 @@ describe("WhatsNewBody", () => {
     expect(
       release.getAllByRole("listitem").map((bullet) => bullet.textContent)
     ).toEqual([
-      "Added an expanded view for widgets.",
-      "Added a time range picker to each custom dashboard.",
-      "Gave Collaboration metrics clearer names: Focus Time is now Time Outside Meetings, and Email Read Actions is now Email Read Events.",
-      "Split Meetings by kind and removed the Scheduled and Ad-hoc Meetings cards.",
+      "Changed drill-downs for line, active-day, task and ratio metrics to list the commit, pull request or issue behind each value.",
+      "Let employees with no reports build reports on themselves.",
+      "Renamed “Needs attention” to “Worth a look”.",
+      "Folded the Contribution breakdown and Data coverage pages into other pages. Git output shows each person's share of merged PRs, and each section names the sources that feed it.",
     ]);
   });
 
-  it("puts collaboration right after dashboards", () => {
+  it("orders the release People, Development, Delivery, Connectors", () => {
     renderScreen();
-    const groups = [
-      "Dashboards",
-      "Connectors",
-      "AI & Cost",
-      "Collaboration",
-      "New UI",
-    ];
+    const groups = ["People", "Development", "Delivery", "Connectors"];
     const order = within(sectionFor("Improvements you'll notice"))
       .getAllByRole("heading", { level: 4 })
       .map((heading) => heading.textContent)
       .filter((title) => groups.includes(title ?? ""));
-    expect(order).toEqual([
-      "Dashboards",
-      "Collaboration",
-      "Connectors",
-      "AI & Cost",
-      "New UI",
-    ]);
-  });
-
-  it("puts the new UI last", () => {
-    renderScreen();
-    const headings = within(sectionFor("Improvements you'll notice"))
-      .getAllByRole("heading", { level: 4 })
-      .map((heading) => heading.textContent);
-    expect(headings.at(-3)).toBe("New UI");
+    expect(order).toEqual(groups);
   });
 
   it("leaves out alerts, which not every installation ships", () => {
@@ -143,6 +113,9 @@ describe("WhatsNewBody", () => {
     renderScreen();
 
     expect(screen.getByText("Earlier releases")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /What's new — 8 November 2026/ })
+    ).toHaveTextContent("26.11.3");
     const august = screen.getByRole("button", {
       name: /What's new — 31 August 2026/,
     });
@@ -193,6 +166,46 @@ describe("WhatsNewBody", () => {
         archived.getByRole("heading", { name: title })
       ).toBeInTheDocument();
     }
+  });
+
+  it("carries the November 8 release's sections, entries and other changes", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    const entry = screen.getByRole("button", {
+      name: /What's new — 8 November 2026/,
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Custom dashboards" })
+    ).not.toBeInTheDocument();
+
+    await user.click(entry);
+
+    const archived = within(entry.parentElement as HTMLElement);
+    for (const title of [
+      "Dashboards",
+      "Collaboration",
+      "Connectors",
+      "AI & Cost",
+      "New UI",
+      "Custom dashboards",
+      "Meeting counts",
+      "Allure TestOps",
+      "Codex spend",
+      "Home",
+    ]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+    expect(
+      archived.getAllByRole("listitem").map((bullet) => bullet.textContent)
+    ).toEqual([
+      "Added an expanded view for widgets.",
+      "Added a time range picker to each custom dashboard.",
+      "Gave Collaboration metrics clearer names: Focus Time is now Time Outside Meetings, and Email Read Actions is now Email Read Events.",
+      "Split Meetings by kind and removed the Scheduled and Ad-hoc Meetings cards.",
+    ]);
   });
 
   it("carries the August 31 release's own sections and entries", async () => {

@@ -11,26 +11,38 @@ import {
 // Each section is one row of the release card, styled like the archived
 // releases below: its name sits in the left column, its entries on the right.
 const RELEASE_SECTIONS = [
-  {
-    id: "dashboards",
-    itemKeys: ["build_dashboards"],
-  },
-  { id: "collaboration", itemKeys: ["meetings_once"] },
-  { id: "connectors", itemKeys: ["allure", "youtrack", "gitlab"] },
-  { id: "ai_cost", itemKeys: ["codex_credits"] },
-  { id: "new_ui", itemKeys: ["rail", "home"] },
+  { id: "people", itemKeys: ["metrics_view"] },
+  { id: "development", itemKeys: ["merged_prs"] },
+  { id: "delivery", itemKeys: ["unattributed"] },
+  { id: "connectors", itemKeys: ["hubspot"] },
 ] as const;
 
 const OTHER_CHANGES = [
-  "expand_widget",
-  "dashboard_range",
-  "collab_names",
-  "meeting_kinds",
+  "drilldown_records",
+  "reports_self",
+  "worth_a_look",
+  "folded_pages",
 ] as const;
 
 // Past releases stay on the page so a reader can see the whole history, newest
 // first, and are grouped into sections the same way the current one is.
 const PAST_RELEASES = [
+  {
+    id: "release_2026_11_08",
+    sections: [
+      { id: "dashboards", itemKeys: ["build_dashboards"] },
+      { id: "collaboration", itemKeys: ["meetings_once"] },
+      { id: "connectors", itemKeys: ["allure", "youtrack", "gitlab"] },
+      { id: "ai_cost", itemKeys: ["codex_credits"] },
+      { id: "new_ui", itemKeys: ["rail", "home"] },
+    ],
+    otherChanges: [
+      "expand_widget",
+      "dashboard_range",
+      "collab_names",
+      "meeting_kinds",
+    ],
+  },
   {
     id: "release_2026_08_31",
     sections: [
@@ -155,6 +167,24 @@ function ReleaseSections({
   );
 }
 
+function OtherChangesList({
+  itemsKey,
+  keys,
+}: {
+  itemsKey: string;
+  keys: readonly string[];
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <ul className="flex list-disc flex-col gap-1.5 pl-4 text-sm leading-relaxed text-muted-foreground sm:col-start-2">
+      {keys.map((key) => (
+        <li key={key}>{t(`${itemsKey}.${key}`)}</li>
+      ))}
+    </ul>
+  );
+}
+
 export function WhatsNewBody() {
   const { t } = useTranslation();
 
@@ -201,13 +231,10 @@ export function WhatsNewBody() {
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="grid gap-x-5 px-4 pb-4 sm:grid-cols-[10rem_1fr] sm:px-5 sm:pb-5">
-                  <ul className="flex list-disc flex-col gap-1.5 pl-4 text-sm leading-relaxed text-muted-foreground sm:col-start-2">
-                    {OTHER_CHANGES.map((key) => (
-                      <li key={key}>
-                        {t(`whats_new.other_changes.items.${key}`)}
-                      </li>
-                    ))}
-                  </ul>
+                  <OtherChangesList
+                    itemsKey="whats_new.other_changes.items"
+                    keys={OTHER_CHANGES}
+                  />
                 </div>
               </CollapsibleContent>
             </Collapsible>
@@ -253,6 +280,17 @@ export function WhatsNewBody() {
                       baseKey={`whats_new.history.${release.id}`}
                       sections={release.sections}
                     />
+                    {"otherChanges" in release ? (
+                      <div className="grid gap-x-5 gap-y-3 p-4 sm:grid-cols-[10rem_1fr] sm:p-5">
+                        <h4 className="pt-0.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                          {t("whats_new.other_changes.label")}
+                        </h4>
+                        <OtherChangesList
+                          itemsKey={`whats_new.history.${release.id}.other_changes.items`}
+                          keys={release.otherChanges}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </CollapsibleContent>
               </Collapsible>
