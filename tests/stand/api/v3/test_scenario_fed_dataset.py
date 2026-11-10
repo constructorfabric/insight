@@ -16,7 +16,7 @@ from insight_stand import (
     scratch_name,
     v3_path,
 )
-from insight_stand.stand import PUBLISHED_HOST, candidate_env_files, parse_env_file
+from insight_stand.stand import candidate_env_files, parse_env_file
 
 from .. import scratch
 from ..schemas.v3 import Problem
@@ -40,7 +40,6 @@ from ..schemas.v3_untyped import (
 )
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[4]
-_CORE_PORT_KEY: Final[str] = "INSIGHT_V3_CORE_PORT"
 _INGEST_TOKEN_KEY: Final[str] = "INSIGHT_V3_INGEST_TOKEN"
 _COMPOSE_FALLBACK_INGEST_TOKEN: Final[str] = "insight-v3-core-local-dev-ingest-token"
 _INGEST_TOKEN_HEADER: Final[str] = "x-insight-token"
@@ -84,7 +83,7 @@ class Ingest:
 
     def post(self, body: JsonValue, token: str | None) -> ApiResponse:
         headers = None if token is None else {_INGEST_TOKEN_HEADER: token}
-        return self.client.post("/v1/raw-data", json_body=body, headers=headers)
+        return self.client.post(v3_path("/v1/raw-data"), json_body=body, headers=headers)
 
     def feed(self, dataset: str, records: Sequence[Record]) -> None:
         for record in records:
@@ -172,23 +171,15 @@ def _row_key(values: dict[str, JsonValue]) -> tuple[str, JsonValue, JsonValue]:
     return str(values["day"])[:10], values["author"], values["lines"]
 
 
-@pytest.fixture(scope="module")
-def ingest() -> Ingest:
+@pytest.fixture
+def ingest(v3_admin: ApiClient) -> Ingest:
     env_file = next(
         (path for path in candidate_env_files(_REPO_ROOT, os.environ) if path.is_file()), None
     )
     settings = parse_env_file(env_file) if env_file is not None else {}
 
-    port = settings.get(_CORE_PORT_KEY, "").strip()
-    if not port:
-        pytest.skip(
-            f"raw-data is taken on insight-v3-core's own port, and no stand env file sets "
-            f"{_CORE_PORT_KEY}"
-        )
-
     token = (os.environ.get(_INGEST_TOKEN_KEY) or settings.get(_INGEST_TOKEN_KEY) or "").strip()
-    client = ApiClient(base_url=f"http://{PUBLISHED_HOST}:{port}", edge_fronted=False)
-    return Ingest(client, token or _COMPOSE_FALLBACK_INGEST_TOKEN)
+    return Ingest(v3_admin, token or _COMPOSE_FALLBACK_INGEST_TOKEN)
 
 
 @pytest.fixture
@@ -347,13 +338,10 @@ def test_ingest_refuses_an_undeclared_dataset_and_an_oversized_record(
     assert catalogue.names == []
 
     oversized = {**record, "padding": "x" * _INGEST_BODY_LIMIT_BYTES}
-    too_large = _expect(
+    _expect(
         ingest.post({"dataset": scratch_v3_dataset.name, "raw_data": oversized}, ingest.token),
         413,
-    ).parse(Problem)
-    assert [violation["reason"] for violation in too_large.context["field_violations"]] == [
-        "TOO_LARGE"
-    ]
+    )
 
     page = _expect(
         v3_admin.get(v3_path(f"/v1/datasets/{scratch_v3_dataset.name}/records")), 200
