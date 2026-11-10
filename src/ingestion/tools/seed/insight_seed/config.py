@@ -48,6 +48,7 @@ ANALYTICS_DB_ENV = "MARIADB_ANALYTICS_DB"
 IDENTITY_DB_ENV = "MARIADB_DB"
 CROSS_TENANT_FIXTURE_ENV = "SEED_CROSS_TENANT_FIXTURE"
 SERVICE_PRINCIPALS_ENV = "SEED_SERVICE_PRINCIPALS"
+INSIGHT_V3_CORE_ENV = "INSIGHT_V3_CORE_ENABLED"
 FORCE_ENV = "SEED_FORCE"
 ANCHOR_ENV = "SEED_ANCHOR_DATE"
 MANIFEST_PATH_ENV = "SEED_MANIFEST_PATH"
@@ -208,6 +209,11 @@ def service_principals_reachable(env: Mapping[str, str]) -> bool:
     address that answers nothing.
     """
     return parse_flag(env, SERVICE_PRINCIPALS_ENV, default=True)
+
+
+def insight_v3_core_deployed(env: Mapping[str, str]) -> bool:
+    """Compose sets it for the seed; the cluster seed Job does not, so a cluster stand reports no."""
+    return parse_flag(env, INSIGHT_V3_CORE_ENV, default=False)
 
 
 def force_enabled(env: Mapping[str, str]) -> bool:

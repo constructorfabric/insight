@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 from insight_stand import ApiClient
 
-from .operations import ALL_OPERATIONS, Operation
+from .operations import ALL_OPERATIONS, V3_SERVICE, Operation
 from .schemas import PROBLEM_CONTENT_TYPE, ProblemDocument
 
 # Quality vector of this module's tests.
@@ -32,8 +32,17 @@ pytestmark = pytest.mark.security
 #: sending one would only obscure which layer answered.
 _METHODS_WITHOUT_BODY = frozenset({"GET", "DELETE"})
 
+_SWEPT = [
+    pytest.param(
+        operation,
+        id=operation.label,
+        marks=pytest.mark.requires_insight_v3_core if operation.service == V3_SERVICE else (),
+    )
+    for operation in ALL_OPERATIONS
+]
 
-@pytest.mark.parametrize("operation", ALL_OPERATIONS, ids=lambda op: op.label)
+
+@pytest.mark.parametrize("operation", _SWEPT)
 def test_operation_is_refused_without_a_session(
     api_client: ApiClient, operation: Operation
 ) -> None:

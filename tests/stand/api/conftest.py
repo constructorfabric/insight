@@ -20,13 +20,15 @@ import pytest
 from insight_stand import (
     ADMIN_OPERATOR_FIXTURE,
     ApiClient,
+    Manifest,
+    ManifestError,
     PersonaSession,
     analytics_path,
     artifact_dir,
 )
 
 from . import scratch
-from .operations import ALL_OPERATIONS
+from .operations import ALL_OPERATIONS, V3_CAPABILITY, V3_SERVICE, Operation
 from .schemas import CustomMetric, SavedQuery
 
 #: Written beside the coverage ledger at session end (see the root conftest for
@@ -44,7 +46,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     catalogue is still the right denominator, and making the gate's input depend
     on the suite's result is backwards.
     """
-    del session, exitstatus
+    del exitstatus
 
     _ARTIFACTS.mkdir(parents=True, exist_ok=True)
     (_ARTIFACTS / CATALOGUE_NAME).write_text(
@@ -53,13 +55,27 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 # Both forms: the gate groups observed calls by `template`, and
                 # `path` is what the sweep actually requested. See `Operation`.
                 {"method": op.method, "path": op.path, "template": op.template}
-                for op in ALL_OPERATIONS
+                for op in _served_operations(session.config)
             ],
             indent=2,
         )
         + "\n",
         encoding="utf-8",
     )
+
+
+def _served_operations(config: pytest.Config) -> tuple[Operation, ...]:
+    """Without v3 the sweep skips its rows, and the gate would report each as never called."""
+    chosen = config.getoption("--stand-manifest")
+    try:
+        manifest = Manifest.load(Path(str(chosen)) if chosen else None)
+    except ManifestError:
+        return ALL_OPERATIONS
+
+    if manifest.has_capability(V3_CAPABILITY):
+        return ALL_OPERATIONS
+
+    return tuple(op for op in ALL_OPERATIONS if op.service != V3_SERVICE)
 
 
 @pytest.fixture

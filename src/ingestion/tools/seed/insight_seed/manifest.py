@@ -57,6 +57,7 @@ class TenantRefs(TypedDict):
 class Capabilities(TypedDict):
     ingestion: bool
     service_principals: bool
+    insight_v3_core: bool
     idp: str
 
 
@@ -138,6 +139,7 @@ CANONICAL_ENV: dict[str, str] = {
     # The canonical stand carries the cross-tenant refusal fixture, so the
     # committed PROFILE.md describes a compose stand — the one the suite reads.
     config.CROSS_TENANT_FIXTURE_ENV: "1",
+    config.INSIGHT_V3_CORE_ENV: "true",
 }
 
 # Literals that must never reach the manifest. Checked before the file is
@@ -329,6 +331,7 @@ def build_manifest(
             # the ingestion path is not exercised on this stand.
             "ingestion": False,
             "service_principals": config.service_principals_reachable(env),
+            "insight_v3_core": config.insight_v3_core_deployed(env),
             "idp": idp,
         },
         "seed_revision": seed_revision(),

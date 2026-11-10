@@ -17,7 +17,7 @@ builder that writes `manifest.json`, so the two cannot disagree.
 | realm | `insight` |
 | anchor_date | `2026-06-30` |
 | data_window | `2026-05-02..2026-06-30` |
-| seed_revision | `df92fd75184e178e` |
+| seed_revision | `8385c911ba957acf` |
 | manifest_version | 2 |
 
 `anchor_date` is the last day carrying seeded activity. It is resolved
@@ -98,6 +98,7 @@ renaming one breaks every test that declares it.
 |---|---|
 | `idp` | keycloak |
 | `ingestion` | no |
+| `insight_v3_core` | yes |
 | `service_principals` | yes |
 
 `ingestion: no` — compose seeds the silver and gold layers directly; no
@@ -108,6 +109,11 @@ so a runner can exchange an RFC 7523 assertion for a service principal and
 exercise the `/internal/*` routes only a service may call. A stand that
 keeps that listener in-cluster reports `no`, and those tests skip with a
 reason rather than failing.
+
+`insight_v3_core: yes` — the stand runs insight-v3-core and the gateway
+routes `/api/v3` to it. The seed reads `INSIGHT_V3_CORE_ENABLED`, which
+compose sets and the cluster seed Job does not, so a cluster stand reports
+`no` and the v3 tests skip with a reason.
 
 `idp` reflects the environment the seed was run with. This page is
 rendered against a canonical environment, so it shows the default rather
