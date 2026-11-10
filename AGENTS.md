@@ -199,7 +199,7 @@ Tooling owns layout and correctness lints: rustfmt plus clippy pedantic (deny) i
 - Reads from mutable (ReplacingMergeTree) class relations keep `FINAL` — parts are not duplicate-immune.
 - Every model documents its columns and accepted measure keys in `schema.yml`; key uniqueness gets a dbt data test.
 - `dbt parse` before committing model changes.
-- Changing a model's SQL, build config, dependencies, contributors, project variables it reads, or macros it uses (directly or transitively) requires raising its positive integer `meta.transform_version` (default 1 from `dbt_project.yml`) using `config(meta={'transform_version': 2})` or `config.meta.transform_version: 2` in its YAML properties.
+- A change to what a model writes or how it is built raises its `meta.transform_version`. Rule 10 of the dbt Pipeline Conventions in `.cf-studio/config/rules/architecture.md` states when, including the changes CI cannot see.
 
 ### Warehouse contract changes
 

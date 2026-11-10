@@ -1,6 +1,6 @@
 ---
 name: check-dbt-conventions
-description: "Audit dbt models and connector configurations against the data-flow conventions in .cf-studio/config/rules/architecture.md. Verifies engine=ReplacingMergeTree, order_by=['unique_key'], silver delete+insert, read-time dedup of every RMT read (FINAL/QUALIFY/LIMIT 1 BY/union_by_tag), unique_key formula, absence of promotion machinery, ephemeral usage for Rust-owned tables, and Airbyte append_dedup sync mode. Reports deviations with file paths and line numbers."
+description: "Audit dbt models and connector configurations against the data-flow conventions in .cf-studio/config/rules/architecture.md. Verifies engine=ReplacingMergeTree, order_by=['unique_key'], silver delete+insert, read-time dedup of every RMT read (FINAL/QUALIFY/LIMIT 1 BY/union_by_tag), unique_key formula, absence of promotion machinery, ephemeral usage for Rust-owned tables, Airbyte append_dedup sync mode, and the model version raises the CI guard cannot see. Reports deviations with file paths and line numbers."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep
@@ -150,12 +150,26 @@ this scan mechanically and exits non-zero on a gap — runnable in CI. Use it to
 generate candidates, then confirm each by reading (it cannot resolve outer-scope
 dedup or column-level semantics).
 
+### Check 9 — Model versions
+
+Rule 10 of the conventions. The CI guard covers SQL, build config, dependencies, macros and literal project variables:
+`python3 scripts/ci/transform_versions.py --compare-ref origin/main --head-ref HEAD --dbt dbt`.
+This check covers what the guard cannot see. On a branch, compare the branch with `origin/main`. FAIL names each model that should have raised `transform_version` and did not:
+
+- A source whose `identifier`, `schema` or `database` changed in a `sources.yml`: every model that reads it.
+- A project variable whose value changed: every model that reads it through a computed name.
+- A model or table whose definition changed: every model that reads it through `adapter.get_relation`.
+
+A `transform_version` that went down is also a FAIL.
+
+On the whole tree, report for review each model that bounds its `source('bronze_*')` rows from below by `now()` or `today()` outside an `is_incremental()` block. Built anew from bronze, such a model keeps only the recent rows.
+
 ## How to run
 
 When user invokes `/check-dbt-conventions`:
 
 1. Read all 5 spec docs (`DESIGN.md` + 4 ADRs) THIS turn — confirm understanding
-2. Run the 8 checks systematically using `Glob` / `Grep` / `Read` (optionally run `python3 src/ingestion/dbt/audit_rmt_read_dedup.py` for Check 8)
+2. Run the 9 checks systematically using `Glob` / `Grep` / `Read` (optionally run `python3 src/ingestion/dbt/audit_rmt_read_dedup.py` for Check 8)
 3. Report per-check status: PASS / FAIL with file paths + line numbers + the offending text
 4. Summarize: total checks, failures by category
 5. For each failure, suggest the minimal fix (e.g., "change `order_by='(insight_source_id, comment_id)'` to `order_by=['unique_key']`")
@@ -177,8 +191,9 @@ Check 6 — Ephemeral wrapping — PASS
 Check 7 — Incremental-by-default — PASS
 Check 8 — Read-time dedup of RMT reads — FAIL (1 violation)
   - src/ingestion/connectors/.../foo.sql:42 — count()/sum() over source('bronze_*') without FINAL/LIMIT 1 BY
+Check 9 — Model versions — PASS
 
-Summary: 6/8 PASS, 2 FAIL (Checks 2, 8 — fixes above)
+Summary: 7/9 PASS, 2 FAIL (Checks 2, 8 — fixes above)
 ```
 
 Refuse to report PASS without having read each spec doc this turn (anti-pattern: stale reasoning). Refuse to invent file paths — only report files actually scanned.
