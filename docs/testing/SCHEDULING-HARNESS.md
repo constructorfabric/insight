@@ -346,13 +346,14 @@ Use an already configured local GitOps inventory and cluster. Set `KIND_CLUSTER`
 to your own local Kind cluster name if loading an image with Kind. Every harness
 install, remove, profile and seed target verifies the selected context's API
 server with `kubectl config view --minify --context "$KUBE_CTX"`. It requires
-`ENV=local`, an explicit context and namespace, and a server using loopback,
-`localhost`, `host.docker.internal`, a `*.local` hostname (including `*.orb.local`),
-or a private local VM address (RFC 1918 IPv4 or IPv6 unique-local). Public addresses,
-other hostnames and missing contexts are refused, with no override. Private
-addresses must identify your local VM; the guard cannot distinguish a remote
-cluster exposed through a local tunnel or using a private address. Build once
-and use the same toolbox image for mock-source, reconcile and dbt:
+`ENV=local`, an explicit context and namespace, and a server using IPv4 loopback
+(`127.0.0.0/8`), IPv6 loopback (`::1`), `localhost`, `host.docker.internal`,
+`kubernetes.docker.internal` or a `*.local` hostname (including `*.orb.local`).
+Every other address is refused, including all RFC 1918 IPv4 and IPv6 unique-local
+addresses. Missing contexts are refused, and there is no override. An allowed
+address or hostname cannot distinguish a local cluster from a local tunnel
+to another cluster. Build once and use the same toolbox image for mock-source,
+reconcile and dbt:
 
 ```bash
 docker build -t insight-toolbox:mock-m1 \

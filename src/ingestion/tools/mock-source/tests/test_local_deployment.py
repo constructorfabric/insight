@@ -57,15 +57,24 @@ def installation(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     "server,accepted",
     [
         ("https://127.0.0.1:6443", True),
+        ("https://127.255.255.254:6443", True),
         ("https://localhost:6443", True),
         ("https://[::1]:6443", True),
         ("https://synthetic.orb.local:6443", True),
         ("https://host.docker.internal:6443", True),
+        ("https://kubernetes.docker.internal:6443", True),
         ("https://synthetic.local:6443", True),
-        ("https://10.0.0.2:6443", True),
-        ("https://172.16.0.2:6443", True),
-        ("https://192.168.0.2:6443", True),
-        ("https://[fd00::2]:6443", True),
+        ("https://10.0.0.2:6443", False),
+        ("https://172.16.0.2:6443", False),
+        ("https://192.168.0.2:6443", False),
+        ("https://[fd00::2]:6443", False),
+        ("https://10.21.0.10:6443", False),
+        ("https://10.23.0.10:6443", False),
+        ("https://192.168.10.5:6443", False),
+        ("https://172.16.0.1:6443", False),
+        ("https://[fd00::1]:6443", False),
+        ("https://128.0.0.1:6443", False),
+        ("https://[::ffff:127.0.0.1]:6443", False),
         ("https://remote.example.invalid:6443", False),
         ("https://203.0.113.10:6443", False),
         ("https://172.32.0.2:6443", False),
@@ -98,7 +107,15 @@ def test_guard_accepts_only_local_api_servers(
 
 
 @pytest.mark.parametrize("target", TARGETS)
-@pytest.mark.parametrize("context,server", [("synthetic-local", "https://remote.example.invalid"), ("missing", "")])
+@pytest.mark.parametrize(
+    "context,server",
+    [
+        ("synthetic-local", "https://remote.example.invalid"),
+        ("synthetic-local", "https://10.0.0.2:6443"),
+        ("synthetic-local", "https://[fd00::2]:6443"),
+        ("missing", ""),
+    ],
+)
 def test_every_target_refuses_remote_or_missing_contexts_before_mutation(
     installation: tuple[Path, dict[str, str], Path], target: str, context: str, server: str
 ) -> None:

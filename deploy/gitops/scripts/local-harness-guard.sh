@@ -26,17 +26,14 @@ def local_server(value: str) -> bool:
             or url.port == 0
         ):
             return False
-        if host in {"localhost", "host.docker.internal"} or host.endswith(".local"):
+        if host in {"localhost", "host.docker.internal", "kubernetes.docker.internal"} or host.endswith(".local"):
             return True
         address = ipaddress.ip_address(host)
-        if address.is_loopback:
-            return True
-        networks = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
-        return any(address in ipaddress.ip_network(network) for network in networks)
+        return address in ipaddress.ip_network("127.0.0.0/8") or address == ipaddress.IPv6Address("::1")
     except ValueError:
         return False
 
 
 if not local_server(sys.argv[1]):
-    sys.exit("harness refused: context API server must use a local hostname or local VM address")
+    sys.exit("harness refused: context API server must use a loopback address or an allowed local hostname")
 PY
