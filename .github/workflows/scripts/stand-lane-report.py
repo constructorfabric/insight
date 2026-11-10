@@ -1,6 +1,5 @@
 import os
 import sys
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,10 +45,10 @@ def clipped(value: str, limit: int) -> str:
     return printable if len(printable) <= limit else printable[: limit - 1] + "…"
 
 
-def node_id(case: ET.Element) -> str:
-    file = case.get("file", "")
-    classname = case.get("classname", "")
-    name = case.get("name", "<unknown test>")
+def node_id(attributes: dict[str, str]) -> str:
+    file = attributes.get("file", "")
+    classname = attributes.get("classname", "")
+    name = attributes.get("name", "<unknown test>")
     if not file:
         return "::".join(part for part in (classname, name) if part)
 
@@ -63,7 +62,12 @@ def node_id(case: ET.Element) -> str:
 
 def failing_tests(path: Path) -> tuple[list[tuple[str, str]], int] | None:
     try:
-        root = ET.parse(path).getroot()
+        from defusedxml.ElementTree import ParseError, parse
+    except ImportError:
+        return None
+
+    try:
+        root = parse(path).getroot()
         if root.tag not in {"testsuites", "testsuite"}:
             return None
 
@@ -76,9 +80,9 @@ def failing_tests(path: Path) -> tuple[list[tuple[str, str]], int] | None:
                 count += 1
                 if len(failures) < MAX_FAILURES:
                     message = result.get("message", f"{result.tag}: no message attribute")
-                    failures.append((node_id(case), message))
+                    failures.append((node_id(case.attrib), message))
         return failures, count
-    except (OSError, ET.ParseError, ValueError, LookupError):
+    except (OSError, ParseError, ValueError, LookupError):
         return None
 
 
@@ -96,7 +100,7 @@ def report(lane_name: str, path: Path, job_url: str) -> str:
     lines = [f"{lane_name}: {status}", "", f"[Stand runner job log]({job_url})", ""]
     tests = failing_tests(path)
     if tests is None:
-        lines.append("The suite left no readable JUnit report.")
+        lines.append("The JUnit report could not be read.")
     else:
         failures, count = tests
         lines.append(f"Failing tests ({count}):" if count else "No failing tests in the JUnit report.")

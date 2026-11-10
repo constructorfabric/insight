@@ -556,6 +556,11 @@ jobs:
           [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
           ./dev-compose.sh test-stand down
 
+      - name: Install defusedxml
+        if: always()
+        continue-on-error: true
+        run: python3 -m pip install --quiet "defusedxml==0.7.1"
+
       - name: Record lane results
         id: results
         if: always()
