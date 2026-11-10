@@ -30,7 +30,7 @@ Authors act through pull requests and operators through Helm values. Everyone el
 | Downstream | Every model built from a given model, directly or through other models. |
 | Rebuild | One Workflow that builds a set of models anew from the bronze already loaded, in dependency order. |
 | History model | A model that refuses to be built anew (`full_refresh=false`), such as a snapshot. It keeps its existing rows, and runs only add to them or update them. |
-| Planner | The job that compares deployed and applied versions and decides what to rebuild. |
+| Planner | The job that compares deployed and applied versions and decides what to rebuild. It runs apart from connector reconcile, and operators see it as the CronWorkflow `<release>-transform-plan`. |
 
 ## 4. Requirements
 
@@ -57,8 +57,8 @@ Authors act through pull requests and operators through Helm values. Everyone el
 
 ### 4.3 Planning
 
-1. The planner runs on its own schedule, every 15 minutes by default. Two planner runs never overlap.
-2. The planner also runs right after an upgrade's migrations. The upgrade does not wait for it.
+1. The planner runs right after an upgrade's migrations. The upgrade does not wait for it.
+2. The planner also runs every 15 minutes by default. These runs retry a failed rebuild and catch what the upgrade's run missed: an upgrade whose hooks never ran, a rollback, a model waiting for its connector's sync. Two planner runs never overlap.
 3. The ClickHouse migrations of each install or upgrade record the Insight version they completed. The planner plans only when that version is its own or a later one. Until then a run plans nothing and logs that it waits for the migrations.
 4. The planner needs only ClickHouse and the deployed models. It runs while Airbyte is unavailable.
 5. A model counts as changed when its deployed and applied versions differ, in either direction. A rollback to an earlier release rebuilds the models whose version went back.
