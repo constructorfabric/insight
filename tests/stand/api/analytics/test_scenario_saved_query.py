@@ -1,5 +1,3 @@
-"""AN-1 — an analyst keeps a saved query; the tenant shares it, the other tenant never sees it."""
-
 from __future__ import annotations
 
 from collections.abc import Callable

@@ -1,5 +1,3 @@
-"""AN-3 and AN-4 — a custom metric authored at runtime, read back through the dashboard path."""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
