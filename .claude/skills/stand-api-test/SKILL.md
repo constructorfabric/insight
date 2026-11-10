@@ -33,6 +33,7 @@ which a test's setup differs. Identity's answers depend on **who is asking**
 | `api/schemas/` | response models — see *Models* below |
 | `api/analytics/` | `/api/analytics`, one module per path group |
 | `api/identity/` | `/api/identity`, one module per concern |
+| `api/v3/` | `/api/v3` (insight-v3-core); `conftest.py` holds `v3_admin` and the `scratch_v3_*` fixtures, and marks every test `requires_insight_v3_core` |
 | `api/test_gateway.py` | the edge — 401 swept over every catalogued operation at once |
 | `analytics/drilldown_matrix.py`, `identity/views.py` | reading helpers and per-metric expectations — shared logic, no assertions |
 | `*/test_request_contracts.py` | **route-table properties, as a table**: non-UUID path 400, wrong-media-type 415, off-schema body, admin-gate 403. Put them here, not in your new module |
@@ -81,8 +82,8 @@ operation by `test_gateway.py`, and spot-checked here so this module carries its
 own reason for using a session at all." One per module, never one per
 operation.
 
-Adding an operation means adding a row to `ANALYTICS_OPERATIONS` or
-`IDENTITY_OPERATIONS`. Path parameters use the `SOME_ID` stand-in so the
+Adding an operation means adding a row to `ANALYTICS_OPERATIONS`,
+`IDENTITY_OPERATIONS` or `V3_OPERATIONS`. Path parameters use the `SOME_ID` stand-in so the
 `template` derives itself; the coverage gate groups by template, and a test
 hitting a real id would otherwise be reported as swept-only.
 
@@ -100,6 +101,7 @@ the ones that decide a case:
 | a caller in another tenant | `other_tenant_session` |
 | `/internal/*` | `service_client` — direct to identity, not gateway-fronted |
 | genuinely anonymous | `api_client` |
+| insight-v3-core authoring (admin-only) | `v3_admin` — the admin operator |
 
 `realm_admin_session` is **403** on admin-gated routes: `require_admin` reads an
 active `admin` row in `identity.person_roles`, never the `insight-admin` realm
@@ -177,7 +179,10 @@ interchangeable:
   error envelope and listing wrapper; `identity_internal.py` covers the two
   `/internal/persons/*` S2S routes, which are registered raw and stay out of
   the generated document by design.
-- `analytics.py`, `authenticator.py`, `identity.py` — **GENERATED** by
+- `v3_untyped.py` — **hand-written** from the Rust structs, for the v3 bodies
+  the document declares as a bare object. `extra="forbid"`; `--check` fails
+  when the document types one of them.
+- `analytics.py`, `authenticator.py`, `identity.py`, `v3.py` — **GENERATED** by
   `tests/generate_schemas.py` from documents the services emit themselves and
   CI drift-gates. Committed, ruff-excluded, and never edited by hand. Verify
   with `--check`; a test run must never need the generator. The generated
@@ -283,7 +288,9 @@ Then reconcile the gate, which is what "closing a coverage gap" means:
 ```bash
 python3 tests/lib/insight_stand/coverage.py \
   --observed .artifacts/stand_observed_endpoints.json \
-  --catalogue .artifacts/stand_operations.json
+  --catalogue .artifacts/stand_operations.json \
+  --spec docs/components/backend/analytics/openapi.json \
+  --spec /api/v3=docs/components/backend/insight-v3-core/openapi.json
 ```
 
 8. Hand a claim marked `EXPECTED TO FAIL` to `file-bug-insight` rather than

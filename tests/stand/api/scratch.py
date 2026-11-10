@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from insight_stand import (
@@ -38,19 +39,24 @@ from insight_stand import (
     SCRATCH_SOURCE_ID,
     SCRATCH_SOURCE_TYPE,
     ApiClient,
+    QueryParams,
     analytics_path,
     identity_path,
     issued_names,
     scratch_name,
+    v3_path,
 )
 
-from .schemas import CustomMetric, ListResponse, SavedQuery
-
-#: A listing reduced to the two fields the sweep needs. Deliberately not the
-#: real per-resource models: this walks four listings across two services
-#: looking for one name or id, and importing five models to read two fields
-#: would couple the sweep to every schema change that does not concern it.
-_Named = ListResponse[dict[str, object]]
+from .schemas import CustomMetric, SavedQuery
+from .schemas.v3 import RuleResponse
+from .schemas.v3_untyped import (
+    CreatedId,
+    DashboardDefinition,
+    Dataset,
+    Folder,
+    MetricDefinition,
+    WidgetDefinition,
+)
 
 # The naming and the connector instance now live in `insight_stand`, so the UI
 # journeys can file a correction under the same pair without importing across
@@ -99,17 +105,34 @@ SCRATCH_OBSERVATION_SQL: Final[str] = (
     "FROM system.one"
 )
 
+
+@dataclass(frozen=True)
+class _Tracked:
+    listing: str
+    id_field: str
+    value: str
+    key: str
+    params: QueryParams | None
+
+
 #: Rows this session created that have NO name to namespace — a person-role
-#: assignment and a visibility grant are identified only by their id. Tracked as
-#: (listing path, id field, id) so the sweep can look for them the same way.
-_CREATED_IDS: list[tuple[str, str, str]] = []
+#: assignment and a visibility grant are identified only by their id — so the
+#: sweep looks them up in their listing by id.
+_CREATED_IDS: list[_Tracked] = []
 
 
 def tracked_ids() -> tuple[str, ...]:
-    return tuple(entry[2] for entry in _CREATED_IDS)
+    return tuple(entry.value for entry in _CREATED_IDS)
 
 
-def track(listing_path: str, id_field: str, value: object) -> str:
+def track(
+    listing_path: str,
+    id_field: str,
+    value: object,
+    *,
+    key: str = "items",
+    params: QueryParams | None = None,
+) -> str:
     """Register a nameless created row, and return its id.
 
     `create_*` helpers below name what they make; these are the resources that
@@ -121,7 +144,7 @@ def track(listing_path: str, id_field: str, value: object) -> str:
     a second, independent check that the revoke actually landed.
     """
     identifier = str(value)
-    _CREATED_IDS.append((listing_path, id_field, identifier))
+    _CREATED_IDS.append(_Tracked(listing_path, id_field, identifier, key, params))
     return identifier
 
 
@@ -216,6 +239,135 @@ def create_custom_metric(client: ApiClient, tag: str) -> CustomMetric:
     return metric
 
 
+SCRATCH_METRIC_COLUMN: Final[str] = "total"
+
+
+def _searching(needle: str) -> QueryParams:
+    return {"q": needle, "limit": 200}
+
+
+def scratch_dataset_declaration(title: str) -> dict[str, object]:
+    return {
+        "title": title,
+        "fields": [
+            {"name": "day", "path": "day", "type": "datetime", "default_clock": True},
+            {"name": "lines", "path": "lines", "type": "int"},
+        ],
+    }
+
+
+def create_v3_dataset(client: ApiClient, tag: str) -> Dataset:
+    name = scratch_name(tag)
+
+    response = client.put(
+        v3_path(f"/v1/datasets/{name}"), json_body=scratch_dataset_declaration(name)
+    )
+    assert response.status_code == 200, (
+        f"declare dataset: status={response.status_code} body={response.text[:300]}"
+    )
+    track(v3_path("/v1/datasets"), "name", name, params=_searching(name))
+
+    dataset = response.parse(Dataset)
+    assert dataset.name == name
+    return dataset
+
+
+def _create_v3_definition(
+    client: ApiClient, segment: str, name: str, body: dict[str, object]
+) -> str:
+    response = client.post(v3_path(f"/v1/{segment}"), json_body={"name": name, "body": body})
+    assert response.status_code == 201, (
+        f"create {segment}: status={response.status_code} body={response.text[:300]}"
+    )
+
+    created = response.parse(CreatedId)
+    track(v3_path(f"/v1/{segment}"), "id", created.id, params=_searching(name))
+    return created.id
+
+
+def _read_v3[T: MetricDefinition | WidgetDefinition | DashboardDefinition](
+    client: ApiClient, path: str, model: type[T]
+) -> T:
+    response = client.get(path)
+    assert response.status_code == 200, (
+        f"read {path}: status={response.status_code} body={response.text[:300]}"
+    )
+    return response.parse(model)
+
+
+def create_v3_metric(client: ApiClient, tag: str, dataset: str) -> MetricDefinition:
+    body: dict[str, object] = {
+        "dataset": dataset,
+        "fields": [{"agg": "count", "type": "int", "as_name": SCRATCH_METRIC_COLUMN}],
+    }
+    metric_id = _create_v3_definition(client, "metrics", scratch_name(tag), body)
+
+    return _read_v3(client, v3_path(f"/v1/metrics/{metric_id}"), MetricDefinition)
+
+
+def create_v3_widget(client: ApiClient, tag: str, metric: str) -> WidgetDefinition:
+    body: dict[str, object] = {
+        "type": "table",
+        "metric": metric,
+        "columns": [SCRATCH_METRIC_COLUMN],
+    }
+    widget_id = _create_v3_definition(client, "widgets", scratch_name(tag), body)
+
+    return _read_v3(client, v3_path(f"/v1/widgets/{widget_id}"), WidgetDefinition)
+
+
+def create_v3_dashboard(
+    client: ApiClient, tag: str, widgets: Sequence[str] = ()
+) -> DashboardDefinition:
+    name = scratch_name(tag)
+    body: dict[str, object] = {
+        "title": name,
+        "items": [{"widget": widget} for widget in widgets],
+    }
+    dashboard_id = _create_v3_definition(client, "dashboards", name, body)
+
+    return _read_v3(client, v3_path(f"/v1/dashboards/{dashboard_id}"), DashboardDefinition)
+
+
+def create_v3_folder(client: ApiClient, tag: str) -> Folder:
+    name = scratch_name(tag)
+
+    response = client.post(v3_path("/v1/folders"), json_body={"name": name})
+    assert response.status_code == 201, (
+        f"create folder: status={response.status_code} body={response.text[:300]}"
+    )
+
+    folder = response.parse(Folder)
+    track(v3_path("/v1/folders"), "id", folder.id, key="folders")
+    assert folder.name == name
+    return folder
+
+
+def create_v3_alert(client: ApiClient, tag: str, metric: str, destination: str) -> RuleResponse:
+    name = scratch_name(tag)
+    draft = {
+        "name": name,
+        "metric": metric,
+        "destination": destination,
+        "interval_secs": 3600,
+        "enabled": False,
+        "condition": {
+            "rows": "any",
+            "where": {"column": SCRATCH_METRIC_COLUMN, "op": ">", "value": 0},
+        },
+    }
+
+    response = client.post(v3_path("/v1/alerts"), json_body=draft)
+    assert response.status_code == 201, (
+        f"create alert: status={response.status_code} body={response.text[:300]}"
+    )
+
+    rule = response.parse(RuleResponse)
+    track(v3_path("/v1/alerts"), "id", rule.id, key="alerts", params=_searching(name))
+    assert rule.name == name
+    return rule
+
+
 #: Named resources, and the listing that would still show a leaked one.
 _NAMED_LISTINGS: Final[tuple[str, ...]] = (
     analytics_path("/v1/queries"),
@@ -223,25 +375,31 @@ _NAMED_LISTINGS: Final[tuple[str, ...]] = (
 )
 
 
-def _listing_items(client: ApiClient, path: str) -> list[dict[str, object]]:
+def _listing_items(
+    client: ApiClient, path: str, key: str = "items", params: QueryParams | None = None
+) -> list[dict[str, object]]:
     """Rows of one listing, or nothing when it cannot be read.
 
     A non-200 is swallowed on purpose. The sweep runs at the very end of a
     session, after failures, and a stand that has stopped answering should not
     turn into a confusing second failure about leaked rows.
     """
-    response = client.get(path)
+    response = client.get(path, params=params)
     if response.status_code != 200:
         return []
-    return response.parse(_Named).items
+
+    body = response.json()
+    rows = body.get(key) if isinstance(body, dict) else None
+    assert isinstance(rows, list), f"{path} answered no `{key}` list: {response.text[:300]}"
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list[str]:
     """Any row this session created that is still in force on the stand.
 
-    Two clients because the two services have different callers: the identity
-    admin listings answer 403 to an ordinary persona, so only the admin operator
-    can see whether an admin row leaked.
+    Two clients because the services have different callers: the identity admin
+    listings, and every insight-v3-core listing, answer 403 to an ordinary
+    persona, so only the admin operator can see whether such a row leaked.
 
     **Still in force, not still present.** The two resource families delete
     differently, and conflating them would make this either useless or a
@@ -271,13 +429,14 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
             if isinstance(name, str) and name in issued:
                 leaked.append(f"{listing} -> {name}")
 
-    for listing, id_field, value in _CREATED_IDS:
-        for item in _listing_items(client_for(listing), listing):
-            if str(item.get(id_field)) != value:
+    for tracked in _CREATED_IDS:
+        client = client_for(tracked.listing)
+        for item in _listing_items(client, tracked.listing, tracked.key, tracked.params):
+            if str(item.get(tracked.id_field)) != tracked.value:
                 continue
             if item.get("valid_to") is not None:
                 continue  # revoked, which is what a delete does to these
-            leaked.append(f"{listing} -> {id_field}={value} still in force")
+            leaked.append(f"{tracked.listing} -> {tracked.id_field}={tracked.value} still in force")
 
     return leaked
 
@@ -285,6 +444,7 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
 __all__: Sequence[str] = (
     "NON_UUID",
     "RUN_TAG",
+    "SCRATCH_METRIC_COLUMN",
     "SCRATCH_OBSERVATION_SQL",
     "SCRATCH_PREFIX",
     "SCRATCH_QUERY_REF",
@@ -294,8 +454,15 @@ __all__: Sequence[str] = (
     "UNKNOWN_METRIC_KEY",
     "create_custom_metric",
     "create_saved_query",
+    "create_v3_alert",
+    "create_v3_dashboard",
+    "create_v3_dataset",
+    "create_v3_folder",
+    "create_v3_metric",
+    "create_v3_widget",
     "custom_metric_body",
     "issued_names",
+    "scratch_dataset_declaration",
     "scratch_metric_identity",
     "scratch_name",
     "surviving_scratch_rows",
