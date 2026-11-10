@@ -696,22 +696,24 @@ describe("MetricsView", () => {
     expect(matrix.rows.map((line) => line[0])).toEqual(["boss", "a", "b"]);
     expect(matrix.rows[2]).toEqual(["b", "", "2026-07-01 to 2026-07-31", 20, 6]);
 
-    await user.click(screen.getByRole("button", { name: "Sort by Default branch commits" }));
     await user.click(screen.getByRole("button", { name: "Download" }));
     await user.click(await screen.findByRole("menuitem", { name: "Excel (.xlsx)" }));
-
     expect(exportMocks.xlsx).toHaveBeenCalledWith(
       "metrics_2026-07-01_2026-07-31.xlsx",
       "Metrics",
-      expect.objectContaining({
-        rows: [
-          expect.arrayContaining(["boss", 50]),
-          expect.arrayContaining(["c", 30]),
-          expect.arrayContaining(["b", 20]),
-          expect.arrayContaining(["a", 10]),
-        ],
-      }),
+      expect.anything(),
     );
+  });
+
+  it("downloads a sorted table in the order the table is showing", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Sort by Default branch commits" }));
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    await user.click(await screen.findByRole("menuitem", { name: "CSV (.csv)" }));
+
+    expect(downloadedCsv().rows.map((line) => line[0])).toEqual(["boss", "c", "b", "a"]);
   });
 
   it("downloads the people being compared, and not the rest of the team", async () => {

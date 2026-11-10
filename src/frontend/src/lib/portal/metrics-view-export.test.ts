@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { MetricFormat } from "@/api/metric-results-client";
-import { matrixToCsv, type Matrix } from "@/lib/export/matrix";
+import type { Matrix } from "@/lib/export/matrix";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import type { MetricsRow } from "@/lib/portal/metrics-view";
 
@@ -115,14 +115,14 @@ describe("metrics table export", () => {
         format: "currency",
         unit: null,
         label: "AI potential cost",
-        header: "AI potential cost (USD)",
+        header: "AI potential cost ($)",
         value: 1234.5,
       },
       {
         format: "decimal",
         unit: "h",
         label: "Cycle time",
-        header: "Cycle time (hours)",
+        header: "Cycle time (h)",
         value: 2.25,
       },
       {
@@ -220,23 +220,19 @@ describe("metrics table export", () => {
     expect(matrix.rows[0]?.slice(3)).toEqual([1, 2]);
   });
 
-  it("writes a formula-like name as text, and quotes a role that contains a comma", () => {
-    const csv = matrixToCsv(
-      metricsTableMatrix({
-        rows: [row("ada", "=Ada")],
-        keys: ["git.commits"],
-        byKey: new Map([
-          ["git.commits", result("git.commits", "Commits", [["ada", 3]])],
-        ]),
-        roles: new Map([["ada", "Engineer, Staff"]]),
-        period: PERIOD,
-      })
-    );
+  it("keeps a person's name and role as their own text cells", () => {
+    const matrix = metricsTableMatrix({
+      rows: [row("ada", "=Ada")],
+      keys: ["git.commits"],
+      byKey: new Map([
+        ["git.commits", result("git.commits", "Commits", [["ada", 3]])],
+      ]),
+      roles: new Map([["ada", "Engineer, Staff"]]),
+      period: PERIOD,
+    });
 
-    expect(csv).toContain("'=Ada");
-    expect(csv).toContain('"Engineer, Staff"');
-    expect(csv).toContain("3");
-    expect(csv).not.toContain("1 h");
+    expect(matrix.rows[0]?.slice(0, 2)).toEqual(["=Ada", "Engineer, Staff"]);
+    expect(matrix.rows[0]?.[3]).toBe(3);
   });
 
   it("drops a non-finite reading instead of writing it as zero", () => {

@@ -49,18 +49,28 @@ function metricTitle(result: NormalizedMetricResult): string {
   const noted = headerUnit(result.label, result.format, result.unit);
   if (noted) return `${result.label} (${noted})`;
 
-  const suffix = unitSuffix(result);
+  const suffix = carriedSuffix(result);
   return suffix ? `${result.label} (${suffix})` : result.label;
 }
 
-function unitSuffix(result: NormalizedMetricResult): string | null {
+// INVARIANT: the cell is the wire number, so the header keeps the mark the
+// figure was already showing. Dropping it leaves 6.47 with no unit.
+function carriedSuffix(result: NormalizedMetricResult): string | null {
   if (result.format === "percent" && !result.label.includes("%")) return "%";
-  if (result.format === "currency" && !/\$|usd/i.test(result.label))
-    return "USD";
-  if (isDurationUnit(result.unit) && !/\bhours?\b/i.test(result.label)) {
-    return "hours";
+  if (result.format === "currency" && !result.label.includes("$")) return "$";
+  if (
+    result.unit &&
+    isDurationUnit(result.unit) &&
+    !labelCarriesUnit(result.label, result.unit)
+  ) {
+    return result.unit;
   }
   return null;
+}
+
+function labelCarriesUnit(label: string, unit: string): boolean {
+  if (unit === "h") return /\bhours?\b|\bh\b/i.test(label);
+  return label.toLocaleLowerCase().includes(unit.toLocaleLowerCase());
 }
 
 function countsOf(labels: readonly string[]): Map<string, number> {
