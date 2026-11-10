@@ -1,14 +1,5 @@
-"""Authenticator success bodies the service's own document leaves untyped — hand-written.
-
-`docs/components/backend/authenticator/openapi.json` declares every success body
-as a bare `{"type": "object"}`, so there is nothing to generate these from. They
-are written from the Rust that serializes each body, under
-`src/backend/services/authenticator/src/`: the `serde_json::json!` literals in
-`api/handlers.rs` (`me`, `csrf`, `refresh_ok`, `logout`, `sessions_list`, the
-three revoke handlers, `openid_configuration`), `KeyStore::jwks` and
-`LoadedKey::from_pkcs8_pem` in `jwt.rs`, and `TokenResponse` in
-`service_token.rs`.
-"""
+"""Hand-written from the authenticator's Rust (`api/handlers.rs` json! literals, `jwt.rs`,
+`service_token.rs`): its OpenAPI document declares these success bodies as bare objects."""
 
 from __future__ import annotations
 
