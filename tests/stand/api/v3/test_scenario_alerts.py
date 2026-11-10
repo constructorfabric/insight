@@ -19,7 +19,15 @@ from insight_stand.stand import candidate_env_files, parse_env_file
 
 from .. import scratch
 from ..schemas import ProblemDocument
-from ..schemas.v3 import AlertsPage, DestinationsResponse, PreviewResponse, WitnessResponse
+from ..schemas.v3 import (
+    AlertsPage,
+    DestinationsResponse,
+    NotificationsPage,
+    PreviewResponse,
+    RuleResponse,
+    SummaryResponse,
+    WitnessResponse,
+)
 from ..schemas.v3_untyped import Dataset, MetricDefinition, RunResult
 
 pytestmark = pytest.mark.requires_seed(ADMIN_OPERATOR_FIXTURE, "dev_lead")
@@ -105,10 +113,16 @@ def _violations(response: ApiResponse) -> dict[str, str]:
     }
 
 
-def _draft(name: str, metric: MetricDefinition, destination: str) -> dict[str, JsonValue]:
+def _rule(response: ApiResponse) -> RuleResponse:
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    return response.parse(RuleResponse)
+
+
+def _draft(name: str, metric: str, destination: str) -> dict[str, JsonValue]:
     return {
         "name": name,
-        "metric": metric.id,
+        "metric": metric,
         "destination": destination,
         "interval_secs": 3600,
         "enabled": False,
@@ -152,7 +166,7 @@ def test_a_rule_the_validator_refuses_is_never_stored(
     assert unconfigured not in _destinations(v3_admin)
 
     name = scratch_name("alert")
-    draft = _draft(name, scratch_v3_metric, unconfigured)
+    draft = _draft(name, scratch_v3_metric.id, unconfigured)
     refused = {
         "expected_revision": {**draft, "expected_revision": 0},
         "condition.where.column": {**draft, "condition": _total_above(0, "absent")},
@@ -183,7 +197,7 @@ def test_dev_lead_is_refused_every_alert_operation_before_any_lookup(
 ) -> None:
     lead = session_for("dev_lead").client
     name = scratch_name("alert")
-    draft = _draft(name, scratch_v3_metric, scratch_name("destination"))
+    draft = _draft(name, scratch_v3_metric.id, scratch_name("destination"))
     revision: JsonValue = {"expected_revision": 0}
     unknown = f"/v1/alerts/{scratch.UNKNOWN_ID}"
 
@@ -213,3 +227,59 @@ def test_dev_lead_is_refused_every_alert_operation_before_any_lookup(
 
     assert v3_admin.get(v3_path(unknown)).status_code == 404
     assert _alerts_named(v3_admin, name).total == 0
+
+
+@pytest.mark.reliability
+def test_an_alert_rule_is_replaced_toggled_and_deleted_through_its_revisions(
+    v3_admin: ApiClient, scratch_v3_alert: RuleResponse
+) -> None:
+    created = scratch_v3_alert
+    path = v3_path(f"/v1/alerts/{created.id}")
+
+    assert created.destination in _destinations(v3_admin)
+    assert _alerts_named(v3_admin, created.name).alerts == [
+        SummaryResponse(enabled=False, id=created.id, metric=created.metric, name=created.name)
+    ]
+    assert _rule(v3_admin.get(path)) == created
+
+    replacement = {
+        **_draft(created.name, created.metric, created.destination),
+        "interval_secs": 7200,
+        "expected_revision": created.revision,
+    }
+    replaced = _rule(v3_admin.put(path, json_body=replacement))
+
+    assert replaced.revision == created.revision + 1
+    assert (replaced.interval_secs, replaced.enabled) == (7200, False)
+    assert replaced.condition.model_dump(mode="json", by_alias=True) == _total_above(0)
+
+    stale = v3_admin.put(path, json_body={**replacement, "interval_secs": 60})
+
+    assert stale.status_code == 409, f"status={stale.status_code} {stale.text[:300]}"
+    assert stale.parse(ProblemDocument).status == 409
+    assert _rule(v3_admin.get(path)) == replaced
+
+    enabled = _rule(
+        v3_admin.post(f"{path}/enable", json_body={"expected_revision": replaced.revision})
+    )
+
+    assert (enabled.enabled, enabled.revision) == (True, replaced.revision + 1)
+    assert _rule(v3_admin.get(path)).enabled is True
+
+    disabled = _rule(
+        v3_admin.post(f"{path}/disable", json_body={"expected_revision": enabled.revision})
+    )
+
+    assert (disabled.enabled, disabled.revision) == (False, enabled.revision + 1)
+    assert [alert.enabled for alert in _alerts_named(v3_admin, created.name).alerts] == [False]
+
+    notifications = v3_admin.get(f"{path}/notifications")
+    assert notifications.status_code == 200, notifications.text[:300]
+    assert notifications.parse(NotificationsPage).notifications == []
+
+    deleted = v3_admin.delete(path)
+    assert deleted.status_code == 204, f"status={deleted.status_code} {deleted.text[:300]}"
+
+    assert v3_admin.get(path).status_code == 404
+    assert v3_admin.get(f"{path}/notifications").status_code == 404
+    assert _alerts_named(v3_admin, created.name).total == 0
