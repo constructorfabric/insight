@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 insight-clickhouse = { workspace = true }
 insight-http-metrics = { workspace = true }
@@ -49,11 +50,9 @@ sea-orm-migration = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 base64 = { workspace = true }
 bullmq = { workspace = true }
 redis = { workspace = true }
-subtle = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

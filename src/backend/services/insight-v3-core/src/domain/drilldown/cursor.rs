@@ -9,8 +9,8 @@ use std::fmt::Write as _;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use thiserror::Error;
+use toolkit_security::crypto::hash::Sha256;
 
 use super::{Column, Sort};
 use crate::domain::query::time_window::Window;

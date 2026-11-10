@@ -12,7 +12,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use rand::Rng as _;
 use serde_json::json;
-use sha2::{Digest as _, Sha256};
+use toolkit_security::crypto::{constant_time_eq, hash::Sha256};
 use url::Url;
 use uuid::Uuid;
 
@@ -468,7 +468,7 @@ async fn exchange_code(state: &AppState, headers: &HeaderMap, request: TokenRequ
     let challenge = B64.encode(Sha256::digest(verifier.as_bytes()));
     if grant.client_id != client_id
         || grant.redirect_uri != redirect_uri
-        || grant.code_challenge != challenge
+        || !constant_time_eq(grant.code_challenge.as_bytes(), challenge.as_bytes())
         || request.resource.as_deref() != Some(grant.resource.as_str())
     {
         return invalid_grant();

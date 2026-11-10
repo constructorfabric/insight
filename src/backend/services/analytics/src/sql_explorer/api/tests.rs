@@ -195,6 +195,6 @@ fn duplicate_authorization_headers_are_rejected() -> R {
         HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
     );
     headers.append(AUTHORIZATION, HeaderValue::from_static("Bearer wrong"));
-    assert!(!valid_token(&headers, &Sha256::digest(TOKEN).into()));
+    assert!(!valid_token(&headers, &Sha256::digest(TOKEN)));
     Ok(())
 }

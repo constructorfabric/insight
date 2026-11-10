@@ -7,9 +7,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use secrecy::ExposeSecret as _;
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
-use subtle::ConstantTimeEq as _;
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
+use toolkit_security::crypto::{constant_time_eq, hash::Sha256};
 
 use super::executor::{MAX_REQUEST_BODY_BYTES, QueryExecutor, QueryFailure};
 use crate::config::SqlApiConfig;
@@ -27,7 +26,7 @@ struct QueryRequest {
 }
 
 pub(super) fn router(config: &SqlApiConfig, executor: QueryExecutor) -> Router {
-    let token_hash: [u8; 32] = Sha256::digest(config.token.expose_secret().as_bytes()).into();
+    let token_hash = Sha256::digest(config.token.expose_secret().as_bytes());
     Router::new()
         .route("/api/sql/query", post(query))
         .with_state(executor)
@@ -76,8 +75,8 @@ fn valid_token(headers: &HeaderMap, expected: &[u8; 32]) -> bool {
     {
         return false;
     }
-    let actual: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-    bool::from(actual.ct_eq(expected))
+    let actual = Sha256::digest(token.as_bytes());
+    constant_time_eq(&actual, expected)
 }
 
 async fn query(

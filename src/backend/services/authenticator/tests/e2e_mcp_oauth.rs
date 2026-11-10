@@ -7,7 +7,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use redis::AsyncCommands as _;
 use redis::aio::MultiplexedConnection;
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
+use toolkit_security::crypto::hash::Sha256;
 
 const COOKIE: &str = "__Host-sid";
 const REDIRECT_URI: &str = "http://127.0.0.1:3210/callback";

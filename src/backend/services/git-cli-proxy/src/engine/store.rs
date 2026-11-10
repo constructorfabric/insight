@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, OwnedRwLockReadGuard, RwLock, Semaphore, SemaphorePermit, watch};
+use toolkit_security::crypto::hash::Sha256;
 
 use super::author_index::{AuthorIndex, Refresh};
 use super::disk::{Budget, Candidate, Reclaim, dir_size, needs_consolidation};

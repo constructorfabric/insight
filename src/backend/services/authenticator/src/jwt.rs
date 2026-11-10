@@ -19,7 +19,7 @@ use p256::SecretKey;
 use p256::elliptic_curve::sec1::ToSec1Point as _;
 use p256::pkcs8::DecodePrivateKey as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
+use toolkit_security::crypto::hash::Sha256;
 
 /// The gateway JWT claim set (§3.8). Serializes to the wire claims verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
