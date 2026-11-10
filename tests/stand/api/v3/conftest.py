@@ -1,13 +1,9 @@
-"""Scratch insight-v3-core resources, created through the gateway and removed after.
+"""Scratch insight-v3-core resources, created as the admin operator and removed after.
 
-Every test under this directory is marked `requires_insight_v3_core`, so it skips
-on a stand without the service instead of failing on the gateway's 404.
-
-The authoring surfaces are admin-only — `require_admin` reads the identity
-`admin` row, never the realm role — so every fixture acts as the admin operator.
-Fixtures chain: a dashboard holds a widget, which draws a metric, which counts a
-dataset's records. Teardown runs in reverse, which is the only order v3 accepts:
-a definition still named by another is refused with 409.
+Every test under this directory is marked `requires_insight_v3_core`. The
+authoring surfaces are admin-only by the identity `admin` row, not the realm role.
+Teardown runs in dependency order: v3 answers 409 to removing a definition another
+still names.
 """
 
 from __future__ import annotations
