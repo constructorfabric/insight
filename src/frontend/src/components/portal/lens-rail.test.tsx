@@ -281,8 +281,6 @@ describe("LensRail state that only breaks in a particular order", () => {
   });
 
   it("treats Feedback and Settings like a zone item, shut and open", async () => {
-    // Same control as a zone: same classes shut, same label reveal when the
-    // pointer stays.
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     rail();
     const home = screen.getByRole("button", { name: "Home" });

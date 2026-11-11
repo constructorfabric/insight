@@ -320,7 +320,6 @@ export function LensRail() {
   );
 }
 
-/** Its own rail slot: inside the settings menu nobody found it. */
 function FeedbackButton({ open }: { open: boolean }) {
   const feedback = useFeedbackDialog();
 
@@ -338,11 +337,6 @@ function FeedbackButton({ open }: { open: boolean }) {
   );
 }
 
-/**
- * 40px shut, the full open width while open — see note 2 above. The icon does
- * not move between the two: the button starts its content at the same offset
- * either way.
- */
 function RailControl({
   icon: Icon,
   label,
@@ -373,8 +367,7 @@ function RailControl({
       style={open ? { width: `calc(${OPEN_WIDTH} - 1rem)`, ...style } : style}
     >
       <Icon className="shrink-0" />
-      {/* Visible only while open, and never a pointer target of its own —
-          the button under it is what widens, so the word IS the hit area. */}
+      {/* INVARIANT: the span is not its own hit target. The button widens, so the word is the hit area. */}
       <span
         className={cn(
           "truncate transition-opacity duration-150",
