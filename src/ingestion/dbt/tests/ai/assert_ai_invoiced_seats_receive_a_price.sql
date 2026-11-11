@@ -67,14 +67,6 @@ priced_populations AS (
       AND invoice.period_month >= toStartOfMonth(today()) - INTERVAL 2 MONTH
 ),
 
-priced_months AS (
-    SELECT DISTINCT
-        tenant_id,
-        source,
-        period_month
-    FROM priced_populations
-),
-
 -- A seat a fee can reach at all. gold gates the seat measure on the ceiling, so
 -- a seat without one is not a seat any invoice can price. `source` joins the
 -- invoice side and `tool` joins the served side, which is why both are kept.
@@ -156,22 +148,28 @@ served_seats AS (
     GROUP BY tenant_id, tool, period_month, seat_tier
 ),
 
--- The invoice priced a seat and the month holds none to price.
+-- The invoice priced a seat and its population holds none to price: the bound
+-- population itself, or any population for an unbound price.
 no_tiered_seats AS (
-    SELECT
+    SELECT DISTINCT
         tenant_id,
         source,
         period_month,
         'no_tiered_seats'                       AS finding,
         ''                                      AS seat_tier,
         toUInt64(0)                             AS unpriced_seats
-    FROM priced_months
+    FROM priced_populations
     -- INVARIANT: a tuple NOT IN, never a LEFT JOIN tested for NULL. An unmatched
     -- ClickHouse left join yields the column's default, which for a count is 0
     -- and would read as a real answer.
-    WHERE (tenant_id, source, period_month) NOT IN (
-            SELECT tenant_id, source, period_month FROM tiered_seats
-        )
+    WHERE (seat_source_id != ''
+           AND (tenant_id, source, period_month, seat_source_id) NOT IN (
+               SELECT tenant_id, source, period_month, source_id FROM tiered_seats_per_population
+           ))
+       OR (seat_source_id = ''
+           AND (tenant_id, source, period_month) NOT IN (
+               SELECT tenant_id, source, period_month FROM tiered_seats
+           ))
 ),
 
 -- Seats of this tier exist, the month priced a seat, and fewer of them were
