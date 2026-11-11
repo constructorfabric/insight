@@ -65,7 +65,9 @@ export function CustomBarChart({
           categories={data.map((point) => point[x])}
           unit={unit}
         />
-        {stacked && <ChartLegend content={<ChartLegendContent />} />}
+        {stacked && (
+          <ChartLegend content={<ChartLegendContent />} itemSorter={null} />
+        )}
         {segments.map(({ key, label }, index) => (
           <ChartBar
             key={key}

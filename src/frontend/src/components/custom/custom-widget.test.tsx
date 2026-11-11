@@ -87,7 +87,9 @@ vi.mock("recharts", async (importOriginal) => {
     PieChart: chart("pie-chart"),
     CartesianGrid: () => null,
     Tooltip: () => null,
-    Legend: () => <div data-testid="legend" />,
+    Legend: ({ itemSorter }: { itemSorter?: unknown }) => (
+      <div data-testid="legend" data-item-sorter={String(itemSorter)} />
+    ),
     LabelList: ({ dataKey }: { dataKey: string }) => (
       <div data-testid="label-list" data-key={dataKey} />
     ),
@@ -439,6 +441,15 @@ describe("<CustomWidget>", () => {
       expect(new Set(segments.map((bar) => bar.dataset.stackId)).size).toBe(1);
       expect(segments[0].dataset.stackId).toBeTruthy();
       expect(screen.getByTestId("legend")).toBeInTheDocument();
+    });
+
+    it("lists the legend in stack order rather than alphabetically", () => {
+      render(<CustomWidget widget={stacked} result={runs} />);
+
+      expect(screen.getByTestId("legend")).toHaveAttribute(
+        "data-item-sorter",
+        "null"
+      );
     });
 
     it("labels each stack's total once, on top", () => {
