@@ -1,123 +1,123 @@
 ---
 status: proposed
-date: 2026-11-10
+date: 2026-11-11
 ---
 
 # PRD — Rebuild changed transformations after an upgrade
 
 ## 1. Purpose
 
-After an Insight upgrade, the dbt models that the release changed are rebuilt from bronze at once, together with every model built from them. Until now a changed model kept its old rows until each connector's next sync ran it. A connector's version now governs only how the connector loads into bronze. Because the data matches the release soon after the upgrade, the metric validator checks dimension coverage strictly again.
+After an Insight upgrade or rollback, every transformation whose code changed is rebuilt from bronze, together with everything built from it. Metrics then reflect the release that is installed, not the release that built each row. Model authors do nothing extra: the change is detected from the code.
 
 ## 2. Users
 
 | User | What they do here |
 |---|---|
-| Model author | Changes a dbt model and raises its version. CI tells them when the version is missing. |
-| Operator | Upgrades and rolls back an install with Helm. Sees each transform run as an Argo Workflow and in the logs. Can start one by hand and can turn it off. |
-| Metric viewer | Sees metrics built by the release's models soon after an upgrade. |
-
-Authors act through pull requests and operators through Helm values. Everyone else sees only the effect on metrics.
+| Model author | Changes dbt models. Sees in the pull request which models the change will rebuild. |
+| Operator | Upgrades and rolls back an install with Helm. Sees each transform run in Argo and in the logs, and is alerted when one fails. Can start a run by hand. |
+| Metric viewer | Sees metrics built by the installed release. |
 
 ## 3. Terms
 
 | Term | Meaning |
 |---|---|
-| Bronze | Source rows as the connector loaded them. |
-| Model | One dbt transformation, built from bronze or from other models: staging, identity, silver or gold. |
-| Model version | A whole number, `transform_version`, in a model's dbt `meta`. The project default is 1. A release that changes a model raises it, for example from 1 to 2. |
-| Applied version | The version an install last built a model with. |
+| Bronze | Source rows as a connector loaded them. Nothing in this change clears bronze. |
+| Model | One dbt transformation: one table or view in staging, silver or gold. |
+| Project state | The parsed description of every model in a release: its SQL, configuration, relation, the macros it calls, and the models and sources it reads. dbt writes it as `manifest.json`. |
+| Applied state | The project state of the last transform run that completed on the install. The install stores it. |
+| Changed model | A model that dbt's state comparison of the installed release against the applied state reports as new or modified. |
 | Downstream | Every model built from a given model, directly or through other models. |
-| Transform run | One Argo Workflow, `<release>-transform`, that Helm starts after an install, an upgrade or a rollback. It plans, then rebuilds. It runs apart from connector reconcile. |
-| Plan | The step of a transform run that compares deployed and applied versions and decides what to rebuild. |
-| Rebuild | The step of a transform run that builds a set of models anew from the bronze already loaded, in dependency order. |
-| History model | A model that refuses to be built anew (`full_refresh=false`), such as a snapshot. It keeps its existing rows, and runs only add to them or update them. |
+| Transform run | One Argo Workflow that plans and then rebuilds the changed models with their downstream. |
+| History model | A model that keeps rows no rebuild from bronze can recreate, such as a snapshot of a source that only reports current state. dbt refuses to build it anew (`full_refresh=false`). |
 
 ## 4. Requirements
 
-### 4.1 Changing a model
+### 4.1 The basic case
 
-1. Every dbt model has a version. The project default is 1, and a model sets its own in its config.
-2. CI fails a pull request that changes a model without raising its version. The failure names the model and what changed.
-3. A change is any difference in the model's SQL, its build config, the models and sources it reads, a macro it uses, or a project variable that its SQL or macros read by name.
-4. A class whose SQL unions the models that carry a tag changes when a model gains or loses that tag.
-5. Edits to comments or whitespace are not changes. A comment that declares a dbt dependency counts as a dependency.
-6. Description, docs and meta edits are not changes. A tag edit changes only the classes the tag adds the model to or removes it from.
-7. A version that goes down always fails. A version that stays the same fails when the model changed.
-8. The check also runs on each push to the main branch. Two merged pull requests that raise one model to the same number fail there.
-9. CI compares text, not meaning, so a refactor that keeps a model's output also needs a higher version.
-10. The repository's dbt conventions say when to raise a version, including the changes CI cannot see. The connector validation checklist and the dbt conventions audit check those changes.
+A release changes one silver model. Bronze is loaded, no sync is running, and every step succeeds.
 
-### 4.2 Recording applied versions
+1. After the upgrade, the changed model and its downstream are built anew from bronze, in dependency order: staging, then the identity seed, then silver and gold.
+2. No other model is built anew.
+3. When the run completes, the release's project state becomes the applied state. A run started by hand right after it rebuilds nothing.
 
-1. Each install records every version it applies to a model: the model, its table, the version, the Insight version, the time, and what wrote the record.
-2. A model's most recent record is its applied version. Records are only added, never changed.
-3. On an install with no records, the first transform run records every deployed model at its deployed version and rebuilds nothing.
-4. A rebuild writes a model's record only after it has built that model.
-5. When a model leaves the code, the install records its removal once. Later plans stop reporting it. Only a migration drops its table.
+### 4.2 What counts as a change
 
-### 4.3 Starting a transform run
+1. A model is changed when dbt's state comparison reports it modified: its SQL file, configuration or relation differs, a macro it calls differs anywhere in the call chain, or a source it reads is defined differently. A new model counts as changed.
+2. Any edit to a model's SQL file changes the model, comments and whitespace included. An author forces a rebuild by editing the file.
+3. A class built with `union_by_tag` names each model it unions in a `-- depends_on` line. CI fails a pull request in which a class and the models carrying its tag disagree.
+4. A model that reads a table without `ref` or `source` names it in a `-- depends_on` line, so a change to that table rebuilds the model.
+5. dbt does not see a changed value of a project variable. A pull request that changes one also edits the models that read it.
+6. CI reports in each pull request the models the change would rebuild on an install that runs the base branch.
 
-1. Helm starts a transform run after each install, upgrade and rollback, once that release's ClickHouse migrations have completed. Helm does not wait for it.
-2. An upgrade whose migrations fail, or that fails before them, starts no transform run.
-3. A new install, upgrade or rollback stops the transform run still in progress and starts its own. The models the stopped run built keep the versions it recorded.
-4. The operator can start a transform run by hand from the WorkflowTemplate `<release>-transform`. Two transform runs never overlap.
-5. A transform run needs only ClickHouse and the deployed models. It runs while Airbyte is unavailable.
-6. Setting `ingestion.transformPlan.enabled` to `false` removes the transform run.
+### 4.3 When a transform run starts
 
-### 4.4 Planning
+1. Helm starts a transform run after each install, upgrade and rollback, once that release's ClickHouse migrations have completed. Helm runs the migrations first and waits for them. It does not wait for the transform run, which can take hours.
+2. An upgrade whose migrations fail starts no transform run.
+3. A transform run that starts while another is in progress waits for it to finish, then plans against the applied state it left. No run stops another.
+4. An operator can start a transform run by hand. It waits for any run in progress the same way.
 
-1. A model counts as changed when its deployed and applied versions differ, in either direction. A rollback to an earlier release rebuilds the models whose version went back.
-2. The plan logs `transform.planned` with the changed, new and removed models, the rebuild set, the history models in that set, and the connectors the rebuild would hold. The rebuild set is the changed and new models with their downstream.
-3. A failed plan logs `transform.failed` and is retried as a failed rebuild is.
+### 4.4 Syncs during a rebuild
 
-### 4.5 Rebuilding
+1. A rebuild never runs at the same time as a sync of any connector whose staging models feed a model it rebuilds.
+2. A rebuild waits for such syncs that are already running. A sync of such a connector that starts during the rebuild waits until the rebuild ends. Syncs of other connectors run as usual.
 
-1. When the rebuild set is not empty, the transform run rebuilds it.
-2. The rebuild builds staging first, then runs the identity seed, then builds silver and gold.
-3. The rebuild builds each model in the set anew from bronze. A history model in the set runs incrementally instead.
-4. The rebuild builds no model outside the set anew.
-5. A model whose sources the install has never loaded is skipped and recorded at its deployed version. Its connector's first sync builds it.
-6. An author can mark a changed model as needing its connector's next sync, for a model that reads a bronze column the same release adds. The rebuild leaves that model and its downstream out. The last step of the transform run checks every 15 minutes for a sync of that connector that finished after the run started, for up to 24 hours, then rebuilds them.
-7. When a rebuild fails, the models it built keep their new versions.
-8. A failed step is retried 15 minutes later, for at most 3 attempts. A retried rebuild builds only the models whose versions are not yet applied.
-9. When the attempts run out, the transform run shows as a failed Workflow. It stays failed until the next install, upgrade or rollback, or a run started by hand.
-10. No upgrade, rebuild or connector version change clears bronze.
+### 4.5 A failed rebuild
 
-### 4.6 Syncs and connector versions
+1. A model whose rebuild fails keeps the table it had before the run.
+2. A failed step is retried 15 minutes later, at most 3 attempts in all.
+3. When the attempts run out, the transform run fails and the applied state stays as it was. The next transform run plans the same changes again and rebuilds them all.
 
-1. A sync never runs at the same time as a rebuild that holds its connector. A rebuild holds every connector whose staging feeds a model in its set, with all of that connector's connections.
-2. A sync of a held connector waits in the Argo queue until the rebuild ends. Syncs of other connectors run as usual.
-3. A sync never runs dbt with a full refresh.
-4. A connector version change republishes the connector, rediscovers its streams and syncs it. It does not rebuild the connector's models.
+### 4.6 A rollback
 
-### 4.7 Metric validation
+1. A rollback rebuilds the models whose code differs from the applied state, with the earlier release's SQL, from bronze.
+2. ClickHouse migrations are not rolled back. A model of the earlier release must still build against tables a later release migrated.
 
-1. While a metric's models wait for a rebuild or a sync, the dimension coverage check does not fail the metric. The validator reports it as `unchecked`.
-2. After its models are rebuilt, a metric that fails the dimension coverage check is `error` with `dimension_not_covered`, and the metric is not served.
+### 4.7 Models that bronze cannot rebuild
+
+1. A changed history model in the plan runs incrementally. Its existing rows stay.
+2. A change that must rewrite a history model's existing rows ships with a ClickHouse migration that rewrites them.
+
+### 4.8 Connectors the install lacks
+
+1. A changed model whose bronze tables do not exist on the install is skipped. Its connector's first sync builds it.
+
+### 4.9 A model that reads a column its release adds
+
+1. A model that reads a bronze column added in the same release builds while the column is still absent, reading it as empty. Its rebuild then succeeds before the connector's first sync with the new column.
+2. Rows the connector loads from then on carry the column. A later rebuild gives the same rows as those syncs.
+
+### 4.10 First run on an install
+
+1. On an install with no applied state, the first transform run stores the release's project state as applied and rebuilds nothing.
+
+### 4.11 What the operator sees
+
+1. Each transform run is a Workflow in Argo, named after the release and its Helm revision. A run waiting for another run or for a sync shows as pending with the lock it waits for.
+2. The log records `transform.planned` with the changed models, the rebuild set, the history models in it and the connectors it waits for; `transform.model_built` for each rebuilt model; `transform.failed` with the step, the model and the error; `transform.completed` with the release now applied.
+3. Each run is recorded in ClickHouse with its release, start, end and outcome.
+4. A failed transform run raises the same kind of alert as a failed sync.
 
 ## 5. Constraints
 
-1. The plan sees only reads that go through dbt `ref` and `source`. A model that reads a table any other way is not rebuilt when that table changes.
-2. A history model keeps the rows it already has. A change that must rewrite them needs its own migration.
-3. A rebuild uses the bronze already loaded. Where bronze lacks old data, the rebuilt model lacks it too.
-4. A rebuild holds its connectors for its whole run. Models near identity resolution are fed by most connectors, so rebuilding one of them pauses most syncs.
-5. The first transform run records versions without looking at the tables. A model changed in the release that first ships the transform run is recorded as applied and is not rebuilt.
-6. A model marked as needing its connector's sync waits at most 24 hours. If the connector has not synced by then, the transform run fails, and the model waits for the next install, upgrade or rollback, or a run started by hand.
-7. Operators configure the transform run with `ingestion.transformPlan.enabled` (default `true`), `ingestion.transformPlan.retry` (default 3 attempts, 15 minutes apart), `ingestion.transformPlan.syncWait` (default 24 hours) and `ingestion.transformPlan.resources` (default requests 100m CPU and 256 MiB, limits 500m CPU and 512 MiB). The transform run exists only when `ingestion.templates.enabled` is also `true`.
-8. A plan attempt that takes longer than 15 minutes fails.
+1. A transform run sees only dependencies dbt records: `ref`, `source` and `-- depends_on` lines. A read hidden from dbt is not followed.
+2. A rebuild uses the bronze already loaded. Where bronze lacks old data, the rebuilt model lacks it too.
+3. A change to a history model's tracked columns adds one new history row for every entity on its first run.
+4. A renamed or removed model leaves its old table in place. A ClickHouse migration drops it.
+5. Upgrading dbt or its ClickHouse adapter can report models changed whose code did not change. Switching an install to cluster mode reports every model whose engine depends on it.
+6. A rebuild holds its connectors for its whole run. Models near identity resolution are fed by most connectors, so rebuilding one of them pauses most syncs.
+7. Syncs of two connections of the same connector run one after the other.
+8. Operators configure transform runs with `ingestion.transformPlan.enabled` (default `true`), `ingestion.transformPlan.retry` (default 3 attempts, 15 minutes apart) and `ingestion.transformPlan.resources`. Transform runs exist only when `ingestion.templates.enabled` is also `true`.
 
 ## 6. Acceptance criteria
 
-1. **CI catches a missing version.** A pull request changes one model's SQL and keeps its version: CI fails and names the model. The same change with the version raised passes. An edit to comments or whitespace passes.
-2. **First adoption.** On an install with no records, the first transform run records every model at its deployed version and rebuilds nothing. A run started by hand afterwards plans nothing.
-3. **Plan after an upgrade.** Upgrade to a build that changes two models, adds one and removes one. The transform run reports each of them, the rebuild set with their downstream, the history models in it, and the connectors it would hold. A rollback reports the models whose version went back as changed.
-4. **Rebuild after an upgrade.** In the warm-upgrade test lane, a release changes one silver and one gold model. Right after the upgrade, both are rebuilt with their downstream, and their applied versions rise. No other model is built anew.
-5. **Syncs wait for the rebuild.** During a rebuild, a scheduled sync of a held connector waits and starts when the rebuild ends. A sync of a connector the rebuild does not hold starts at once.
-6. **A failed rebuild is retried with a growing wait.** A rebuild fails on one gold model. The models it built keep their new versions. The transform run retries only the failed model and its downstream 15 minutes later, and again 15 minutes after that. When the third attempt fails, the Workflow shows as failed.
-7. **A connector the install lacks.** On an install without a connector, a release changes one of that connector's models. The rebuild completes without it, and the model is recorded at its deployed version.
-8. **A model waits for its sync.** A release changes a staging model to read a column that the same release adds to its connector, and marks the model. The rebuild after the upgrade leaves the model out. The transform run rebuilds it after the connector's next sync.
-9. **A connector version change does not rebuild.** Raise a connector's version. The connector is republished and synced, and dbt runs without a full refresh.
-10. **Strict validation after an upgrade.** On the chart validation stand, an upgrade adds a dimension to a metric. While its models wait, the metric is `unchecked` and served. After the rebuild it is `ok` under strict validation.
-11. **A failed upgrade rebuilds nothing.** Upgrade to a build that changes one model, with its ClickHouse migrations failing. No transform run starts, and the model's applied version stays.
-12. **Rollback during a rebuild.** Upgrade to a build that changes one model, and roll back while its rebuild runs. The rollback stops that transform run and starts one that rebuilds the model with the earlier release's SQL. The model's applied version returns to the earlier value.
+1. **Basic case.** A release changes one silver model. After the upgrade, that model and its downstream are rebuilt and nothing else is; a run started by hand afterwards rebuilds nothing.
+2. **What CI catches.** A pull request adds a model to a class without a `-- depends_on` line in the class: CI fails. A pull request that changes a macro lists every model that calls it as rebuilt.
+3. **Syncs and a rebuild.** A sync of a connector the rebuild depends on is running when the rebuild starts: the rebuild waits for it. A sync of that connector scheduled during the rebuild starts after it. A sync of an unrelated connector starts at once.
+4. **A failed rebuild.** A rebuild fails on one gold model. Its table is unchanged, the step is retried twice 15 minutes apart, the run fails and an alert fires. A run started by hand rebuilds the same set.
+5. **Two releases in a row.** An upgrade lands while the previous upgrade's run is in progress. The new run waits, then rebuilds what still differs from the applied state.
+6. **A failed upgrade.** An upgrade whose ClickHouse migrations fail starts no transform run.
+7. **A rollback.** After a rollback, the models the later release changed are rebuilt with the earlier release's SQL.
+8. **A history model.** A release changes a history model. Its existing rows stay and the run continues it incrementally.
+9. **A missing connector.** On an install without a connector, a release changes one of its models. The run completes without it.
+10. **A new bronze column.** A release adds a column to a connector and a model that reads it. The rebuild after the upgrade succeeds before the connector syncs, and after the sync the model carries the column for the rows synced.
+11. **First run.** On an install with no applied state, the first run stores it and rebuilds nothing.
