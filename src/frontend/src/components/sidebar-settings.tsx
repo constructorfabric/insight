@@ -1,4 +1,5 @@
 import { Wrench } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   SidebarMenu,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/portal/portal-store";
 
 export function SidebarSettings() {
+  const { t } = useTranslation();
   const showPlanned = usePortalShowPlanned();
 
   return (
@@ -24,7 +26,7 @@ export function SidebarSettings() {
         >
           <span className="flex items-center gap-2">
             <Wrench className="size-4" />
-            <span>Show planned sections</span>
+            <span>{t("nav.show_planned")}</span>
           </span>
           <Switch
             checked={showPlanned}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { metricHelp } from "@/lib/insight/metric-help";
 import { Link } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp } from "lucide-react";
@@ -749,6 +750,7 @@ function ColumnHeader({
   direction: "ascending" | "descending" | undefined;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const help = metricHelp(col.metric);
   return (
     <Tooltip>
@@ -761,7 +763,7 @@ function ColumnHeader({
               "flex h-9 w-full cursor-pointer items-center justify-center px-4 text-xs font-medium tracking-wider text-muted-foreground uppercase transition-colors hover:text-foreground",
               active && "text-foreground"
             )}
-            aria-label={`${col.label} — sort by this column`}
+            aria-label={t("common.legend.sort_column", { column: col.label })}
           >
             {/* Label stays centered; the arrow hugs its right edge (left-full)
                 like the value cell, rather than pinning to the column edge. */}
@@ -790,11 +792,11 @@ function ColumnHeader({
           <span className="text-background/70">
             {col.unit ? `${col.unit} · ` : ""}
             {betterWhenHigher(col.direction) === true
-              ? "higher is better · "
+              ? t("common.legend.higher_is_better")
               : betterWhenHigher(col.direction) === false
-                ? "lower is better · "
+                ? t("common.legend.lower_is_better")
                 : ""}
-            click to sort
+            {t("common.legend.click_to_sort")}
           </span>
         </span>
       </TooltipContent>
@@ -803,12 +805,13 @@ function ColumnHeader({
 }
 
 function Legend() {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center gap-4 px-3 text-xs text-muted-foreground">
-      <LegendSwatch className={PEER_FILL.top}>Top 25%</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.in_pack}>Near the median</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.bottom}>Bottom 25%</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.neutral}>No comparison</LegendSwatch>
+      <LegendSwatch className={PEER_FILL.top}>{t("common.legend.top")}</LegendSwatch>
+      <LegendSwatch className={PEER_FILL.in_pack}>{t("common.legend.near_median")}</LegendSwatch>
+      <LegendSwatch className={PEER_FILL.bottom}>{t("common.legend.bottom")}</LegendSwatch>
+      <LegendSwatch className={PEER_FILL.neutral}>{t("common.legend.no_comparison")}</LegendSwatch>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { AlertTriangle, Clock, Loader2 } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -12,12 +13,6 @@ export interface ComingSoonProps {
   label?: string;
   onRetry?: () => void;
 }
-
-const DEFAULT_LABELS: Record<ComingSoonState, string> = {
-  empty: "No data for this period",
-  error: "Unable to load",
-  loading: "Loading…",
-};
 
 const STATE_STYLES: Record<
   ComingSoonState,
@@ -52,9 +47,10 @@ function ComingSoonImpl({
   label,
   onRetry,
 }: ComingSoonProps) {
+  const { t } = useTranslation();
   const s = STATE_STYLES[state];
   const Icon = s.Icon;
-  const displayLabel = label ?? DEFAULT_LABELS[state];
+  const displayLabel = label ?? t(`common.states.${state}`);
   const showRetry = state === "error" && Boolean(onRetry);
 
   if (variant === "chip") {
@@ -76,7 +72,7 @@ function ComingSoonImpl({
             onClick={onRetry}
             className="text-destructive hover:text-destructive/80 ml-1 text-xs font-semibold focus-visible:underline focus-visible:outline-none"
           >
-            Retry
+            {t("common.actions.retry")}
           </button>
         ) : null}
       </span>
@@ -102,7 +98,7 @@ function ComingSoonImpl({
             onClick={onRetry}
             className="text-destructive hover:text-destructive/80 ml-auto text-xs font-semibold focus-visible:underline focus-visible:outline-none"
           >
-            Retry
+            {t("common.actions.retry")}
           </button>
         ) : null}
       </div>
@@ -127,7 +123,7 @@ function ComingSoonImpl({
           onClick={onRetry}
           className="border-destructive/30 bg-card text-destructive hover:bg-destructive/10 focus-visible:ring-destructive/40 mt-1 rounded-md border px-2.5 py-1 text-xs font-semibold focus-visible:ring-2 focus-visible:outline-none"
         >
-          Retry
+          {t("common.actions.retry")}
         </button>
       ) : null}
     </div>

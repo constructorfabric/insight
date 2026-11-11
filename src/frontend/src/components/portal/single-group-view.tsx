@@ -1,4 +1,7 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
+
+import { resolveText } from "@/i18n/localized-text";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -49,6 +52,7 @@ export function SingleGroupView({
   personId: string;
   groupId: GroupId;
 }) {
+  const { t } = useTranslation();
   const { dateRange, compareTo, comparisonNoun } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   const def = GROUPS.find((d) => d.id === groupId) ?? null;
@@ -163,13 +167,13 @@ export function SingleGroupView({
   if (state !== "reads") {
     return (
       <div data-testid={testId} className="flex flex-col gap-3 p-4 md:p-6">
-        <h1 className={TEXT_TITLE}>{def.title}</h1>
+        <h1 className={TEXT_TITLE}>{resolveText(t, def.title)}</h1>
         <p className="text-sm text-muted-foreground">
           {definitions.isError
-            ? "Nothing to show here for the selected period."
+            ? t("people.section.nothing_for_period")
             : state === "no_data_reaches_us"
-              ? "No data source is connected for this section — nothing is measured here for anyone yet."
-              : "Nothing recorded here for the selected period."}
+              ? t("people.section.no_source")
+              : t("people.section.nothing_recorded")}
         </p>
       </div>
     );
@@ -185,7 +189,7 @@ export function SingleGroupView({
 
   return (
     <div data-testid={testId} className="flex flex-col gap-4 p-4 md:p-6">
-      <h1 className={TEXT_TITLE}>{def.title}</h1>
+      <h1 className={TEXT_TITLE}>{resolveText(t, def.title)}</h1>
       {sources.length > 0 ? (
         // What was being watched, next to what it concluded. A low number
         // means one thing when the tool everyone uses is connected and

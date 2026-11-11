@@ -1,4 +1,5 @@
 import { useMemo, useState, type SetStateAction } from "react";
+import { useTranslation } from "react-i18next";
 import { Columns3, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
 import { useViewer } from "@/auth";
@@ -54,6 +55,7 @@ import type { IdentityPerson } from "@/types/insight";
 const TEST_ID = "page-people-metrics";
 
 export function MetricsView() {
+  const { t } = useTranslation();
   const { dateRange } = usePortalPeriod();
   const orgScope = useOrgScope();
   const definitions = useMetricDefinitionsResponse();
@@ -135,7 +137,7 @@ export function MetricsView() {
     memberCount: members.length,
     gridPending: definitions.isPending,
     gridError: definitions.isError || data.isError,
-    emptyLabel: "No people in the current scope.",
+    emptyLabel: t("metrics_view.no_people"),
     onRetry: () => {
       orgScope.refetch();
       void definitions.refetch();
@@ -147,7 +149,7 @@ export function MetricsView() {
     <div data-testid={TEST_ID} className="flex flex-col gap-3 p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <PaneToggle />
-        <h1 className="text-lg font-semibold tracking-tight">Metrics view</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{t("metrics_view.title")}</h1>
         <ScopeChip label={orgScope.label} />
         <Popover>
           <PopoverTrigger
@@ -159,7 +161,10 @@ export function MetricsView() {
                 icon={<Columns3 />}
                 className="ms-auto"
               >
-                {`Metrics: ${metricKeys.length} of ${catalogKeys.length}`}
+                {t("metrics_view.count", {
+                  picked: metricKeys.length,
+                  total: catalogKeys.length,
+                })}
               </Button>
             }
           />
@@ -172,19 +177,19 @@ export function MetricsView() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label="Select all metrics"
+                aria-label={t("metrics_view.select_all_metrics")}
                 onClick={() => setPicked(null)}
               >
-                Select all
+                {t("metrics_view.select_all")}
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label="Clear all metrics"
+                aria-label={t("metrics_view.clear_all_metrics")}
                 onClick={() => setPicked([])}
               >
-                Clear all
+                {t("metrics_view.clear_all")}
               </Button>
             </div>
             <ReportMetricPicker
@@ -212,6 +217,7 @@ export function MetricsView() {
 }
 
 function PaneToggle() {
+  const { t } = useTranslation();
   const shown = useMetricsViewPaneShown();
   if (useShellLayout() !== "wide") return null;
 
@@ -223,12 +229,13 @@ function PaneToggle() {
       icon={shown ? <PanelLeftClose /> : <PanelLeftOpen />}
       onClick={() => setMetricsViewPaneShown(!shown)}
     >
-      {shown ? "Hide menu" : "Show menu"}
+      {shown ? t("metrics_view.hide_menu") : t("metrics_view.show_menu")}
     </Button>
   );
 }
 
 function ScopeChip({ label }: { label: string }) {
+  const { t } = useTranslation();
   const { root } = usePortalScope();
   const { personId } = useViewer();
   const { setScope } = usePortalNavActions();
@@ -240,11 +247,11 @@ function ScopeChip({ label }: { label: string }) {
 
   return (
     <span className="flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 ps-3 pe-1 text-sm">
-      <span className="text-muted-foreground">Scoped:</span>
+      <span className="text-muted-foreground">{t("metrics_view.scoped")}</span>
       <span className="font-medium">{label}</span>
       <button
         type="button"
-        aria-label={`Clear scope ${label}`}
+        aria-label={t("metrics_view.clear_scope", { label })}
         onClick={() => setScope({ root: null })}
         className="flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
       >
@@ -277,6 +284,7 @@ function MetricsBody({
   helpByKey: ReadonlyMap<string, MetricHelpText>;
   loading: boolean;
 }) {
+  const { t } = useTranslation();
   const { setScope } = usePortalNavActions();
   const { compare: compareParam } = usePortalSearch();
   const setSearch = useSetPortalSearch();
@@ -317,8 +325,8 @@ function MetricsBody({
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-muted-foreground">
           {comparing
-            ? `Comparing ${inView.length} people`
-            : `${inView.length} people`}
+            ? t("metrics_view.comparing", { count: inView.length })
+            : t("metrics_view.people_count", { count: inView.length })}
         </p>
         {allManagers.length > 0 && !sort && !comparing ? (
           <Button
@@ -327,7 +335,7 @@ function MetricsBody({
             size="sm"
             onClick={() => setExpanded(new Set(allExpanded ? [] : allManagers))}
           >
-            {allExpanded ? "Collapse all" : "Expand all"}
+            {allExpanded ? t("metrics_view.collapse_all") : t("metrics_view.expand_all")}
           </Button>
         ) : null}
         <div className="ms-auto flex items-center gap-2">
@@ -339,7 +347,7 @@ function MetricsBody({
               icon={<X />}
               onClick={() => setComparing(null)}
             >
-              Exit compare
+              {t("metrics_view.exit_compare")}
             </Button>
           ) : null}
           <MetricsComparePicker
@@ -351,7 +359,7 @@ function MetricsBody({
         </div>
       </div>
       {metricKeys.length === 0 ? (
-        <EmptyNote text="No metrics picked." />
+        <EmptyNote text={t("metrics_view.no_metrics")} />
       ) : loading ? (
         <CenteredSpinner className="min-h-[40vh]" />
       ) : comparing ? (

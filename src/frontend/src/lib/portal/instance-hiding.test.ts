@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import i18n from "@/i18n";
+import { resolveText, type DisplayText } from "@/i18n/localized-text";
+
 import { GROUPS, visibleGroups } from "@/lib/insight/groups";
+
+const shown = (value: DisplayText | undefined) =>
+  value === undefined ? undefined : resolveText(i18n.t, value);
 import {
   overviewCardDirections,
   visibleDirections,
@@ -48,10 +54,10 @@ describe("zoneSections under nav.hide", () => {
   });
 
   it("drops a group whose every item is hidden", () => {
-    const cost = zoneSections("aicost").find((g) => g.label === "Cost")!;
+    const cost = zoneSections("aicost").find((g) => shown(g.label) === "Cost")!;
     const policy = hide(cost.items.map((i) => `zone:aicost/item:${i.id}`));
 
-    const labels = zoneSections("aicost", policy).map((g) => g.label);
+    const labels = zoneSections("aicost", policy).map((g) => shown(g.label));
 
     expect(labels).not.toContain("Cost");
   });

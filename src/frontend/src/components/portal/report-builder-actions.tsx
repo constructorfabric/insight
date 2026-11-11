@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button, Spinner } from "@gears-frontx/ui-kit";
 
@@ -23,19 +24,20 @@ export function ReportBuilderActions({
   onCancel,
   onPreview,
 }: ReportBuilderActionsProps) {
+  const { t } = useTranslation();
   return (
     <div className="fixed end-0 bottom-0 start-0 z-30 border-t bg-background/95 backdrop-blur-sm md:start-[var(--rail-width)] lg:start-[calc(var(--rail-width)+var(--sidebar-width))]">
       <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 md:px-6">
         <div className="flex min-w-0 flex-1 flex-col">
           <span
             role="status"
-            aria-label={`${selectedCount} selected`}
+            aria-label={t("reports.selected", { count: selectedCount })}
             className="text-sm text-muted-foreground"
           >
             <strong className="font-semibold text-foreground">
               {selectedCount}
             </strong>{" "}
-            selected
+            {t("reports.selected_word")}
           </span>
           {failure ? (
             <span className="truncate text-sm text-destructive">{failure}</span>
@@ -45,7 +47,7 @@ export function ReportBuilderActions({
             </span>
           ) : running ? (
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Spinner className="size-3" /> Preparing report…
+              <Spinner className="size-3" /> {t("reports.preparing")}
             </span>
           ) : null}
         </div>
@@ -55,11 +57,11 @@ export function ReportBuilderActions({
           disabled={!hasSelection || running}
           onClick={onClear}
         >
-          Clear
+          {t("common.actions.clear")}
         </Button>
         {running ? (
           <Button type="button" variant="outline" onClick={onCancel} icon={<X className="size-4" />}>
-            Cancel
+            {t("common.actions.cancel")}
           </Button>
         ) : null}
         <Button
@@ -67,7 +69,7 @@ export function ReportBuilderActions({
           disabled={blocker != null || running}
           onClick={onPreview}
         >
-          Preview report
+          {t("reports.preview")}
         </Button>
       </div>
     </div>

@@ -1,4 +1,7 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
+
+import { resolveText } from "@/i18n/localized-text";
 
 import type { DateRange } from "@/api/period-to-date-range";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,6 +45,7 @@ export function TeamCollectionDrilldown({
   cohortLabel = "department",
   className,
 }: TeamCollectionDrilldownProps) {
+  const { t } = useTranslation();
   const gridMembers = useMemo<MembersGridMember[]>(
     () =>
       members.map((member) => ({
@@ -103,7 +107,10 @@ export function TeamCollectionDrilldown({
             byKey={data.byKey}
             previousByKey={data.previousByKey}
             showIssues
-            caption={`${def.title} metrics for each person, compared with their own ${cohortLabel} peers`}
+            caption={t("people.section.caption", {
+              title: resolveText(t, def.title),
+              cohort: cohortLabel,
+            })}
             cohortLabel={cohortLabel}
           />
         </CardContent>

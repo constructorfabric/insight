@@ -129,7 +129,7 @@ export type SectionSpec =
 export interface LensConfig {
   title: DisplayText;
   /** Subtitle tail after "N people · " (defaults to "trend & balance"). */
-  tagline?: string;
+  tagline?: DisplayText;
   sections: readonly SectionSpec[];
   /** Whole-tab message when no metric of the lens is observed (rule 6). */
   notIngested?: string;

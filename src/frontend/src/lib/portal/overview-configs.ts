@@ -18,8 +18,8 @@ export const DEFAULT_OVERVIEW_ITEM = defaultZoneItem("overview")!;
 
 export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
   [DEFAULT_OVERVIEW_ITEM]: {
-    title: "Overview",
-    tagline: "cross-functional org rollup",
+    title: { key: "overview.title" },
+    tagline: { key: "overview.tagline_rollup" },
     sections: [
       {
         kind: "headline",
@@ -50,13 +50,13 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     ],
   },
   "by-direction": {
-    title: "Overview · By direction",
-    tagline: "where to look next",
+    title: { key: "overview.by_direction_title" },
+    tagline: { key: "overview.tagline_next" },
     sections: [{ kind: "direction-cards", variant: "full" }],
   },
   attention: {
     title: { key: "worth_a_look.overview_title" },
-    tagline: "who to look at",
+    tagline: { key: "overview.tagline_who" },
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
   },
 };
@@ -65,22 +65,22 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
 export type OwnOverviewItem =
   | { kind: "home" }
   | { kind: "lens"; config: LensConfig }
-  | { kind: "attention"; title: DisplayText; tagline: string };
+  | { kind: "attention"; title: DisplayText; tagline: DisplayText };
 
 export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
   [DEFAULT_OVERVIEW_ITEM]: { kind: "home" },
   "by-direction": {
     kind: "lens",
     config: {
-      title: "By direction",
-      tagline: "your work in each direction",
+      title: { key: "overview.by_direction" },
+      tagline: { key: "overview.tagline_own_direction" },
       sections: [{ kind: "direction-cards", variant: "full" }],
     },
   },
   attention: {
     kind: "attention",
     title: { key: "worth_a_look.title" },
-    tagline: "what stands out in your work",
+    tagline: { key: "overview.tagline_own_attention" },
   },
 };
 

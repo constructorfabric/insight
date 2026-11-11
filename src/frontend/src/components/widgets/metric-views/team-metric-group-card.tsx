@@ -1,3 +1,6 @@
+import { useTranslation } from "react-i18next";
+
+import { resolveText } from "@/i18n/localized-text";
 import {
   Card,
   CardContent,
@@ -46,13 +49,15 @@ export function TeamMetricGroupCard({
   onOpen,
   subtitle,
 }: TeamMetricGroupCardProps) {
+  const { t } = useTranslation();
+  const title = resolveText(t, def.title);
   if (data.isPending) {
     // Keep the card's identity while it loads: the name in the header, a
     // spinner in the body. Not interactive — nothing to open yet.
     return (
       <Card>
         <CardHeader>
-          <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>
+          <CardTitle className={TEXT_HEADING}>{title}</CardTitle>
           {subtitle ? (
             <CardDescription className="text-xs text-muted-foreground">
               {subtitle}
@@ -62,7 +67,7 @@ export function TeamMetricGroupCard({
         <CardContent className="flex items-center justify-center py-6">
           <Spinner
             className="size-5 text-muted-foreground"
-            aria-label={`Loading ${def.title}`}
+            aria-label={t("people.section.loading_named", { title })}
           />
         </CardContent>
       </Card>
@@ -73,7 +78,7 @@ export function TeamMetricGroupCard({
       <ComingSoon
         variant="card"
         state="error"
-        label={def.title}
+        label={title}
         onRetry={data.refetch}
       />
     );
@@ -108,13 +113,13 @@ export function TeamMetricGroupCard({
         <button
           type="button"
           onClick={onOpen}
-          aria-label={`Open ${def.title} details`}
+          aria-label={t("people.section.open_named", { title })}
         />
       }
       className={cn("text-left transition-colors hover:bg-card-hover")}
     >
       <CardHeader>
-        <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>
+        <CardTitle className={TEXT_HEADING}>{title}</CardTitle>
         <CardDescription className="flex flex-col gap-1 text-xs">
           {subtitle ? (
             <span className="text-muted-foreground">{subtitle}</span>

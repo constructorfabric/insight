@@ -22,6 +22,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { resolveText } from "@/i18n/localized-text";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import type { RailEntry, RailItem } from "@/lib/portal/rail-model";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
@@ -96,6 +97,7 @@ const PANE_EDGE = "calc(var(--rail-width) + var(--sidebar-width))";
 const OPEN_AFTER_MS = 200;
 
 export function LensRail() {
+  const { t } = useTranslation();
   const layout = useShellLayout();
   const { items, activeItem, selectItem } = useRailNav();
   const { state: paneState } = useSidebar();
@@ -236,7 +238,7 @@ export function LensRail() {
           <div className="flex items-center gap-2">
             <img
               src={brandSymbol}
-              alt="Constructor Fabric"
+              alt={t("nav.brand_alt")}
               className="size-[34px] max-w-none shrink-0"
               width={34}
               height={34}
@@ -250,7 +252,7 @@ export function LensRail() {
                 open ? "opacity-100" : "opacity-0"
               )}
             >
-              Insight
+              {t("nav.insight")}
             </span>
           </div>
         </SidebarHeader>
@@ -288,7 +290,7 @@ export function LensRail() {
           <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
-                <RailButton icon={Settings} label="Settings" />
+                <RailButton icon={Settings} label={t("nav.settings")} />
               }
             />
             <PopoverContent
@@ -369,14 +371,16 @@ function RailItemButton({
   open: boolean;
   onSelect: (item: RailItem, viaPointer: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const Icon = item.icon;
+  const label = resolveText(t, item.label);
 
   return (
     <SidebarMenuItem className="relative z-10">
       <SidebarMenuButton
         data-planned={item.planned || undefined}
         isActive={active}
-        title={item.label}
+        title={label}
         // 40px shut, the full open width while open — see note 2 above. The
         // icon does not move between the two: the button starts its content at
         // the same offset either way.
@@ -398,7 +402,7 @@ function RailItemButton({
             open ? "opacity-100" : "opacity-0"
           )}
         >
-          {item.label}
+          {label}
         </span>
       </SidebarMenuButton>
     </SidebarMenuItem>

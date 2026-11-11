@@ -1,3 +1,4 @@
+import i18n from "@/i18n"
 import type { PeerStatusWithNeutral } from "./peers"
 import type { Status } from "./status"
 
@@ -80,9 +81,13 @@ export function gradeSectionStanding(counts: RankCounts): Status {
  */
 export function sectionStandingPhrase(counts: RankCounts): string {
   const rankable = rankableCount(counts)
-  if (rankable === 0) return "no comparison"
-  if (counts.bottom > 0) return `${counts.bottom} of ${rankable} behind peers`
-  if (counts.top > 0) return `${counts.top} of ${rankable} ahead of peers`
-  return "near the median"
+  if (rankable === 0) return i18n.t("common.standing.no_comparison")
+  if (counts.bottom > 0) {
+    return i18n.t("common.standing.behind_peers", { count: counts.bottom, total: rankable })
+  }
+  if (counts.top > 0) {
+    return i18n.t("common.standing.ahead_peers", { count: counts.top, total: rankable })
+  }
+  return i18n.t("common.standing.near_median")
 }
 

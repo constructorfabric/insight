@@ -2,20 +2,21 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { LayoutGrid, Share2, User, type LucideIcon } from "lucide-react";
 
 import type { OwnedFilter } from "@/api/custom-client";
+import type { DisplayText } from "@/i18n/localized-text";
 import { definitionPagesQuery } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
 
 export interface BrowseEntry {
   owned: OwnedFilter | undefined;
-  label: string;
+  label: DisplayText;
   icon: LucideIcon;
   adminOnly: boolean;
 }
 
 const BROWSE: readonly BrowseEntry[] = [
-  { owned: undefined, label: "All dashboards", icon: LayoutGrid, adminOnly: false },
-  { owned: "me", label: "My dashboards", icon: User, adminOnly: true },
-  { owned: "shared", label: "Shared with me", icon: Share2, adminOnly: false },
+  { owned: undefined, label: { key: "nav.items.all_dashboards" }, icon: LayoutGrid, adminOnly: false },
+  { owned: "me", label: { key: "nav.items.my_dashboards" }, icon: User, adminOnly: true },
+  { owned: "shared", label: { key: "nav.items.shared_with_me" }, icon: Share2, adminOnly: false },
 ];
 
 export interface BrowseRow extends BrowseEntry {

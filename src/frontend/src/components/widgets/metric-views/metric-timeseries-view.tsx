@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronsDownUp,
   ChevronsUpDown,
@@ -107,6 +108,7 @@ function DimensionControls({
   onFilterChange,
   className,
 }: DimensionControlsProps) {
+  const { t } = useTranslation();
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
       {dimensions.length > 1 ? (
@@ -119,7 +121,7 @@ function DimensionControls({
           }}
           variant="outline"
           size="sm"
-          aria-label="Group by"
+          aria-label={t("common.chart.group_by")}
         >
           {dimensions.map((dimension) => (
             <ToggleGroupItem key={dimension} value={dimension}>
@@ -136,15 +138,15 @@ function DimensionControls({
                 type="button"
                 variant="outline"
                 size="sm"
-                aria-label="Filters"
-                title="Filters"
+                aria-label={t("common.chart.filters")}
+                title={t("common.chart.filters")}
                 icon={<ListFilter className="size-4" />}
               />
             }
           />
           <PopoverContent align="start" className="w-72">
             <PopoverHeader>
-              <PopoverTitle>Filters</PopoverTitle>
+              <PopoverTitle>{t("common.chart.filters")}</PopoverTitle>
             </PopoverHeader>
             {filters.map((filter) => (
               <div key={filter.dimension} className="flex flex-col gap-2">
@@ -208,7 +210,9 @@ function DimensionControls({
             variant="secondary"
             size="sm"
             className="rounded-full"
-            aria-label={`Clear ${dimensionName(filter.dimension)} filter`}
+            aria-label={t("common.chart.clear_filter", {
+              dimension: dimensionName(filter.dimension),
+            })}
             onClick={() => onFilterChange(filter.dimension, [])}
             end={<X className="size-3" />}
           >
@@ -232,6 +236,7 @@ export function MetricTimeseriesView({
   groupBy,
   table,
 }: MetricTimeseriesViewProps) {
+  const { t } = useTranslation();
   const evidenceContext = useMetricEvidenceOptional();
   const [presentation, setPresentation] = useLocalStorageState<Presentation>({
     key: `insight.timeseries.${id}.presentation`,
@@ -412,10 +417,10 @@ export function MetricTimeseriesView({
     model.metrics.length > 0 ? model.bucket : resolveTimeseriesBucket(range);
   const bucketLabel =
     displayBucket === "day"
-      ? "Daily"
+      ? t("common.chart.daily")
       : displayBucket === "week"
-        ? "Weekly"
-        : "Monthly";
+        ? t("common.chart.weekly")
+        : t("common.chart.monthly");
 
   function changeDimension(dimension: string): void {
     if (!dimension) return;
@@ -521,7 +526,7 @@ export function MetricTimeseriesView({
               >
                 <SelectTrigger
                   size="sm"
-                  aria-label="Metric"
+                  aria-label={t("common.chart.metric")}
                   className="min-w-0 max-w-full border-transparent bg-transparent ps-2 pe-2 font-semibold shadow-none hover:bg-muted/50 focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-muted/50 dark:bg-transparent dark:hover:bg-muted/50 [&>span]:truncate"
                 >
                   <SelectValue>{selectedMetric.label}</SelectValue>
@@ -573,8 +578,8 @@ export function MetricTimeseriesView({
               variant="outline"
               size="sm"
               disabled={data.isFetching}
-              aria-label="View supporting data"
-              title="View supporting data"
+              aria-label={t("common.chart.supporting_data")}
+              title={t("common.chart.supporting_data")}
               onClick={() =>
                 evidenceContext?.openEvidenceTargets(evidenceTargets, {
                   title: evidenceTargets
@@ -597,8 +602,8 @@ export function MetricTimeseriesView({
               type="button"
               variant="outline"
               size="sm"
-              aria-label={expanded ? "Scroll the table" : "Show every row"}
-              title={expanded ? "Scroll the table" : "Show every row"}
+              aria-label={expanded ? t("common.chart.scroll_table") : t("common.chart.show_every_row")}
+              title={expanded ? t("common.chart.scroll_table") : t("common.chart.show_every_row")}
               aria-pressed={expanded}
               onClick={() => setExpanded((value) => !value)}
               icon={expanded ? (

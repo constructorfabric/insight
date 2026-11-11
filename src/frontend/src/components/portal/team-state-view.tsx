@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AttentionList } from "@/components/portal/attention-list";
 import { MemberFilter } from "@/components/portal/member-filter";
@@ -47,6 +48,7 @@ import { cn } from "@/lib/utils";
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 
 function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
+  const { t } = useTranslation();
   const [selection, setSelection] = useState<MemberSelection>({ kind: "all" });
   const visibleMembers = useMemo(
     () => selectedMembers(members, selection),
@@ -57,7 +59,7 @@ function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          Members
+          {t("common.team_sections_meta.members")}
         </p>
         <MemberFilter
           members={members}
@@ -74,14 +76,14 @@ function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
       ) : (
         <Card>
           <CardContent className="flex min-h-40 flex-col items-center justify-center gap-3 text-center">
-            <p className="text-sm text-muted-foreground">No people selected.</p>
+            <p className="text-sm text-muted-foreground">{t("people.no_people_selected")}</p>
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => setSelection({ kind: "all" })}
             >
-              Show all
+              {t("people.show_all")}
             </Button>
           </CardContent>
         </Card>
@@ -102,6 +104,7 @@ function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
  * narrows it to direct reports.
  */
 export function TeamStateView() {
+  const { t } = useTranslation();
   const { dateRange, compareTo } = usePortalPeriod();
 
   const orgScope = useOrgScope();
@@ -265,7 +268,7 @@ export function TeamStateView() {
     memberCount: members.length,
     gridPending: grid.isPending,
     gridError: grid.isError,
-    emptyLabel: "No people in the current scope. Pick a different scope at the top of the page.",
+    emptyLabel: t("people.empty_scope"),
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -280,15 +283,15 @@ export function TeamStateView() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
-            {teamName ? `${teamName}'s team` : "Team"}
+            {teamName ? t("people.team_possessive", { name: teamName }) : t("common.table.team")}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {members.length} people · state &amp; attention
+            {t("people.people_state", { count: members.length })}
           </p>
         </div>
         {orgScope.canDirectOnly ? (
           <label className="flex cursor-pointer items-center gap-2 text-sm select-none">
-            <span>Direct reports only</span>
+            <span>{t("people.direct_reports_only")}</span>
             <Switch
               checked={portalScope.directOnly}
               onCheckedChange={(directOnly) => setScope({ directOnly })}
@@ -305,7 +308,11 @@ export function TeamStateView() {
               <CardContent className="p-4">
                 <div className="text-xs font-medium text-muted-foreground">{s.label}</div>
                 <div className={cn("mt-1", TEXT_FIGURE)}>{s.text}</div>
-                <div className="text-xs text-muted-foreground">{s.kind}</div>
+                <div className="text-xs text-muted-foreground">
+                  {s.kind === "team total"
+                    ? t("people.team_total")
+                    : t("people.team_median")}
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -326,7 +333,9 @@ export function TeamStateView() {
         metricKeys={shownKeys}
         byKey={heatByKey}
         previousByKey={grid.previousByKey}
-        caption={`${teamName || "Team"} — people × metrics`}
+        caption={t("people.caption", {
+          team: teamName || t("common.table.team"),
+        })}
         cohortLabel={cohortLabel}
       />
     </div>

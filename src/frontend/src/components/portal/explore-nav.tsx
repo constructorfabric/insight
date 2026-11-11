@@ -116,11 +116,12 @@ function Folder({
 }
 
 function DirectionsGroup() {
+  const { t } = useTranslation();
   const showPlanned = usePortalShowPlanned();
   const directions = visibleDirections(showPlanned);
   return (
     <SidebarGroup>
-      <PaneGroupLabel>Directions</PaneGroupLabel>
+      <PaneGroupLabel>{t("nav.groups.directions")}</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {directions.map((d) => (
@@ -133,6 +134,7 @@ function DirectionsGroup() {
 }
 
 function DirectionItem({ direction }: { direction: Direction }) {
+  const { t } = useTranslation();
   const { setDir, openDirection } = usePortalNavActions();
   const { activeZone } = useActiveZone();
   const activeDir = usePortalDir();
@@ -145,7 +147,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
     <Folder
       data-planned={visibleLenses(direction, false).length === 0 || undefined}
       icon={direction.icon}
-      label={direction.name}
+      label={resolveText(t, direction.name)}
       expanded={expanded}
       onToggle={() =>
         expanded
@@ -164,6 +166,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
 }
 
 function AiCostGroup() {
+  const { t } = useTranslation();
   const { activeZone } = useActiveZone();
   const { openItem } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
@@ -172,12 +175,16 @@ function AiCostGroup() {
 
   return (
     <SidebarGroup>
-      <PaneGroupLabel>AI &amp; Cost</PaneGroupLabel>
+      <PaneGroupLabel>{t("nav.zones.aicost")}</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {zoneSections("aicost").map((group, i) =>
             group.label ? (
-              <AiCostFolder key={group.label} group={group} active={active} />
+              <AiCostFolder
+                key={typeof group.label === "string" ? group.label : group.label.key}
+                group={group}
+                active={active}
+              />
             ) : (
               orderByReadiness(group.items, showPlanned).map((item) => (
                 <ItemButton
@@ -210,7 +217,7 @@ function AiCostFolder({ group, active }: { group: PaneGroup; active: string | nu
     <Folder
       data-planned={orderByReadiness(group.items, false).length === 0 || undefined}
       icon={group.icon ?? Layers}
-      label={group.label ?? ""}
+      label={group.label ? resolveText(t, group.label) : ""}
       expanded={expanded}
       onToggle={() => {
         if (expanded) {

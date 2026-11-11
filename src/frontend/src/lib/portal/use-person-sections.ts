@@ -1,3 +1,6 @@
+import { useTranslation } from "react-i18next";
+
+import { resolveText } from "@/i18n/localized-text";
 import { visibleGroups, type GroupId } from "@/lib/insight/groups";
 import { groupHasData } from "@/lib/insight/group-data";
 import { partState, reachableMetricKeys } from "@/lib/insight/coverage";
@@ -147,6 +150,7 @@ export function usePersonSectionCohort(
  * extra request.
  */
 export function usePersonSectionStandings(personId: string): SectionStanding[] {
+  const { t } = useTranslation();
   const entityId = normalizePersonId(personId);
   const showPlanned = usePortalShowPlanned();
   const groups = visibleGroups(showPlanned);
@@ -195,7 +199,7 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
 
     return {
       id: def.id,
-      title: def.title,
+      title: resolveText(t, def.title),
       status: gradeSectionStanding(counts),
       phrase: sectionStandingPhrase(counts),
       hasData: groupHasData(def, byKey, entityId),

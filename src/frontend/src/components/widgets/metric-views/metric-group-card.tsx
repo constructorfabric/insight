@@ -1,4 +1,7 @@
 import { ChevronRight } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
+import { resolveText } from "@/i18n/localized-text";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import {
   Card,
@@ -72,13 +75,15 @@ export function MetricGroupCard({
   subtitle,
   rankByMetricKey,
 }: MetricGroupCardProps) {
+  const { t } = useTranslation();
+  const title = resolveText(t, def.title);
   if (data.isPending) {
     // Keep the card's identity while it loads: the name in the header, a
     // spinner in the body. Not interactive — nothing to open yet.
     return (
       <Card>
         <CardHeader>
-          <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>
+          <CardTitle className={TEXT_HEADING}>{title}</CardTitle>
           {subtitle ? (
             <CardDescription className="text-xs text-muted-foreground">
               {subtitle}
@@ -88,7 +93,7 @@ export function MetricGroupCard({
         <CardContent className="flex items-center justify-center py-6">
           <Spinner
             className="size-5 text-muted-foreground"
-            aria-label={`Loading ${def.title}`}
+            aria-label={t("people.section.loading_named", { title })}
           />
         </CardContent>
       </Card>
@@ -99,7 +104,7 @@ export function MetricGroupCard({
       <ComingSoon
         variant="card"
         state="error"
-        label={def.title}
+        label={title}
         onRetry={data.refetch}
       />
     );
@@ -190,7 +195,7 @@ export function MetricGroupCard({
             onClick={onOpen}
             onMouseEnter={onHover}
             onFocus={onHover}
-            aria-label={`Open ${def.title} details`}
+            aria-label={t("people.section.open_named", { title })}
           />
         )
       }
@@ -203,7 +208,7 @@ export function MetricGroupCard({
     >
       <CardHeader>
         <CardTitle className={cn("flex items-center gap-1", TEXT_HEADING)}>
-          <span className="min-w-0 truncate">{def.title}</span>
+          <span className="min-w-0 truncate">{title}</span>
           {/* Same standing affordance as the KPI tile — an empty card is not
               interactive and gets none. */}
           {isEmpty ? null : (

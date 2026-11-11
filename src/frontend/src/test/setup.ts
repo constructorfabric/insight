@@ -46,6 +46,8 @@ if (typeof window !== "undefined" && !window.localStorage) {
   });
 }
 
+await import("@/i18n");
+
 afterEach(() => {
   cleanup();
 });
