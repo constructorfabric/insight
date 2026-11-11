@@ -7,7 +7,7 @@ date: 2026-11-11
 
 ## 1. Purpose
 
-After an Insight upgrade or rollback, every transformation whose code changed is rebuilt from bronze, together with everything built from it. Metrics then reflect the release that is installed, not the release that built each row. Model authors do nothing extra: the change is detected from the code.
+After an Insight upgrade or rollback, every transformation whose code changed is rebuilt from bronze, together with everything built from it. Metrics then reflect the release that is installed, not the release that built each row, and the metric validator checks dimension coverage strictly again. Model authors do nothing extra: the change is detected from the code. A connector's version governs only how the connector loads bronze.
 
 ## 2. Users
 
@@ -97,6 +97,17 @@ A release changes one silver model. Bronze is loaded, no sync is running, and ev
 3. Each run is recorded in ClickHouse with its release, start, end and outcome.
 4. A failed transform run raises the same kind of alert as a failed sync.
 
+### 4.12 Connector versions
+
+1. A connector version change republishes the connector, rediscovers its streams and syncs it. It does not rebuild the connector's models.
+2. A sync never runs dbt with a full refresh.
+3. No upgrade, rollback, transform run or connector version change clears bronze.
+
+### 4.13 Metric validation
+
+1. While a metric's models wait for a transform run, the dimension coverage check does not fail the metric. The validator reports it as `unchecked`, and the metric is served.
+2. Once its models are rebuilt, a metric that fails the dimension coverage check is `error` with `dimension_not_covered`, and the metric is not served.
+
 ## 5. Constraints
 
 1. A transform run sees only dependencies dbt records: `ref`, `source` and `-- depends_on` lines. A read hidden from dbt is not followed.
@@ -121,3 +132,5 @@ A release changes one silver model. Bronze is loaded, no sync is running, and ev
 9. **A missing connector.** On an install without a connector, a release changes one of its models. The run completes without it.
 10. **A new bronze column.** A release adds a column to a connector and a model that reads it. The rebuild after the upgrade succeeds before the connector syncs, and after the sync the model carries the column for the rows synced.
 11. **First run.** On an install with no applied state, the first run stores it and rebuilds nothing.
+12. **A connector version change.** Raise a connector's version. The connector is republished and synced, and dbt runs without a full refresh.
+13. **Strict validation after an upgrade.** On the chart validation stand, an upgrade adds a dimension to a metric. While its models wait, the metric is `unchecked` and served. After the transform run it is `ok` under strict validation.
