@@ -63,13 +63,21 @@ export function dashboardDocumentTitle(
   return formatDocumentTitle([name, "Dashboards"]);
 }
 
-export function compareDocumentTitle(names: readonly string[]): string {
+export function openDashboardTitle(
+  read: { title?: string | null; name?: string | null } | null
+): string | null {
+  if (!read) return null;
+
+  return dashboardDocumentTitle(dashboardDisplayName(read.title, read.name));
+}
+
+export function compareDocumentTitle(names: readonly string[]): string | null {
   const kept = names
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
-  const lead = kept.length === 0 ? "Compare" : kept.join(", ");
+  if (kept.length === 0) return null;
 
-  return formatDocumentTitle([lead, "Metrics view", "People"]);
+  return formatDocumentTitle([kept.join(", "), "Metrics view", "People"]);
 }
 
 export function personSectionTitle(item: string | null): string | null {

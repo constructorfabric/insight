@@ -5,6 +5,7 @@ import {
   dashboardDisplayName,
   dashboardDocumentTitle,
   formatDocumentTitle,
+  openDashboardTitle,
   pageDocumentTitle,
   personDocumentTitle,
   teamDocumentTitle,
@@ -105,68 +106,59 @@ describe("pageDocumentTitle", () => {
     ).toBe("Roster · People · Insight");
   });
 
-  it("reads a person or team path even when the zone param is absent", () => {
+  it.each([
+    ["/ic/ada/personal", "git_output", "Git output · Person · Insight"],
+    ["/ic/ada/team", "metrics", "Metrics view · People · Insight"],
+  ])("names %s from the path when no zone is set", (pathname, item, title) => {
     expect(
-      pageDocumentTitle(
-        route({ pathname: "/ic/ada/personal", zone: null, item: "git_output" })
-      )
-    ).toBe("Git output · Person · Insight");
-    expect(
-      pageDocumentTitle(
-        route({ pathname: "/ic/ada/team", zone: null, item: "metrics" })
-      )
-    ).toBe("Metrics view · People · Insight");
+      pageDocumentTitle(route({ pathname, zone: null, item })),
+      pathname
+    ).toBe(title);
   });
 
-  it("names manage, including the identities mode that is open", () => {
+  it("names the manage page that is open", () => {
     expect(
-      pageDocumentTitle(route({ zone: "manage", item: "connector-health" }))
+      pageDocumentTitle(route({ zone: "manage", item: "connector-health" })),
+      "connector health"
     ).toBe("Sources & connectors · Manage · Insight");
+  });
+
+  it("names the identities mode that is open", () => {
     expect(
       pageDocumentTitle(
         route({ zone: "manage", item: "identities", mode: "queue" })
-      )
+      ),
+      "review queue"
     ).toBe("Review queue · Identities · roles & taxonomy · Manage · Insight");
   });
 
-  it("names AI and cost and the report builder", () => {
-    expect(pageDocumentTitle(route({ zone: "aicost" }))).toBe(
-      "AI & Cost · Insight"
-    );
-    expect(
-      pageDocumentTitle(route({ zone: "aicost", item: "spend-by-tool" }))
-    ).toBe("Spend by tool · AI & Cost · Insight");
-    expect(pageDocumentTitle(route({ zone: "reports" }))).toBe(
-      "Report builder · Reports · Insight"
-    );
+  it.each([
+    [{ zone: "aicost" }, "AI & Cost · Insight"],
+    [
+      { zone: "aicost", item: "spend-by-tool" },
+      "Spend by tool · AI & Cost · Insight",
+    ],
+    [{ zone: "reports" }, "Report builder · Reports · Insight"],
+  ] as const)("names %j", (over, title) => {
+    expect(pageDocumentTitle(route(over)), title).toBe(title);
   });
 
-  it("names each custom catalogue and an editor", () => {
-    expect(pageDocumentTitle(route({ pathname: "/portal/custom/" }))).toBe(
-      "Dashboards · Insight"
-    );
-    expect(
-      pageDocumentTitle(route({ pathname: "/portal/custom/metrics" }))
-    ).toBe("Metrics · Dashboards · Insight");
-    expect(
-      pageDocumentTitle(route({ pathname: "/portal/custom/widgets/deploys" }))
-    ).toBe("Widgets · Dashboards · Insight");
-    expect(
-      pageDocumentTitle(route({ pathname: "/portal/custom/alerts/new" }))
-    ).toBe("New alert · Alerts · Dashboards · Insight");
-    expect(
-      pageDocumentTitle(
-        route({ pathname: "/portal/custom/alerts/rule-1/edit" })
-      )
-    ).toBe("Edit alert · Alerts · Dashboards · Insight");
-    expect(
-      pageDocumentTitle(route({ pathname: "/portal/custom/new/metrics" }))
-    ).toBe("New metric · Dashboards · Insight");
-    expect(
-      pageDocumentTitle(
-        route({ pathname: "/portal/custom/edit/dashboards/release-health" })
-      )
-    ).toBe("Edit dashboard · Dashboards · Insight");
+  it.each([
+    ["/portal/custom/", "Dashboards · Insight"],
+    ["/portal/custom/metrics", "Metrics · Dashboards · Insight"],
+    ["/portal/custom/widgets/deploys", "Widgets · Dashboards · Insight"],
+    ["/portal/custom/alerts/new", "New alert · Alerts · Dashboards · Insight"],
+    [
+      "/portal/custom/alerts/rule-1/edit",
+      "Edit alert · Alerts · Dashboards · Insight",
+    ],
+    ["/portal/custom/new/metrics", "New metric · Dashboards · Insight"],
+    [
+      "/portal/custom/edit/dashboards/release-health",
+      "Edit dashboard · Dashboards · Insight",
+    ],
+  ])("names %s as %s", (pathname, title) => {
+    expect(pageDocumentTitle(route({ pathname })), pathname).toBe(title);
   });
 
   it("does not use a dashboard url slug as its name", () => {
@@ -201,6 +193,16 @@ describe("dashboardDocumentTitle", () => {
   it("returns null while the name is missing so the route title stands", () => {
     expect(dashboardDocumentTitle(null)).toBeNull();
     expect(dashboardDocumentTitle("   ")).toBeNull();
+    expect(openDashboardTitle(null)).toBeNull();
+  });
+
+  it("uses the loaded board's title once a read exists", () => {
+    expect(openDashboardTitle({ title: "Release health", name: "old" })).toBe(
+      "Release health · Dashboards · Insight"
+    );
+    expect(openDashboardTitle({ title: "  ", name: "old-name" })).toBe(
+      "old-name · Dashboards · Insight"
+    );
   });
 });
 
@@ -211,13 +213,9 @@ describe("compareDocumentTitle", () => {
     );
   });
 
-  it("says compare until a name is known", () => {
-    expect(compareDocumentTitle([])).toBe(
-      "Compare · Metrics view · People · Insight"
-    );
-    expect(compareDocumentTitle(["  "])).toBe(
-      "Compare · Metrics view · People · Insight"
-    );
+  it("returns null until a compared person has a name", () => {
+    expect(compareDocumentTitle([])).toBeNull();
+    expect(compareDocumentTitle(["  "])).toBeNull();
   });
 });
 
