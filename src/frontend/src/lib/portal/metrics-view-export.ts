@@ -18,9 +18,21 @@ function fileUnit({ format, unit }: NormalizedMetricResult): string | null {
   return unit;
 }
 
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+function isWordChar(char: string | undefined): boolean {
+  return char !== undefined && WORD_CHAR.test(char);
+}
+
 function namesUnit(label: string, unit: string): boolean {
-  const escaped = unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "iu").test(label);
+  const haystack = label.toLowerCase();
+  const needle = unit.toLowerCase();
+  if (!needle) return false;
+
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
+    if (!isWordChar(haystack[at - 1]) && !isWordChar(haystack[at + needle.length])) return true;
+  }
+  return false;
 }
 
 function columnTitle(key: string, result: NormalizedMetricResult | undefined): string {
