@@ -14,7 +14,6 @@ const HOME_PATHS = new Set([
   "/portal/overview/at-a-glance",
 ]);
 
-/** Tab title from the usage screen name, most specific part first. */
 export function documentTitle(
   screenPath: string,
   subject?: string | null
@@ -25,16 +24,14 @@ export function documentTitle(
     return finish(subject?.trim() ? [subject.trim()] : []);
   }
 
-  const crumbs = named.split(CRUMB);
-  const leaf = decodeLeaf(screenPath);
-  if (leaf && crumbs[crumbs.length - 1] === leaf) crumbs.pop();
-
+  const echoed = pathSegments(screenPath);
   const parts: string[] = [];
   const specific = subject?.trim();
   if (specific) parts.push(specific);
+  const crumbs = named.split(CRUMB);
   for (let i = crumbs.length - 1; i >= 0; i -= 1) {
     const crumb = crumbs[i]?.trim();
-    if (crumb) parts.push(crumb);
+    if (crumb && !echoed.has(crumb)) parts.push(crumb);
   }
   return finish(parts);
 }
@@ -67,14 +64,17 @@ function strip(pathname: string): string {
   return pathname;
 }
 
-function decodeLeaf(screenPath: string): string | undefined {
-  const leaf = strip(screenPath).split("/").pop();
-  if (!leaf) return undefined;
-  try {
-    return decodeURIComponent(leaf);
-  } catch {
-    return leaf;
+function pathSegments(screenPath: string): Set<string> {
+  const segments = new Set<string>();
+  for (const segment of strip(screenPath).split("/")) {
+    if (!segment) continue;
+    try {
+      segments.add(decodeURIComponent(segment));
+    } catch {
+      segments.add(segment);
+    }
   }
+  return segments;
 }
 
 function searchWithoutZone(search: string): string {

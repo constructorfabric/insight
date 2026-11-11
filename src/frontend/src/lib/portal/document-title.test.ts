@@ -40,6 +40,9 @@ describe("documentTitle", () => {
     expect(documentTitle("/portal/custom/metrics/deploy-frequency")).toBe(
       "Metrics · Dashboards · Insight"
     );
+    expect(documentTitle("/portal/custom/alerts/rule-1/edit")).toBe(
+      "Edit · Alerts · Dashboards · Insight"
+    );
   });
 
   it("puts a known subject ahead of the screen name", () => {
