@@ -10,10 +10,10 @@
 SELECT
     tenant_id,
     source_id AS insight_source_id,
-    MD5(concat(tenant_id, '-', source_id, '-', coalesce(userPrincipalName, ''), '-', toString(reportRefreshDate))) AS unique_key,
-    userPrincipalName AS user_id,
-    userPrincipalName AS user_name,
-    userPrincipalName AS email,
+    MD5(concat(tenant_id, '-', source_id, '-', lower(coalesce(userPrincipalName, '')), '-', toString(reportRefreshDate))) AS unique_key,
+    lower(userPrincipalName) AS user_id,
+    lower(userPrincipalName) AS user_name,
+    lower(userPrincipalName) AS email,
     if(userPrincipalName IS NOT NULL AND userPrincipalName != '',
        lower(userPrincipalName),
        '') AS person_key,
@@ -54,3 +54,7 @@ WHERE userPrincipalName IS NOT NULL
     )
   )
 {% endif %}
+-- INVARIANT: Microsoft may return one account's UPN in a different letter case
+-- on another extract; the key is case-insensitive and the newest extract wins.
+ORDER BY _airbyte_extracted_at DESC
+LIMIT 1 BY unique_key

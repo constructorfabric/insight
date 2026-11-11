@@ -499,6 +499,13 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: []
+        # INVARIANT: an envelope is stored only for a day the user stream also
+        # returns rows for. A record advances its stream's cursor, so storing
+        # an empty day's envelope moves this cursor past the user cursor, and
+        # the user stream then re-reads days with no envelope from the same read.
+        record_filter:
+          type: RecordFilter
+          condition: "{{ (record.get('users') or []) | length > 0 }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: metric_date
