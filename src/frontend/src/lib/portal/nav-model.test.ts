@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import i18n from "@/i18n";
-import { resolveText, type DisplayText } from "@/i18n/localized-text";
+import { resolveText } from "@/i18n/localized-text";
 
 import {
   defaultZoneItem,
@@ -14,9 +14,6 @@ import {
   ZONES,
   zoneItems,
 } from "./nav-model";
-
-const shown = (value: DisplayText | undefined) =>
-  value === undefined ? value : resolveText(i18n.t, value);
 
 const defaults = ZONES.map((z) => [z.id, defaultZoneItem(z.id)] as const);
 
@@ -154,8 +151,8 @@ describe("manageGroupsFor", () => {
   const labelsOf = (isAdmin: boolean, canManagePreviews = false) =>
     Object.fromEntries(
       manageGroupsFor({ isAdmin, canManagePreviews }).map((g) => [
-        shown(g.label),
-        g.items.map((i) => shown(i.label)),
+        resolveText(i18n.t, g.label!),
+        g.items.map((i) => resolveText(i18n.t, i.label)),
       ]),
     );
 
@@ -214,13 +211,13 @@ describe("peopleItemsFor", () => {
     const items = peopleItemsFor(false);
 
     expect(items.map((item) => item.id)).toEqual(["roster", "employees", "metrics"]);
-    expect(items.map((item) => shown(item.label))).toEqual(["My team", "Roster · by role", "Metrics view"]);
+    expect(items.map((item) => resolveText(i18n.t, item.label))).toEqual(["My team", "Roster · by role", "Metrics view"]);
   });
 
   it("names the same views for an organisation with no reporting lines", () => {
     const items = peopleItemsFor(true);
 
     expect(items.map((item) => item.id)).toEqual(["roster", "employees", "metrics"]);
-    expect(items.map((item) => shown(item.label))).toEqual(["Overview", "Roster", "Metrics view"]);
+    expect(items.map((item) => resolveText(i18n.t, item.label))).toEqual(["Overview", "Roster", "Metrics view"]);
   });
 });

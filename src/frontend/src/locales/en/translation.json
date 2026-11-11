@@ -161,6 +161,11 @@
       "near_median": "Near the median",
       "bottom": "Bottom 25%",
       "no_comparison": "No comparison"
+    },
+    "lens": {
+      "scope_line_one": "{{scope}} · {{count}} person · ",
+      "scope_line_other": "{{scope}} · {{count}} people · ",
+      "default_tagline": "trend & balance"
     }
   },
   "theme": {
@@ -821,9 +826,6 @@
     "tagline_who": "who to look at",
     "tagline_own_direction": "your work in each direction",
     "not_a_view": "“{{item}}” isn't an Overview view yet.",
-    "default_tagline": "trend & balance",
-    "scope_line_one": "{{scope}} · {{count}} person · ",
-    "scope_line_other": "{{scope}} · {{count}} people · ",
     "tagline_own_attention": "what stands out in your work",
     "no_person": "There is no person record to show here."
   },
@@ -834,9 +836,6 @@
     "tenant": "Tenant",
     "granularity": "Granularity",
     "reading_catalogue": "Reading the catalogue…",
-    "daily": "Daily",
-    "weekly": "Weekly",
-    "monthly": "Monthly",
     "quarterly": "Quarterly",
     "yearly": "Yearly",
     "search_metrics": "Search metrics",
@@ -925,7 +924,6 @@
     "filter_title": "People",
     "all": "All",
     "none": "None",
-    "find_someone": "Find someone",
     "no_people_found": "No people found.",
     "employees": "Employees",
     "roster": "Roster",

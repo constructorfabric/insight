@@ -3,8 +3,6 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import i18n from "@/i18n";
-
 import type { PeopleListItem } from "@/api/identity-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -24,7 +22,6 @@ import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import { cn } from "@/lib/utils";
 
-// Mirrors the rail: a person with neither display name nor email is still a row.
 interface EmployeeRow {
   personId: string;
   displayName: string;
@@ -35,11 +32,14 @@ interface EmployeeRow {
   status: string;
 }
 
-function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
+function rosterEmployees(
+  roster: readonly PeopleListItem[],
+  unnamed: string,
+): EmployeeRow[] {
   return roster
     .map((person) => ({
       personId: person.person_id,
-      displayName: personName(person) ?? i18n.t("identities.person.unnamed"),
+      displayName: personName(person) ?? unnamed,
       jobTitle: person.attributes.job_title ?? "",
       department: person.attributes.department ?? "",
       division: person.attributes.division ?? "",
@@ -60,9 +60,10 @@ export function EmployeesView() {
   const visibleRoster = useVisibleRoster(true);
   const [query, setQuery] = useState("");
 
+  const unnamed = t("identities.person.unnamed");
   const employees = useMemo(
-    () => rosterEmployees(visibleRoster.roster),
-    [visibleRoster.roster],
+    () => rosterEmployees(visibleRoster.roster, unnamed),
+    [visibleRoster.roster, unnamed],
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -39,11 +39,16 @@ import { recordUsageEvent } from "@/telemetry";
 
 const GRANULARITIES: ReadonlyArray<{
   value: ReportGranularity;
-  labelKey: "reports.daily" | "reports.weekly" | "reports.monthly" | "reports.quarterly" | "reports.yearly";
+  labelKey:
+    | "common.chart.daily"
+    | "common.chart.weekly"
+    | "common.chart.monthly"
+    | "reports.quarterly"
+    | "reports.yearly";
 }> = [
-  { value: "day", labelKey: "reports.daily" },
-  { value: "week", labelKey: "reports.weekly" },
-  { value: "month", labelKey: "reports.monthly" },
+  { value: "day", labelKey: "common.chart.daily" },
+  { value: "week", labelKey: "common.chart.weekly" },
+  { value: "month", labelKey: "common.chart.monthly" },
   { value: "quarter", labelKey: "reports.quarterly" },
   { value: "year", labelKey: "reports.yearly" },
 ];

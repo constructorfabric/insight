@@ -683,11 +683,11 @@ export function DomainLensView({
           <p className="text-sm text-muted-foreground">
             {personId
               ? null
-              : t("overview.scope_line", {
+              : t("common.lens.scope_line", {
                   scope: orgScope.label,
                   count: members.length,
                 })}
-            {resolveText(t, config.tagline ?? { key: "overview.default_tagline" })}
+            {resolveText(t, config.tagline ?? { key: "common.lens.default_tagline" })}
           </p>
         </div>
         {drawable.length > 0 && trendBucket ? (

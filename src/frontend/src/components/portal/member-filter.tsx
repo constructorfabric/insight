@@ -115,8 +115,8 @@ export function MemberFilter({
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("people.find_someone")}
-            aria-label={t("people.find_someone")}
+            placeholder={t("nav.find_someone")}
+            aria-label={t("nav.find_someone")}
             className="ps-8"
           />
         </div>

@@ -22,7 +22,6 @@ import {
 } from "@gears-frontx/ui-kit";
 import {
   UNMEASURED,
-  SCHEDULE_HEADING,
   describeConnector,
   describeDuration,
   describeInstance,
@@ -118,7 +117,7 @@ export function ConnectorHealthPane() {
                 {/* One connector can be configured more than once; this is the
                     only cell that tells those rows apart. */}
                 <TableHead className="whitespace-normal">{t("connectors.instance")}</TableHead>
-                <TableHead className="whitespace-normal">{SCHEDULE_HEADING}</TableHead>
+                <TableHead className="whitespace-normal">{t("connectors.next_sync")}</TableHead>
                 <TableHead className="whitespace-normal">{t("connectors.state")}</TableHead>
                 <TableHead className="whitespace-normal">{t("connectors.last_sync_started")}</TableHead>
                 <TableHead className="text-right whitespace-normal">{t("connectors.duration")}</TableHead>

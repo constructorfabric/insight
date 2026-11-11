@@ -10,8 +10,6 @@ import type {
 import i18n from "@/i18n";
 import { nextScheduledRun } from "@/lib/portal/connector-schedule";
 
-export const SCHEDULE_HEADING = i18n.t("connectors.next_sync");
-
 export function describeSchedule(schedule: AppliedSchedule): string {
   const timezone = schedule.timezone ?? i18n.t("connectors.controller_time");
   return schedule.suspended
