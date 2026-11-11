@@ -683,8 +683,11 @@ export function DomainLensView({
           <p className="text-sm text-muted-foreground">
             {personId
               ? null
-              : `${orgScope.label} · ${members.length} ${members.length === 1 ? "person" : "people"} · `}
-            {config.tagline ?? "trend & balance"}
+              : t("common.lens.scope_line", {
+                  scope: orgScope.label,
+                  count: members.length,
+                })}
+            {resolveText(t, config.tagline ?? { key: "common.lens.default_tagline" })}
           </p>
         </div>
         {drawable.length > 0 && trendBucket ? (
@@ -2747,6 +2750,7 @@ function DirectionCardsSection({
   personal: boolean;
   personalReach: ReadonlySet<string> | null;
 }) {
+  const { t } = useTranslation();
   const { openDirection } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
   const cards = overviewCardDirections(showPlanned)
@@ -2778,16 +2782,16 @@ function DirectionCardsSection({
   return (
     <section className="flex flex-col gap-3">
       <p className={TEXT_EYEBROW}>
-        By direction
+        {t("nav.items.by_direction")}
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(16rem,1fr))] gap-3">
         {cards.map((c) => {
           const body = (
             <div className="flex flex-col gap-2 p-4">
-              <div className="text-sm font-semibold">{c.name}</div>
+              <div className="text-sm font-semibold">{resolveText(t, c.name)}</div>
               {!c.connected ? (
                 <span className="text-xs text-muted-foreground">
-                  this data source is not connected yet
+                  {t("directions.not_connected")}
                 </span>
               ) : !c.observed ? (
                 <span className="text-xs text-muted-foreground">

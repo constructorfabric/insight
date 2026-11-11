@@ -1,6 +1,8 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { DomainLensView, Pending } from "@/components/portal/domain-lens-view";
+import { resolveText } from "@/i18n/localized-text";
 import { TenantLensView } from "@/components/portal/tenant-lens-view";
 import { directionMetricKeys, lensEntry } from "@/lib/portal/lens-configs";
 import { DIRECTIONS, lensSlug } from "@/lib/portal/nav-model";
@@ -12,6 +14,7 @@ import { DIRECTIONS, lensSlug } from "@/lib/portal/nav-model";
  * (union of the direction's lens keys) so switching lenses never re-spins.
  */
 export function DirectionView({ dir, lens }: { dir: string; lens: string }) {
+  const { t } = useTranslation();
   const entry = lensEntry(dir, lens);
   const direction = DIRECTIONS.find((d) => d.id === dir);
   const gridKeys = useMemo(() => directionMetricKeys(dir), [dir]);
@@ -19,11 +22,16 @@ export function DirectionView({ dir, lens }: { dir: string; lens: string }) {
   // to talk about — say "pick one" instead of blaming the lens for not
   // existing in a direction the reader never named.
   if (!direction) {
-    return <Pending label="Pick a direction to see its metrics." />;
+    return <Pending label={t("directions.pick")} />;
   }
   if (!entry) {
     return (
-      <Pending label={`“${lens}” isn't a metric family in ${direction.name} yet.`} />
+      <Pending
+        label={t("directions.unknown_lens", {
+          lens,
+          direction: resolveText(t, direction.name),
+        })}
+      />
     );
   }
   if ("comingSoon" in entry) return <Pending label={entry.comingSoon} />;

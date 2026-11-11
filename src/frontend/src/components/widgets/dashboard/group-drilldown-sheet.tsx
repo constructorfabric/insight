@@ -1,4 +1,7 @@
 import { Maximize2, Minimize2, XIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
+import { resolveText } from "@/i18n/localized-text";
 
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { CollectionDrilldown } from "@/components/widgets/metric-views/collection-drilldown";
@@ -92,6 +95,8 @@ function DrilldownPanel({
   compareTo?: DateRange;
   cohortLabel: PeerCohortLabel;
 }) {
+  const { t } = useTranslation();
+  const title = resolveText(t, def.title);
   const [expanded, setExpanded] = useLocalStorageState<boolean>({
     key: "insight.drilldown.expanded",
     defaultValue: false,
@@ -107,13 +112,13 @@ function DrilldownPanel({
       )}
     >
       <DialogHeader className="flex shrink-0 flex-row items-center justify-between gap-2 border-b p-4">
-        <DialogTitle>{def.title}</DialogTitle>
+        <DialogTitle>{title}</DialogTitle>
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setExpanded((v) => !v)}
-            aria-label={expanded ? "Shrink" : "Expand"}
+            aria-label={expanded ? t("common.actions.shrink") : t("common.actions.expand")}
             icon={expanded ? <Minimize2 /> : <Maximize2 />}
           />
           <DialogClose
@@ -121,7 +126,7 @@ function DrilldownPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                aria-label="Close"
+                aria-label={t("common.actions.close")}
                 icon={<XIcon />}
               />
             }

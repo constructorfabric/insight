@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ArrowUpRight, ChevronRight } from "lucide-react";
 
@@ -49,13 +50,14 @@ export function MetricsTable({
   onToggle: (entityId: string) => void;
   onScope: (entityId: string) => void;
 }) {
+  const { t } = useTranslation();
   const keys = groups.flatMap((group) => group.keys);
   const groupStarts = new Set(groups.slice(1).map((group) => group.keys[0]));
 
   return (
     <div className="max-h-[calc(100svh-13rem)] overflow-auto rounded-lg border bg-card">
       <table className="w-full border-separate border-spacing-0 text-sm">
-        <caption className="sr-only">People × metrics</caption>
+        <caption className="sr-only">{t("metrics_view.people_caption")}</caption>
         <thead>
           <tr className={GROUP_ROW_HEIGHT}>
             <th

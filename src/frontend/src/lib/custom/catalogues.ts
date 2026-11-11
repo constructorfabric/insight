@@ -6,6 +6,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import type { DisplayText } from "@/i18n/localized-text";
 import { kindFromPath } from "@/lib/custom/editor/route";
 import {
   itemHidden,
@@ -25,7 +26,7 @@ interface Catalogue {
     | "/portal/custom/widgets"
     | "/portal/custom/datasets"
     | "/portal/custom/alerts";
-  label: string;
+  label: DisplayText;
   icon: LucideIcon;
 }
 
@@ -37,22 +38,22 @@ const CATALOGUES: readonly Catalogue[] = [
   {
     id: "metrics",
     to: "/portal/custom/metrics",
-    label: "Metrics",
+    label: { key: "nav.items.metrics" },
     icon: Sigma,
   },
   {
     id: "widgets",
     to: "/portal/custom/widgets",
-    label: "Widgets",
+    label: { key: "nav.items.widgets" },
     icon: LayoutDashboard,
   },
   {
     id: "datasets",
     to: "/portal/custom/datasets",
-    label: "Datasets",
+    label: { key: "nav.items.datasets" },
     icon: Database,
   },
-  { id: "alerts", to: "/portal/custom/alerts", label: "Alerts", icon: Bell },
+  { id: "alerts", to: "/portal/custom/alerts", label: { key: "nav.items.alerts" }, icon: Bell },
 ];
 
 function catalogueShown(

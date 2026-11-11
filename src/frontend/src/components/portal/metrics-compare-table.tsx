@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 
 import {
   MetricHelpTooltip,
@@ -27,10 +28,11 @@ export function MetricsCompareTable({
   helpByKey: ReadonlyMap<string, MetricHelpText>;
   roles: ReadonlyMap<string, string>;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="max-h-[75svh] overflow-auto">
       <table className="w-full border-separate border-spacing-0 text-sm">
-        <caption className="sr-only">Metrics compared side by side</caption>
+        <caption className="sr-only">{t("metrics_view.compare_caption")}</caption>
         <thead>
           <tr>
             <th

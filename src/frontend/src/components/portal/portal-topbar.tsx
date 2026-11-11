@@ -1,4 +1,5 @@
 import { HelpCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { SliceSelect } from "@/components/portal/slice-select";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -55,6 +56,7 @@ export function PortalTopBar() {
  * query, so a zone that does not render it does not fire that query.
  */
 function ViewFilters() {
+  const { t } = useTranslation();
   const { period, customRange, setPeriod, setCustomRange } = usePortalPeriod();
   // The server's catalog when it has one, the viewer's roster until then —
   // decided in `useCohortOptions`, which also owns which selection is in
@@ -78,13 +80,13 @@ function ViewFilters() {
     // gesture can reach it, so the cohort control became unreachable.
     <div
       role="group"
-      aria-label="View filters"
+      aria-label={t("common.cohort.filters")}
       className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto md:flex-wrap md:justify-end md:overflow-x-visible"
     >
       {cohortShown ? (
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="hidden text-xs text-muted-foreground md:inline">
-            Cohort
+            {t("common.cohort.label")}
           </span>
           {/* Every "vs median" on every screen is computed against whatever this
             names, and the word alone does not say so. */}
@@ -94,7 +96,7 @@ function ViewFilters() {
                 <button
                   type="button"
                   className="cursor-help text-muted-foreground"
-                  aria-label="What the cohort controls"
+                  aria-label={t("common.cohort.help")}
                 >
                   <HelpCircle className="size-3.5" />
                 </button>
@@ -104,10 +106,7 @@ function ViewFilters() {
               side="bottom"
               className="max-w-xs text-xs leading-relaxed"
             >
-              The people every comparison on screen is made against. "Team
-              (all)" compares within the org you are looking at; picking an
-              attribute compares each person with the people who share their
-              value for it.
+              {t("common.cohort.tooltip")}
             </TooltipContent>
           </Tooltip>
           <SliceSelect dims={dims} />

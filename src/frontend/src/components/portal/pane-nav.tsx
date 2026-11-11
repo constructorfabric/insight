@@ -79,7 +79,7 @@ export function UnbuiltRow({ item }: { item: PaneItem }) {
         <ItemLabel text={item.label} />
       </SidebarMenuButton>
       <SidebarMenuBadge className="font-normal text-muted-foreground">
-        {PLANNED_GROUP_LABEL}
+        <ItemLabel text={PLANNED_GROUP_LABEL} />
       </SidebarMenuBadge>
     </SidebarMenuItem>
   );
@@ -126,6 +126,7 @@ export function GroupsNav({
   groups: readonly PaneGroup[];
   active: string | null;
 }) {
+  const { t } = useTranslation();
   const showPlanned = usePortalShowPlanned();
   const split = groups.map((g) => partitionByReadiness(g.items, showPlanned));
   const planned = split.flatMap((s) => s.planned);
@@ -134,8 +135,8 @@ export function GroupsNav({
     <>
       {groups.map((g, i) =>
         split[i]!.live.length ? (
-          <SidebarGroup key={g.label ?? i}>
-            {g.label ? <PaneGroupLabel>{g.label}</PaneGroupLabel> : null}
+          <SidebarGroup key={g.label ? (typeof g.label === "string" ? g.label : g.label.key) : i}>
+            {g.label ? <PaneGroupLabel>{resolveText(t, g.label)}</PaneGroupLabel> : null}
             <SidebarGroupContent>
               <SidebarMenu>
                 {split[i]!.live.map((it) => (
@@ -148,7 +149,7 @@ export function GroupsNav({
       )}
       {planned.length ? (
         <SidebarGroup>
-          <PaneGroupLabel>{PLANNED_GROUP_LABEL}</PaneGroupLabel>
+          <PaneGroupLabel>{resolveText(t, PLANNED_GROUP_LABEL)}</PaneGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (

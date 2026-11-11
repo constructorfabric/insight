@@ -1,4 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Pin } from "lucide-react";
 
@@ -15,6 +16,7 @@ import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
 import { dashboardQuery, pinsQuery } from "@/queries/custom";
 
 export function PinnedGroup() {
+  const { t } = useTranslation();
   const { data: pins } = useQuery(pinsQuery());
   const open = useRouterState({
     select: (s) => dashboardIdFromPath(s.location.pathname),
@@ -24,7 +26,7 @@ export function PinnedGroup() {
 
   return (
     <SidebarGroup>
-      <PaneGroupLabel>Pinned</PaneGroupLabel>
+      <PaneGroupLabel>{t("nav.groups.pinned")}</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {pins.map((pin) => (

@@ -1,5 +1,6 @@
 import type { GroupId, MetricGroup } from "@/lib/insight/groups";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
+import type { DisplayText } from "@/i18n/localized-text";
 import {
   forEntity,
   type NormalizedMetricResult,
@@ -82,7 +83,7 @@ export function partState(
 
 export interface UnreachablePart {
   id: GroupId;
-  title: string;
+  title: DisplayText;
 }
 
 /**

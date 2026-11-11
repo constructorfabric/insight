@@ -1,4 +1,7 @@
+import { useTranslation } from "react-i18next";
+
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { resolveText } from "@/i18n/localized-text";
 import { AiCostView } from "@/components/portal/ai-cost-view";
 import { DirectionView } from "@/components/portal/direction-view";
 import { OverviewView } from "@/components/portal/overview-view";
@@ -56,14 +59,16 @@ export function ZoneContent() {
 }
 
 function ZoneScaffold({ zone }: { zone: string }) {
+  const { t } = useTranslation();
+  const label = zoneById(zone)?.label;
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
       <div className="flex flex-col items-center gap-1 text-center">
         <h1 className="text-lg font-semibold tracking-tight">
-          {zoneById(zone)?.label ?? "Portal"}
+          {label ? resolveText(t, label) : t("nav.portal")}
         </h1>
         <p className="max-w-md text-sm text-muted-foreground">
-          Portal lens — structure in place, wiring pending.
+          {t("nav.pending")}
         </p>
       </div>
       <div className="w-full max-w-md">

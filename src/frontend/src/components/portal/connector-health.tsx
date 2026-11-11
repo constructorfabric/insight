@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   ConnectorHealth,
@@ -21,7 +22,6 @@ import {
 } from "@gears-frontx/ui-kit";
 import {
   UNMEASURED,
-  SCHEDULE_HEADING,
   describeConnector,
   describeDuration,
   describeInstance,
@@ -64,6 +64,7 @@ function panelIdFor(row: ConnectorHealth): string {
 }
 
 export function ConnectorHealthPane() {
+  const { t } = useTranslation();
   const { data, isPending, isError, refetch } = useConnectorHealth();
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -112,15 +113,15 @@ export function ConnectorHealthPane() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="whitespace-normal">Connector</TableHead>
+                <TableHead className="whitespace-normal">{t("connectors.connector")}</TableHead>
                 {/* One connector can be configured more than once; this is the
                     only cell that tells those rows apart. */}
-                <TableHead className="whitespace-normal">Instance</TableHead>
-                <TableHead className="whitespace-normal">{SCHEDULE_HEADING}</TableHead>
-                <TableHead className="whitespace-normal">State</TableHead>
-                <TableHead className="whitespace-normal">Last sync started</TableHead>
-                <TableHead className="text-right whitespace-normal">Duration</TableHead>
-                <TableHead className="text-right whitespace-normal">Records reported</TableHead>
+                <TableHead className="whitespace-normal">{t("connectors.instance")}</TableHead>
+                <TableHead className="whitespace-normal">{t("connectors.next_sync")}</TableHead>
+                <TableHead className="whitespace-normal">{t("connectors.state")}</TableHead>
+                <TableHead className="whitespace-normal">{t("connectors.last_sync_started")}</TableHead>
+                <TableHead className="text-right whitespace-normal">{t("connectors.duration")}</TableHead>
+                <TableHead className="text-right whitespace-normal">{t("connectors.records_reported")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

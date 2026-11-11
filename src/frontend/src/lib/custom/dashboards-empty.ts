@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import type { OwnedFilter } from "@/api/custom-client";
+import i18n from "@/i18n";
 
 export type FolderShown = "named" | "unfiled";
 
@@ -29,12 +30,6 @@ export interface EmptyCase {
   action: EmptyAction;
 }
 
-const NOTHING_SHARED: EmptyCase = {
-  icon: Share2,
-  title: "No shared dashboards",
-  action: "none",
-};
-
 export function emptyCase({
   owned,
   folder,
@@ -46,43 +41,45 @@ export function emptyCase({
   if (searching && tagged) {
     return {
       icon: Search,
-      title: "No dashboards match your search and tags",
+      title: i18n.t("dashboards.no_search_tags"),
       action: "clear-filters",
     };
   }
   if (searching) {
     return {
       icon: Search,
-      title: "No dashboards match your search",
+      title: i18n.t("dashboards.no_search"),
       action: "clear-search",
     };
   }
   if (tagged) {
     return {
       icon: Tag,
-      title: "No dashboards with these tags",
+      title: i18n.t("dashboards.no_tags"),
       action: "clear-filters",
     };
   }
-  if (owned === "shared") return NOTHING_SHARED;
+  if (owned === "shared") {
+    return { icon: Share2, title: i18n.t("dashboards.no_shared"), action: "none" };
+  }
   if (folder === "unfiled") {
     return {
       icon: Folder,
-      title: "Every dashboard is in a folder",
+      title: i18n.t("dashboards.all_filed"),
       action: "none",
     };
   }
   if (folder === "named") {
-    return { icon: Folder, title: "This folder is empty", action: "none" };
+    return { icon: Folder, title: i18n.t("dashboards.empty_folder"), action: "none" };
   }
-  if (!isAdmin) return NOTHING_SHARED;
+  if (!isAdmin) {
+    return { icon: Share2, title: i18n.t("dashboards.no_shared"), action: "none" };
+  }
 
   return {
     icon: LayoutDashboard,
-    title: "No dashboards yet",
-    description: assistant
-      ? "Describe one to the assistant and it will build it."
-      : undefined,
+    title: i18n.t("dashboards.none_yet"),
+    description: assistant ? i18n.t("dashboards.describe_assistant") : undefined,
     action: "create",
   };
 }

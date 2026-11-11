@@ -91,10 +91,3 @@ export function cohortOptions(
   const dims = availableSlices(roster);
   return { dims, source: dims.length > 0 ? "roster" : "none" };
 }
-
-/**
- * Why the control has nothing to offer — shown to the reader, so it has to say
- * what is true rather than name an internal state.
- */
-export const NO_COHORT_REASON =
-  "Comparisons are made within each person's organization unit. Other cohorts are not available here yet.";

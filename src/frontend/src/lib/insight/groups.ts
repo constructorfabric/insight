@@ -1,4 +1,5 @@
 import type { MetricDefinition } from "@/api/metric-definitions-client";
+import type { DisplayText } from "@/i18n/localized-text";
 import type {
   MetricCollectionConfig,
   MetricTimeseriesGroupLimitConfig,
@@ -61,7 +62,7 @@ export type DrilldownBlock =
 
 export interface MetricGroup {
   id: GroupId;
-  title: string;
+  title: DisplayText;
   collection: MetricCollectionConfig;
   card: { preview: string[] };
   drilldown: DrilldownBlock[];
@@ -422,7 +423,7 @@ const WIKI_COLLECTION: MetricCollectionConfig = {
 export const GROUPS: readonly MetricGroup[] = [
   {
     id: "task_delivery",
-    title: "Task delivery",
+    title: { key: "common.sections.task_delivery" },
     collection: TASK_DELIVERY_COLLECTION,
     card: {
       preview: ["tasks.closed", "tasks.resolution_time", "tasks.pickup_time"],
@@ -461,7 +462,7 @@ export const GROUPS: readonly MetricGroup[] = [
   },
   {
     id: "git_output",
-    title: "Git output",
+    title: { key: "common.sections.git_output" },
     collection: GIT_OUTPUT_COLLECTION,
     card: {
       preview: [
@@ -522,7 +523,7 @@ export const GROUPS: readonly MetricGroup[] = [
   },
   {
     id: "collaboration",
-    title: "Collaboration",
+    title: { key: "common.sections.collaboration" },
     collection: COLLABORATION_COLLECTION,
     card: {
       preview: [
@@ -551,7 +552,7 @@ export const GROUPS: readonly MetricGroup[] = [
   },
   {
     id: "ai_adoption",
-    title: "AI adoption",
+    title: { key: "common.sections.ai_adoption" },
     collection: AI_ADOPTION_COLLECTION,
     card: {
       // The two cost figures are adjacent and ahead of the line count: the card
@@ -576,7 +577,7 @@ export const GROUPS: readonly MetricGroup[] = [
   },
   {
     id: "wiki",
-    title: "Wiki",
+    title: { key: "common.sections.wiki" },
     collection: WIKI_COLLECTION,
     card: {
       preview: ["wiki.pages_created", "wiki.edits", "wiki.comments"],

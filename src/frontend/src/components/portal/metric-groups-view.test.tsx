@@ -111,9 +111,9 @@ vi.mock("@/components/widgets/dashboard/ic-needs-attention", () => ({
   IcNeedsAttention: () => <div data-testid="needs-attention" />,
 }));
 vi.mock("@/components/widgets/metric-views/metric-group-card", () => ({
-  MetricGroupCard: ({ def, onOpen }: { def: { id: string; title: string }; onOpen: () => void }) => (
+  MetricGroupCard: ({ def, onOpen }: { def: { id: string; title: string | { key: string } }; onOpen: () => void }) => (
     <button data-testid={`group-card-${def.id}`} onClick={onOpen}>
-      {def.title}
+      {typeof def.title === "string" ? def.title : def.title.key}
     </button>
   ),
 }));

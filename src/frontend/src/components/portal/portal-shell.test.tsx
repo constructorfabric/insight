@@ -51,8 +51,10 @@ vi.mock("@/queries/ic-dashboard", () => ({
 
 // Leaf views become labelled placeholders so routing is observable.
 vi.mock("@/components/portal/domain-lens-view", () => ({
-  DomainLensView: ({ config }: { config: { title: string } }) => (
-    <div data-testid="domain-lens">{config.title}</div>
+  DomainLensView: ({ config }: { config: { title: string | { key: string } } }) => (
+    <div data-testid="domain-lens">
+      {typeof config.title === "string" ? config.title : config.title.key}
+    </div>
   ),
   Pending: ({ label }: { label: string }) => <div data-testid="pending">{label}</div>,
 }));

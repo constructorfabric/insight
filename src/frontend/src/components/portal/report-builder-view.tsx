@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   ReportGranularity,
@@ -38,13 +39,18 @@ import { recordUsageEvent } from "@/telemetry";
 
 const GRANULARITIES: ReadonlyArray<{
   value: ReportGranularity;
-  label: string;
+  labelKey:
+    | "common.chart.daily"
+    | "common.chart.weekly"
+    | "common.chart.monthly"
+    | "reports.quarterly"
+    | "reports.yearly";
 }> = [
-  { value: "day", label: "Daily" },
-  { value: "week", label: "Weekly" },
-  { value: "month", label: "Monthly" },
-  { value: "quarter", label: "Quarterly" },
-  { value: "year", label: "Yearly" },
+  { value: "day", labelKey: "common.chart.daily" },
+  { value: "week", labelKey: "common.chart.weekly" },
+  { value: "month", labelKey: "common.chart.monthly" },
+  { value: "quarter", labelKey: "reports.quarterly" },
+  { value: "year", labelKey: "reports.yearly" },
 ];
 
 type ReportSubjectKind = "people" | "tenant";
@@ -55,6 +61,7 @@ interface PreviewState {
 }
 
 export function ReportBuilderView() {
+  const { t } = useTranslation();
   const { dateRange } = usePortalPeriod();
   const scope = useOrgScope();
   const definitions = useMetricDefinitionsResponse();
@@ -185,7 +192,7 @@ export function ReportBuilderView() {
         <ComingSoon
           variant="card"
           state="error"
-          label="Unable to load the metric catalogue"
+          label={t("reports.unable_to_load_catalogue")}
         />
       </div>
     );
@@ -197,7 +204,7 @@ export function ReportBuilderView() {
         <CardContent className="flex flex-col p-0">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b p-4">
             <div className="flex flex-wrap items-center gap-3">
-              <span className={TEXT_LABEL}>Scope</span>
+              <span className={TEXT_LABEL}>{t("reports.scope")}</span>
               <ToggleGroup
                 spacing={0}
                 value={[subject]}
@@ -208,15 +215,15 @@ export function ReportBuilderView() {
                 variant="outline"
                 size="sm"
               >
-                <ToggleGroupItem value="people">People</ToggleGroupItem>
-                <ToggleGroupItem value="tenant">Tenant</ToggleGroupItem>
+                <ToggleGroupItem value="people">{t("reports.people")}</ToggleGroupItem>
+                <ToggleGroupItem value="tenant">{t("reports.tenant")}</ToggleGroupItem>
               </ToggleGroup>
             </div>
 
             <div className="hidden h-6 border-l md:block" />
 
             <div className="flex flex-wrap items-center gap-3">
-              <span className={TEXT_LABEL}>Granularity</span>
+              <span className={TEXT_LABEL}>{t("reports.granularity")}</span>
               <ToggleGroup
                 spacing={0}
                 value={[granularity]}
@@ -238,7 +245,7 @@ export function ReportBuilderView() {
                             disabled={reason != null}
                             title={reason ?? undefined}
                           >
-                            {option.label}
+                            {t(option.labelKey)}
                           </ToggleGroupItem>
                         }
                       />
@@ -259,7 +266,7 @@ export function ReportBuilderView() {
 
           {definitions.isPending ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-              <Spinner className="size-4" /> Reading the catalogue…
+              <Spinner className="size-4" /> {t("reports.reading_catalogue")}
             </div>
           ) : (
             <ReportMetricPicker

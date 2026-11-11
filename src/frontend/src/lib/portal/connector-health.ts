@@ -7,13 +7,14 @@ import type {
   SyncFact,
   SyncStatus,
 } from "@/api/connector-health-client";
+import i18n from "@/i18n";
 import { nextScheduledRun } from "@/lib/portal/connector-schedule";
 
-export const SCHEDULE_HEADING = "Next sync";
-
 export function describeSchedule(schedule: AppliedSchedule): string {
-  const timezone = schedule.timezone ?? "controller time";
-  return schedule.suspended ? `${timezone} · suspended` : timezone;
+  const timezone = schedule.timezone ?? i18n.t("connectors.controller_time");
+  return schedule.suspended
+    ? i18n.t("connectors.schedule_suspended", { timezone })
+    : timezone;
 }
 
 export interface NextRunView {
@@ -23,18 +24,21 @@ export interface NextRunView {
 
 export function describeNextRun(schedule: AppliedSchedule, now: Date): NextRunView {
   if (schedule.suspended) {
-    return { text: "Suspended", detail: "Suspended: no run is scheduled." };
+    return {
+      text: i18n.t("connectors.suspended"),
+      detail: i18n.t("connectors.suspended_detail"),
+    };
   }
   if (schedule.timezone == null) {
     return {
-      text: "Unknown",
-      detail: "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.",
+      text: i18n.t("connectors.unknown"),
+      detail: i18n.t("connectors.unknown_timezone"),
     };
   }
 
   const unreadable = {
-    text: "Unknown",
-    detail: "Next run unknown: a recorded expression cannot be read.",
+    text: i18n.t("connectors.unknown"),
+    detail: i18n.t("connectors.unknown_expression"),
   };
   try {
     let earliest = Infinity;
@@ -56,15 +60,15 @@ export function describeNextRun(schedule: AppliedSchedule, now: Date): NextRunVi
 }
 
 function describeNextRunDelay(delay: number): string {
-  if (delay < MINUTE_MS) return "in < 1 min";
+  if (delay < MINUTE_MS) return i18n.t("connectors.in_under_minute");
 
   const minutes = Math.round(delay / MINUTE_MS);
-  if (minutes < 60) return `in ~${minutes} min`;
+  if (minutes < 60) return i18n.t("connectors.in_minutes", { count: minutes });
 
   const hours = Math.round(delay / HOUR_MS);
-  if (hours < 24) return `in ~${hours} h`;
+  if (hours < 24) return i18n.t("connectors.in_hours", { count: hours });
 
-  return `in ~${Math.round(delay / DAY_MS)} d`;
+  return i18n.t("connectors.in_days", { count: Math.round(delay / DAY_MS) });
 }
 
 /**
@@ -143,7 +147,8 @@ const NEVER_SYNCED: ConnectorStateView = {
 
 /** A word outside this build's vocabulary is a state it cannot read. */
 function stateOf(status: string | undefined): ConnectorStateView {
-  return STATE[status as SyncStatus] ?? STATE.unknown;
+  const view = STATE[status as SyncStatus] ?? STATE.unknown;
+  return { ...view, label: i18n.t(`connectors.${view.state}`) };
 }
 
 /**
@@ -154,8 +159,12 @@ function stateOf(status: string | undefined): ConnectorStateView {
  * send an operator to fix something nobody asked for any more.
  */
 export function describeConnector(row: ConnectorHealth): ConnectorStateView {
-  if (!row.configured) return NO_LONGER_CONFIGURED;
-  if (row.last_sync == null) return NEVER_SYNCED;
+  if (!row.configured) {
+    return { ...NO_LONGER_CONFIGURED, label: i18n.t("connectors.no_longer_configured") };
+  }
+  if (row.last_sync == null) {
+    return { ...NEVER_SYNCED, label: i18n.t("connectors.never_synced") };
+  }
   return stateOf(row.last_sync.status);
 }
 
@@ -202,9 +211,8 @@ export function describeRecording(
   if (!summary.history_available || summary.checked_at == null) {
     return {
       state: "never_read",
-      label: "Nothing has been read from the connectors yet",
-      detail:
-        "This page fills in once the reconcile loop has read the data mover once.",
+      label: i18n.t("connectors.never_read"),
+      detail: i18n.t("connectors.never_read_detail"),
     };
   }
 
@@ -212,8 +220,8 @@ export function describeRecording(
   if (age === null) {
     return {
       state: "unreadable",
-      label: "Cannot tell when the connectors were last read",
-      detail: "Nothing below can be dated, so treat it as unverified.",
+      label: i18n.t("connectors.unreadable"),
+      detail: i18n.t("connectors.unreadable_detail"),
     };
   }
 
@@ -226,22 +234,24 @@ export function describeRecording(
   if (threshold === null) {
     return {
       state: "unmeasured",
-      label: `Last checked ${describeAge(age)}`,
-      detail:
-        "Too few reads are recorded to know how often this should happen, so " +
-        "nothing here says whether that is normal.",
+      label: i18n.t("connectors.last_checked", { age: describeAge(age) }),
+      detail: i18n.t("connectors.last_checked_unmeasured"),
     };
   }
 
   if (age > threshold) {
     return {
       state: "stopped",
-      label: `Last checked ${describeAge(age)} — recording appears to have stopped`,
-      detail: "The connector states below may no longer be current.",
+      label: i18n.t("connectors.last_checked_stopped", { age: describeAge(age) }),
+      detail: i18n.t("connectors.stopped_detail"),
     };
   }
 
-  return { state: "current", label: `Last checked ${describeAge(age)}`, detail: "" };
+  return {
+    state: "current",
+    label: i18n.t("connectors.last_checked", { age: describeAge(age) }),
+    detail: "",
+  };
 }
 
 /**
@@ -302,10 +312,14 @@ const DAY_MS = 24 * HOUR_MS;
 
 /** Coarse on purpose: the exact second of a periodic read is never the point. */
 export function describeAge(ageInMs: number): string {
-  if (ageInMs < MINUTE_MS) return "just now";
-  if (ageInMs < HOUR_MS) return `${Math.floor(ageInMs / MINUTE_MS)} min ago`;
-  if (ageInMs < DAY_MS) return `${Math.floor(ageInMs / HOUR_MS)} h ago`;
-  return `${Math.floor(ageInMs / DAY_MS)} d ago`;
+  if (ageInMs < MINUTE_MS) return i18n.t("connectors.just_now");
+  if (ageInMs < HOUR_MS) {
+    return i18n.t("connectors.minutes_ago", { count: Math.floor(ageInMs / MINUTE_MS) });
+  }
+  if (ageInMs < DAY_MS) {
+    return i18n.t("connectors.hours_ago", { count: Math.floor(ageInMs / HOUR_MS) });
+  }
+  return i18n.t("connectors.days_ago", { count: Math.floor(ageInMs / DAY_MS) });
 }
 
 /* ── the cells ────────────────────────────────────────────────────────── */
@@ -421,7 +435,10 @@ export function describeDuration(
   const running = elapsedMs(asOf, sync.started_at);
   if (running === null) return { text: UNMEASURED, inFlight: false };
 
-  return { text: `${formatDuration(running)} so far`, inFlight: true };
+  return {
+    text: i18n.t("connectors.so_far", { duration: formatDuration(running) }),
+    inFlight: true,
+  };
 }
 
 export function formatRecords(records: number | null | undefined): string {

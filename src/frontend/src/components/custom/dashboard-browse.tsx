@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 
 import type { OwnedFilter } from "@/api/custom-client";
+import { resolveText } from "@/i18n/localized-text";
 import { useDashboardBrowse } from "@/lib/custom/dashboard-browse";
 import { cn } from "@/lib/utils";
 
@@ -13,10 +15,11 @@ export function BrowseChips({
   tag: string[] | undefined;
   counted: string[];
 }) {
+  const { t } = useTranslation();
   const rows = useDashboardBrowse(counted);
 
   return (
-    <nav aria-label="Browse dashboards" className="mb-4 flex flex-wrap gap-2">
+    <nav aria-label={t("nav.browse_dashboards")} className="mb-4 flex flex-wrap gap-2">
       {rows.map((row) => {
         const current = row.owned === owned;
         return (
@@ -32,7 +35,7 @@ export function BrowseChips({
                 : "border-border bg-card text-foreground hover:bg-muted"
             )}
           >
-            {row.owned === undefined ? "All" : row.label}
+            {row.owned === undefined ? t("nav.items.all") : resolveText(t, row.label)}
             {row.count != null ? " " : null}
             {row.count != null ? (
               <span

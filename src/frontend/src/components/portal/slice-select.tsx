@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import {
   Select,
   SelectContent,
@@ -9,7 +11,6 @@ import {
 } from "@gears-frontx/ui-kit";
 import type { SliceDim } from "@/lib/insight/slices";
 import { PLANNED_SLICES } from "@/lib/insight/slices";
-import { NO_COHORT_REASON } from "@/lib/portal/cohort-options";
 import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
 
 /**
@@ -21,7 +22,6 @@ import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
  * dimension unselectable, because picking it read as "no slice".
  */
 const TEAM_KEY = "__team__";
-const TEAM_SLICE = { key: TEAM_KEY, label: "Team (all)" };
 
 /**
  * The one shared slice control. Writes the global `portal.slice`, so picking a
@@ -30,9 +30,11 @@ const TEAM_SLICE = { key: TEAM_KEY, label: "Team (all)" };
  * appended (and render ComingSoon in the consuming view).
  */
 export function SliceSelect({ dims }: { dims: SliceDim[] }) {
+  const { t } = useTranslation();
   const { setSlice } = usePortalNavActions();
   const slice = usePortalSlice();
-  const all = [TEAM_SLICE, ...dims, ...PLANNED_SLICES];
+  const teamSlice = { key: TEAM_KEY, label: t("common.cohort.team_all") };
+  const all = [teamSlice, ...dims, ...PLANNED_SLICES];
   // Slices are discovered by enumerating people and grouping them by an
   // attribute, so a viewer whose roster holds only themselves has nothing to
   // group: identity serves a viewer their own subtree, and an individual
@@ -46,7 +48,7 @@ export function SliceSelect({ dims }: { dims: SliceDim[] }) {
   const hasChoice = dims.length + PLANNED_SLICES.length > 0;
   const current = slice || TEAM_KEY;
   const value = all.some((d) => d.key === current) ? current : TEAM_KEY;
-  const label = all.find((d) => d.key === value)?.label ?? "Team (all)";
+  const label = all.find((d) => d.key === value)?.label ?? t("common.cohort.team_all");
   return (
     <Select
       value={value}
@@ -57,17 +59,17 @@ export function SliceSelect({ dims }: { dims: SliceDim[] }) {
           it read as part of the value and repeated on every option list. */}
       <SelectTrigger
         size="sm"
-        aria-label="Cohort"
+        aria-label={t("common.cohort.label")}
         className="w-32 md:w-44"
         disabled={!hasChoice}
-        title={hasChoice ? undefined : NO_COHORT_REASON}
+        title={hasChoice ? undefined : t("common.cohort.none")}
       >
         <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectContent align="end">
         <SelectGroup>
           <SelectLabel className="text-xs text-muted-foreground">
-            Compare against
+            {t("common.cohort.compare_against")}
           </SelectLabel>
           {all.map((d) => (
             <SelectItem key={d.key} value={d.key}>

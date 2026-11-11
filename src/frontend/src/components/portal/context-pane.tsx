@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
+import { resolveText } from "@/i18n/localized-text";
 import { useFeedbackDialog } from "@/components/feedback-context";
 import { CustomNav, HomeDashboardsGroup } from "@/components/portal/custom-nav";
 import { ExploreNav } from "@/components/portal/explore-nav";
@@ -55,6 +56,7 @@ import { usePreviewsGate } from "@/queries/previews";
  * `collapsible="none"`, in normal flow, rail beside it.
  */
 export function ContextPane() {
+  const { t } = useTranslation();
   const layout = useShellLayout();
   // A phone hides the rail, so the drawer inherits its duties. A tablet keeps
   // the rail — the drawer there is only the pane itself, collapsed to give the
@@ -85,7 +87,7 @@ export function ContextPane() {
       {isPhone ? null : (
         <SidebarHeader>
           <span className="px-2 py-1.5 text-sm font-semibold tracking-tight text-sidebar-foreground">
-            {rail?.paneTitle ?? rail?.label ?? "Insight"}
+            {rail ? resolveText(t, rail.paneTitle ?? rail.label) : t("nav.insight")}
           </span>
         </SidebarHeader>
       )}
@@ -107,7 +109,7 @@ export function ContextPane() {
                   render={
                     <SidebarMenuButton>
                       <Settings aria-hidden />
-                      <span>Settings</span>
+                      <span>{t("nav.settings")}</span>
                     </SidebarMenuButton>
                   }
                 />
@@ -168,6 +170,7 @@ function FeedbackItem({ onPicked }: { onPicked: () => void }) {
  * tap that also re-collapses the list.
  */
 function MobileRailNav() {
+  const { t } = useTranslation();
   const { items, activeItem, selectItem } = useRailNav();
   const [expanded, setExpanded] = useState(false);
   const current = items.find((item) => item.id === activeItem);
@@ -183,7 +186,9 @@ function MobileRailNav() {
               aria-expanded={expanded}
             >
               {CurrentIcon ? <CurrentIcon aria-hidden /> : null}
-              <span className="font-medium">{current?.label ?? "Menu"}</span>
+              <span className="font-medium">
+                {current ? resolveText(t, current.label) : t("nav.menu")}
+              </span>
               <ChevronRight
                 className={cn(
                   "ms-auto transition-transform",
@@ -206,7 +211,7 @@ function MobileRailNav() {
                     className={cn("ps-4", item.planned && "text-muted-foreground")}
                   >
                     <item.icon aria-hidden />
-                    <span>{item.label}</span>
+                    <span>{resolveText(t, item.label)}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))

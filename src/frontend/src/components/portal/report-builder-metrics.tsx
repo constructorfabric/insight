@@ -1,4 +1,5 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useTranslation } from "react-i18next";
 import { Search } from "lucide-react";
 
 import type { MetricDefinition } from "@/api/metric-definitions-client";
@@ -37,6 +38,7 @@ export function ReportMetricPicker({
   selected,
   setSelected,
 }: ReportMetricPickerProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [pickedFamily, setPickedFamily] = useState(ALL_FAMILIES);
   const activeFamily =
@@ -78,8 +80,8 @@ export function ReportMetricPicker({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search metrics"
-              aria-label="Search metrics"
+              placeholder={t("reports.search_metrics")}
+              aria-label={t("reports.search_metrics")}
               className="ps-8"
             />
           </div>
