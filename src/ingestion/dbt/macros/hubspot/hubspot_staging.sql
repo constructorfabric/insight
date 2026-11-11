@@ -65,9 +65,16 @@ LEFT JOIN (
     GROUP BY tenant_id, {{ source_key }}
 ) AS w
     ON w.tenant_id = {{ cte }}.tenant_id AND w.{{ source_key }} = {{ cte }}.{{ source_key }}
-WHERE {{ cte }}._version > coalesce(w.hwm, 0)
 {% endif %}
-ORDER BY {{ cte }}._version DESC
+{#- INVARIANT: the latest version is chosen over (unique_key, _version) alone; sorting the wide rows exhausts server memory. -#}
+WHERE ({{ cte }}.unique_key, {{ cte }}._version) IN (
+    SELECT unique_key, max(_version)
+    FROM {{ cte }}
+    GROUP BY unique_key
+)
+{% if is_incremental() %}
+  AND {{ cte }}._version > coalesce(w.hwm, 0)
+{% endif %}
 LIMIT 1 BY {{ cte }}.unique_key
 {% endmacro %}
 
