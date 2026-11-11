@@ -36,6 +36,14 @@ enum Widget {
         x: String,
         y: String,
         #[serde(default)]
+        series: Option<String>,
+        #[serde(default)]
+        #[expect(
+            dead_code,
+            reason = "parsed only to refuse a `labels` that is not a flag"
+        )]
+        labels: bool,
+        #[serde(default)]
         detail: Option<String>,
     },
     Area {
@@ -109,9 +117,12 @@ impl Widget {
     fn columns(&self) -> Vec<&str> {
         match self {
             Self::Table { columns, .. } => columns.iter().map(String::as_str).collect(),
-            Self::Line { x, y, .. } | Self::Bar { x, y, .. } | Self::Area { x, y, .. } => {
-                vec![x.as_str(), y.as_str()]
-            }
+            Self::Line { x, y, .. } | Self::Area { x, y, .. } => vec![x.as_str(), y.as_str()],
+            Self::Bar { x, y, series, .. } => [Some(x), Some(y), series.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect(),
             Self::Stat { value, .. } => vec![value.as_str()],
             Self::Pie { label, value, .. } => vec![label.as_str(), value.as_str()],
         }
@@ -170,7 +181,8 @@ pub(crate) enum WidgetError {
     #[error(
         "a widget needs a metric, a type of `table`, `line`, `bar`, `area`, `stat` or `pie`, \
          and the columns that type draws: columns for a table, x and y for a line, bar or \
-         area, value for a stat, label and value for a pie"
+         area, value for a stat, label and value for a pie; a bar may add a `series` column \
+         to stack by and `labels: true` to print each bar's total"
     )]
     Shape(#[from] serde_json::Error),
     #[error("`{column}` is not a column of metric `{metric}`; its columns are: {available}")]
