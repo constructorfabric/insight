@@ -28,6 +28,8 @@ import { flattenSubordinates } from "@/lib/insight/identity-tree";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { compareDocumentTitle } from "@/lib/portal/document-title";
+import { usePageTitle } from "@/lib/portal/document-title-frame";
 import {
   compareTeams,
   rolesById,
@@ -52,6 +54,21 @@ import { useMetricsViewData } from "@/queries/metrics-view";
 import type { IdentityPerson } from "@/types/insight";
 
 const TEST_ID = "page-people-metrics";
+
+function comparedNames(
+  compareParam: string,
+  members: readonly MembersGridMember[],
+): string[] {
+  const byId = new Map(
+    members.map((member) => [member.entityId, member.displayName]),
+  );
+  const names: string[] = [];
+  for (const id of compareParam.split(",")) {
+    const name = byId.get(id);
+    if (name) names.push(name);
+  }
+  return names;
+}
 
 export function MetricsView() {
   const { dateRange } = usePortalPeriod();
@@ -86,7 +103,7 @@ export function MetricsView() {
     [catalog],
   );
 
-  const { metrics: metricsParam } = usePortalSearch();
+  const { metrics: metricsParam, compare: compareParam } = usePortalSearch();
   const setSearch = useSetPortalSearch();
   const picked = useMemo(
     () =>
@@ -122,6 +139,11 @@ export function MetricsView() {
   const memberIds = useMemo(
     () => members.map((member) => member.entityId),
     [members],
+  );
+  usePageTitle(
+    compareParam
+      ? compareDocumentTitle(comparedNames(compareParam, members))
+      : null,
   );
 
   const data = useMetricsViewData(metricKeys, memberIds, dateRange);

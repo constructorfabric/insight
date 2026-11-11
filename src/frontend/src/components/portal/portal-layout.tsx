@@ -11,6 +11,7 @@ import {
   SidebarProvider,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { PortalDocumentTitle } from "@/lib/portal/document-title-frame";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
 import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
@@ -71,26 +72,28 @@ export function PortalLayout() {
   ]);
 
   return (
-    <SidebarProvider
-      className="h-svh overflow-hidden"
-      style={{ "--rail-width": "3.5rem" } as CSSProperties}
-    >
-      <PaneStateForLayout />
-      <LensRail />
-      <ContextPane />
-      {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
-          topbar included — under the rail and the pane, which open across it
-          on the tier where the pane is off-canvas. */}
-      <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
-        <MockBanner />
-        {/* The impersonation indicator: it names whose data is on screen and
-            carries the way out. Missing it left a view-as operator with no sign
-            they were not looking at their own org, and no exit. */}
-        <ViewAsBanner />
-        <PortalTopBar />
-        <Outlet />
-      </SidebarInset>
-    </SidebarProvider>
+    <PortalDocumentTitle>
+      <SidebarProvider
+        className="h-svh overflow-hidden"
+        style={{ "--rail-width": "3.5rem" } as CSSProperties}
+      >
+        <PaneStateForLayout />
+        <LensRail />
+        <ContextPane />
+        {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
+            topbar included — under the rail and the pane, which open across it
+            on the tier where the pane is off-canvas. */}
+        <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
+          <MockBanner />
+          {/* The impersonation indicator: it names whose data is on screen and
+              carries the way out. Missing it left a view-as operator with no sign
+              they were not looking at their own org, and no exit. */}
+          <ViewAsBanner />
+          <PortalTopBar />
+          <Outlet />
+        </SidebarInset>
+      </SidebarProvider>
+    </PortalDocumentTitle>
   );
 }
 
