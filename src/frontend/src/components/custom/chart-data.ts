@@ -23,6 +23,59 @@ export function points(
   );
 }
 
+export interface Stacks {
+  rows: Record<string, unknown>[];
+  series: { key: string; label: string }[];
+  total: string;
+}
+
+const STACK_TOTAL = "stack_total";
+
+/**
+ * Recharts reads a dotted `dataKey` as a path and a chart colour is a CSS
+ * custom property, so a series value is never used as a key itself.
+ */
+export function stacks(
+  result: MetricResult,
+  x: string,
+  y: string,
+  series: string
+): Stacks {
+  const xAt = result.columns.indexOf(x);
+  const yAt = result.columns.indexOf(y);
+  const seriesAt = result.columns.indexOf(series);
+
+  const keys = new Map<string, string>();
+  const bars = new Map<unknown, Record<string, unknown>>();
+
+  for (const row of result.rows) {
+    const label = String(row[seriesAt] ?? "—");
+    const key = keys.get(label) ?? `stack_${keys.size}`;
+    keys.set(label, key);
+
+    const bar = bars.get(row[xAt]) ?? { [x]: row[xAt], [STACK_TOTAL]: 0 };
+    bars.set(row[xAt], bar);
+
+    const amount = Number(row[yAt]);
+    const value = Number.isFinite(amount) ? amount : 0;
+    bar[key] = Number(bar[key] ?? 0) + value;
+    bar[STACK_TOTAL] = Number(bar[STACK_TOTAL]) + value;
+  }
+
+  const rows = [...bars.values()].map((bar) =>
+    Object.fromEntries([
+      ...[...keys.values()].map((key) => [key, 0]),
+      ...Object.entries(bar),
+    ])
+  );
+
+  return {
+    rows,
+    series: [...keys].map(([label, key]) => ({ key, label })),
+    total: STACK_TOTAL,
+  };
+}
+
 export const CHART_COLORS = 5;
 
 /** One series, painted from the kit's chart palette. */

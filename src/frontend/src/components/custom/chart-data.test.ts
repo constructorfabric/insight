@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MouseHandlerDataParam } from "recharts";
 
-import { pointClick } from "./chart-data";
+import { pointClick, stacks } from "./chart-data";
 
 const at = (activeTooltipIndex: unknown) =>
   ({ activeTooltipIndex }) as MouseHandlerDataParam;
@@ -20,5 +20,57 @@ describe("pointClick", () => {
 
   it("gives a chart no click handler when nothing listens", () => {
     expect(pointClick(undefined)).toBeUndefined();
+  });
+});
+
+describe("stacks", () => {
+  const runs = {
+    columns: ["week", "outcome", "runs"],
+    rows: [
+      ["2026-11-02", "merged", 3],
+      ["2026-11-02", "failed", "1"],
+      ["2026-11-09", "merged", 2],
+    ],
+  };
+
+  it("draws one bar per x, split by the series in the order the rows name them", () => {
+    const { rows, series } = stacks(runs, "week", "runs", "outcome");
+
+    expect(series.map((segment) => segment.label)).toEqual([
+      "merged",
+      "failed",
+    ]);
+    expect(rows.map((row) => row.week)).toEqual(["2026-11-02", "2026-11-09"]);
+  });
+
+  it("puts each row's value in its series' segment, and nothing where a series is absent", () => {
+    const { rows, series } = stacks(runs, "week", "runs", "outcome");
+    const [merged, failed] = series.map((segment) => segment.key);
+
+    expect(rows[0][merged]).toBe(3);
+    expect(rows[0][failed]).toBe(1);
+    expect(rows[1][merged]).toBe(2);
+    expect(rows[1][failed]).toBe(0);
+  });
+
+  it("totals each bar across its series", () => {
+    const { rows, total } = stacks(runs, "week", "runs", "outcome");
+
+    expect(rows.map((row) => row[total])).toEqual([4, 2]);
+  });
+
+  it("keys segments so a value with dots or spaces cannot be read as a path", () => {
+    const { series } = stacks(
+      {
+        columns: ["week", "cause", "runs"],
+        rows: [["2026-11-02", "build.timed out", 1]],
+      },
+      "week",
+      "runs",
+      "cause"
+    );
+
+    expect(series[0].label).toBe("build.timed out");
+    expect(series[0].key).toMatch(/^[a-z0-9_]+$/);
   });
 });

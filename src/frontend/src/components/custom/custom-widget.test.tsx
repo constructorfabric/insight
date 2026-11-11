@@ -55,8 +55,25 @@ vi.mock("recharts", async (importOriginal) => {
     );
   const series =
     (testId: string) =>
-    ({ dataKey }: { dataKey: string }) => (
-      <div data-testid={testId} data-key={dataKey} />
+    ({
+      dataKey,
+      name,
+      stackId,
+      children,
+    }: {
+      dataKey: string;
+      name?: string;
+      stackId?: string;
+      children?: React.ReactNode;
+    }) => (
+      <div
+        data-testid={testId}
+        data-key={dataKey}
+        data-name={name}
+        data-stack-id={stackId}
+      >
+        {children}
+      </div>
     );
 
   return {
@@ -70,7 +87,10 @@ vi.mock("recharts", async (importOriginal) => {
     PieChart: chart("pie-chart"),
     CartesianGrid: () => null,
     Tooltip: () => null,
-    Legend: () => null,
+    Legend: () => <div data-testid="legend" />,
+    LabelList: ({ dataKey }: { dataKey: string }) => (
+      <div data-testid="label-list" data-key={dataKey} />
+    ),
     XAxis: ({ dataKey }: { dataKey: string }) => (
       <div data-testid="x-axis" data-key={dataKey} />
     ),
@@ -389,6 +409,84 @@ describe("<CustomWidget>", () => {
     expect(screen.getByTestId(frame)).toBeInTheDocument();
     expect(screen.getByTestId("x-axis")).toHaveAttribute("data-key", "day");
     expect(screen.getByTestId(series)).toHaveAttribute("data-key", "lines");
+  });
+
+  describe("a stacked bar", () => {
+    const runs = {
+      columns: ["week", "outcome", "runs"],
+      rows: [
+        ["2026-11-02", "merged", 3],
+        ["2026-11-02", "failed", 1],
+        ["2026-11-09", "merged", 2],
+      ],
+    };
+    const stacked = {
+      type: "bar",
+      metric: "m",
+      x: "week",
+      y: "runs",
+      series: "outcome",
+    } as const;
+
+    it("draws one segment per series value, all in one stack", () => {
+      render(<CustomWidget widget={stacked} result={runs} />);
+
+      const segments = screen.getAllByTestId("bar");
+      expect(segments.map((bar) => bar.dataset.name)).toEqual([
+        "merged",
+        "failed",
+      ]);
+      expect(new Set(segments.map((bar) => bar.dataset.stackId)).size).toBe(1);
+      expect(segments[0].dataset.stackId).toBeTruthy();
+      expect(screen.getByTestId("legend")).toBeInTheDocument();
+    });
+
+    it("labels each stack's total once, on top", () => {
+      render(
+        <CustomWidget widget={{ ...stacked, labels: true }} result={runs} />
+      );
+
+      const labels = screen.getAllByTestId("label-list");
+      expect(labels).toHaveLength(1);
+      expect(screen.getAllByTestId("bar").at(-1)).toContainElement(labels[0]);
+    });
+
+    it("draws no labels unless asked", () => {
+      render(<CustomWidget widget={stacked} result={runs} />);
+
+      expect(screen.queryByTestId("label-list")).not.toBeInTheDocument();
+    });
+
+    it("names a series column the metric did not return", () => {
+      render(
+        <CustomWidget widget={{ ...stacked, series: "cause" }} result={runs} />,
+        { wrapper }
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent("draws cause");
+      expect(screen.queryByTestId("custom-bar-chart")).not.toBeInTheDocument();
+    });
+  });
+
+  it("labels a plain bar's value on top when asked", () => {
+    render(
+      <CustomWidget
+        widget={{
+          type: "bar",
+          metric: "m",
+          x: "day",
+          y: "lines",
+          labels: true,
+        }}
+        result={result}
+      />
+    );
+
+    expect(screen.getByTestId("label-list")).toHaveAttribute(
+      "data-key",
+      "lines"
+    );
+    expect(screen.queryByTestId("legend")).not.toBeInTheDocument();
   });
 
   it("renders a stat widget as the one number it is", () => {
