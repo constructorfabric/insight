@@ -5,15 +5,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { DOCUMENT_TITLE_APP } from "./document-title";
 import { DocumentTitleFrame, usePageTitle } from "./document-title-frame";
 
-function TitleProbe({ title }: { title: string | null }) {
-  usePageTitle(title);
+function SubjectProbe({ subject }: { subject: string | null }) {
+  usePageTitle(subject);
   return null;
 }
 
-function shown(pathname: string, title: string, pageTitle: string | null) {
+function shown(pathname: string, screenPath: string, subject: string | null) {
   return (
-    <DocumentTitleFrame pathname={pathname} title={title}>
-      <TitleProbe title={pageTitle} />
+    <DocumentTitleFrame pathname={pathname} screenPath={screenPath}>
+      <SubjectProbe subject={subject} />
     </DocumentTitleFrame>
   );
 }
@@ -23,54 +23,54 @@ describe("DocumentTitleFrame", () => {
     document.title = "Before";
   });
 
-  it("sets the route title and restores the app title when the shell unmounts", () => {
-    const { unmount } = render(shown("/portal", "Home · Insight", null));
+  it("sets the screen title and restores Insight when the shell unmounts", () => {
+    const { unmount } = render(shown("/portal", "/portal", null));
     expect(document.title).toBe("Home · Insight");
 
     unmount();
     expect(document.title).toBe(DOCUMENT_TITLE_APP);
   });
 
-  it("lets the open page replace the route title", () => {
+  it("puts the page subject ahead of the screen name", () => {
     render(
       shown(
         "/portal/custom/delivery-overview",
-        "Dashboards · Insight",
-        "Delivery overview · Dashboards · Insight"
+        "/portal/custom/delivery-overview",
+        "Delivery overview"
       )
     );
     expect(document.title).toBe("Delivery overview · Dashboards · Insight");
   });
 
-  it("follows a rename of the page on screen", () => {
+  it("follows a rename of the subject on screen", () => {
     const { rerender } = render(
       shown(
         "/portal/custom/delivery-overview",
-        "Dashboards · Insight",
-        "Delivery overview · Dashboards · Insight"
+        "/portal/custom/delivery-overview",
+        "Delivery overview"
       )
     );
 
     rerender(
       shown(
         "/portal/custom/delivery-overview",
-        "Dashboards · Insight",
-        "Release health · Dashboards · Insight"
+        "/portal/custom/delivery-overview",
+        "Release health"
       )
     );
     expect(document.title).toBe("Release health · Dashboards · Insight");
   });
 
-  it("drops a page title when the path changes", () => {
+  it("drops a subject when the path changes", () => {
     const { rerender } = render(
       shown(
         "/portal/custom/delivery-overview",
-        "Dashboards · Insight",
-        "Delivery overview · Dashboards · Insight"
+        "/portal/custom/delivery-overview",
+        "Delivery overview"
       )
     );
 
-    rerender(shown("/portal", "Home · Insight", null));
+    rerender(shown("/portal", "/portal", null));
     expect(document.title).toBe("Home · Insight");
   });
 });

@@ -43,7 +43,7 @@ import {
   dashboardWidgetsQuery,
 } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
-import { openDashboardTitle } from "@/lib/portal/document-title";
+import { dashboardSubject } from "@/lib/portal/document-title";
 import { usePageTitle } from "@/lib/portal/document-title-frame";
 import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -64,12 +64,11 @@ function CustomDashboardPage() {
     error,
     refetch,
   } = useQuery(dashboardReadQuery(id));
-  const dashboardTitle = openDashboardTitle(
+  usePageTitle(
     isLoading || isError || !read
       ? null
-      : { title: read.body.title, name: read.name }
+      : dashboardSubject(read.body.title, read.name)
   );
-  usePageTitle(dashboardTitle);
 
   const offered = read?.body.time_ranges;
   const range = selectedRange(offered, read?.body.default_range, search.range);

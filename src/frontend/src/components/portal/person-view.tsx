@@ -3,10 +3,6 @@ import { PersonHeader } from "@/components/portal/person-header";
 import { SingleGroupView } from "@/components/portal/single-group-view";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { visibleGroups } from "@/lib/insight/groups";
-import {
-  personDocumentTitle,
-  personSectionTitle,
-} from "@/lib/portal/document-title";
 import { usePageTitle } from "@/lib/portal/document-title-frame";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
@@ -32,9 +28,7 @@ export function PersonView({ person }: { person: string }) {
   const selectedSection = useSelectedPersonSection();
   const record = useIcPerson(person);
   const name = record.data ? personDisplayName(record.data) : null;
-  usePageTitle(
-    name ? personDocumentTitle(name, personSectionTitle(selectedSection)) : null
-  );
+  usePageTitle(name);
 
   return (
     <>

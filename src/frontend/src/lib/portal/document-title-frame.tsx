@@ -13,24 +13,16 @@ import { useRouterState } from "@tanstack/react-router";
 
 import {
   DOCUMENT_TITLE_APP,
-  pageDocumentTitle,
-  type PageTitleInput,
+  documentTitle,
+  titleScreenPath,
 } from "@/lib/portal/document-title";
-import {
-  usePortalDir,
-  usePortalItem,
-  usePortalLens,
-} from "@/lib/portal/portal-nav";
-import { usePortalSearch } from "@/lib/portal/portal-search";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
-import { useVisibilityPolicy } from "@/queries/identity-me";
 
-interface TitleOverride {
+interface TitleSubject {
   pathname: string;
-  title: string;
+  subject: string;
 }
 
-const TitleOverrideContext = createContext<(title: string | null) => void>(
+const TitleSubjectContext = createContext<(subject: string | null) => void>(
   () => {}
 );
 
@@ -38,24 +30,15 @@ export function PortalDocumentTitle({ children }: { children: ReactNode }) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const { activeZone } = useActiveZone();
-  const item = usePortalItem();
-  const dir = usePortalDir();
-  const lens = usePortalLens();
-  const { mode } = usePortalSearch();
-  const { isFlat } = useVisibilityPolicy();
-  const input: PageTitleInput = {
-    pathname,
-    zone: activeZone,
-    item,
-    dir,
-    lens,
-    mode,
-    peopleFlat: isFlat,
-  };
+  const search = useRouterState({
+    select: (state) => state.location.searchStr,
+  });
 
   return (
-    <DocumentTitleFrame pathname={pathname} title={pageDocumentTitle(input)}>
+    <DocumentTitleFrame
+      pathname={pathname}
+      screenPath={titleScreenPath(pathname, search)}
+    >
       {children}
     </DocumentTitleFrame>
   );
@@ -63,17 +46,18 @@ export function PortalDocumentTitle({ children }: { children: ReactNode }) {
 
 export function DocumentTitleFrame({
   pathname,
-  title,
+  screenPath,
   children,
 }: {
   pathname: string;
-  title: string;
+  screenPath: string;
   children: ReactNode;
 }) {
-  const [override, setOverride] = useState<TitleOverride | null>(null);
-  // INVARIANT: a published title names the path it was published on. A path
-  // change drops it in the same render, before the leaving page's effect runs.
-  const shown = override?.pathname === pathname ? override.title : title;
+  const [override, setOverride] = useState<TitleSubject | null>(null);
+  // INVARIANT: a subject names the path it was published on. A path change
+  // drops it in the same render, before the leaving page's effect runs.
+  const subject = override?.pathname === pathname ? override.subject : null;
+  const shown = documentTitle(screenPath, subject);
 
   useEffect(() => {
     document.title = shown;
@@ -87,23 +71,24 @@ export function DocumentTitleFrame({
 
   const publish = useCallback(
     (next: string | null) => {
-      setOverride(next === null ? null : { pathname, title: next });
+      const trimmed = next?.trim();
+      setOverride(trimmed ? { pathname, subject: trimmed } : null);
     },
     [pathname]
   );
 
   return (
-    <TitleOverrideContext.Provider value={publish}>
+    <TitleSubjectContext.Provider value={publish}>
       {children}
-    </TitleOverrideContext.Provider>
+    </TitleSubjectContext.Provider>
   );
 }
 
-export function usePageTitle(title: string | null): void {
-  const publish = useContext(TitleOverrideContext);
+export function usePageTitle(subject: string | null): void {
+  const publish = useContext(TitleSubjectContext);
 
   useEffect(() => {
-    publish(title);
+    publish(subject);
     return () => publish(null);
-  }, [publish, title]);
+  }, [publish, subject]);
 }

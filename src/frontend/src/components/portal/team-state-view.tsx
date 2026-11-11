@@ -32,8 +32,6 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { teamDocumentTitle } from "@/lib/portal/document-title";
-import { usePageTitle } from "@/lib/portal/document-title-frame";
 import {
   usePortalNavActions,
   usePortalScope,
@@ -182,7 +180,6 @@ export function TeamStateView() {
   );
 
   const teamName = orgScope.label;
-  usePageTitle(teamDocumentTitle(teamName));
 
   // ── Headline: team totals (summable) / medians (everything else) ──
   const summary = useMemo(() => {

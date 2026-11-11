@@ -28,7 +28,6 @@ import { flattenSubordinates } from "@/lib/insight/identity-tree";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { compareDocumentTitle } from "@/lib/portal/document-title";
 import { usePageTitle } from "@/lib/portal/document-title-frame";
 import {
   compareTeams,
@@ -140,11 +139,10 @@ export function MetricsView() {
     () => members.map((member) => member.entityId),
     [members],
   );
-  usePageTitle(
-    compareParam
-      ? compareDocumentTitle(comparedNames(compareParam, members))
-      : null,
-  );
+  const compared = compareParam
+    ? comparedNames(compareParam, members)
+    : [];
+  usePageTitle(compared.length > 0 ? compared.join(", ") : null);
 
   const data = useMetricsViewData(metricKeys, memberIds, dateRange);
 
