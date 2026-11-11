@@ -193,8 +193,7 @@ SELECT
 FROM {{ source('bronze_claude_team', 'claude_team_code_metrics') }}
 WHERE email IS NOT NULL
   AND trim(email) != ''
-  -- Guard against NULL metric_date: toDate(NULL) → 1970-01-01 silently
-  -- corrupts the incremental boundary (same guard as cursor__ai_dev_usage).
+  -- Guard against NULL metric_date: toDate(NULL) → a phantom 1970-01-01 day.
   AND metric_date IS NOT NULL
   -- INVARIANT: the gate reads cost as the cents `cost_cents` emits, so a
   -- sub-cent cost cannot admit a row that stores no activity.
@@ -213,5 +212,8 @@ WHERE email IS NOT NULL
           SELECT insight_tenant_id, source_id, day, read_id FROM admitted_reads
       )
 {% if is_incremental() %}
-  AND toDate(metric_date) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+  -- INVARIANT: the boundary is the extraction time, not `day`. A read that
+  -- backfills old days, or whose transform failed, carries days older than
+  -- anything a later read stored; a business-date boundary strands them.
+  AND _airbyte_extracted_at > {{ instance_incremental_watermark('collected_at', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
 {% endif %}
