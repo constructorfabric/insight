@@ -6,6 +6,7 @@ import {
   type ComponentProps,
   type CSSProperties,
 } from "react";
+import { useTranslation } from "react-i18next";
 import brandSymbol from "@/assets/brand-symbol.svg";
 import { TEXT_NAME } from "@/lib/type-scale";
 
@@ -22,8 +23,8 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { resolveText, type DisplayText } from "@/i18n/localized-text";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
-import type { RailEntry, RailItem } from "@/lib/portal/rail-model";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { cn } from "@/lib/utils";
 
@@ -267,19 +268,24 @@ export function LensRail() {
         <SidebarContent className={open ? "overflow-visible" : undefined}>
           <SidebarMenu className="items-start gap-1 ps-2">
             {items.map((item) => (
-              <RailItemButton
-                key={item.id}
-                item={item}
-                active={activeItem === item.id}
-                open={open}
-                onSelect={(picked, viaPointer) => {
-                  if (viaPointer) {
-                    setDismissed(true);
-                    close();
-                  }
-                  selectItem(picked);
-                }}
-              />
+              <SidebarMenuItem key={item.id} className="relative z-10">
+                <RailItemButton
+                  icon={item.icon}
+                  label={item.label}
+                  open={open}
+                  active={activeItem === item.id}
+                  className={item.planned ? "text-muted-foreground" : undefined}
+                  data-planned={item.planned || undefined}
+                  // `detail` counts pointer clicks: keyboard activation reports 0.
+                  onClick={(event) => {
+                    if (event.detail > 0) {
+                      setDismissed(true);
+                      close();
+                    }
+                    selectItem(item);
+                  }}
+                />
+              </SidebarMenuItem>
             ))}
           </SidebarMenu>
         </SidebarContent>
@@ -290,7 +296,11 @@ export function LensRail() {
               <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
                 <PopoverTrigger
                   render={
-                    <RailControl icon={Settings} label="Settings" open={open} />
+                    <RailItemButton
+                      icon={Settings}
+                      label={{ key: "settings.nav_label" }}
+                      open={open}
+                    />
                   }
                 />
                 <PopoverContent
@@ -327,9 +337,9 @@ function FeedbackButton({ open }: { open: boolean }) {
 
   return (
     <SidebarMenuItem className="relative z-10">
-      <RailControl
+      <RailItemButton
         icon={MessageSquare}
-        label="Feedback"
+        label={{ key: "feedback.nav_label" }}
         open={open}
         onClick={feedback.openFeedback}
       />
@@ -337,31 +347,31 @@ function FeedbackButton({ open }: { open: boolean }) {
   );
 }
 
-function RailControl({
+function RailItemButton({
   icon: Icon,
   label,
   open,
   active = false,
-  muted = false,
   className,
   style,
   ...props
 }: Omit<ComponentProps<typeof SidebarMenuButton>, "children"> & {
   icon: LucideIcon;
-  label: string;
+  label: DisplayText;
   open: boolean;
   active?: boolean;
-  muted?: boolean;
 }) {
+  const { t } = useTranslation();
+  const name = resolveText(t, label);
+
   return (
     <SidebarMenuButton
       {...props}
-      title={label}
+      title={name}
       isActive={active}
       className={cn(
         "h-10 justify-start gap-2 overflow-hidden p-0 ps-3 transition-[width] duration-150",
         open || "w-10",
-        muted && "text-muted-foreground",
         className
       )}
       style={open ? { width: `calc(${OPEN_WIDTH} - 1rem)`, ...style } : style}
@@ -374,35 +384,8 @@ function RailControl({
           open ? "opacity-100" : "opacity-0"
         )}
       >
-        {label}
+        {name}
       </span>
     </SidebarMenuButton>
-  );
-}
-
-function RailItemButton({
-  item,
-  active,
-  open,
-  onSelect,
-}: {
-  item: RailEntry;
-  active: boolean;
-  open: boolean;
-  onSelect: (item: RailItem, viaPointer: boolean) => void;
-}) {
-  return (
-    <SidebarMenuItem className="relative z-10">
-      <RailControl
-        icon={item.icon}
-        label={item.label}
-        open={open}
-        active={active}
-        muted={item.planned}
-        data-planned={item.planned || undefined}
-        // `detail` counts pointer clicks: keyboard activation reports 0.
-        onClick={(e) => onSelect(item, e.detail > 0)}
-      />
-    </SidebarMenuItem>
   );
 }

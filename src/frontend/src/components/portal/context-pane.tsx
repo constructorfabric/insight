@@ -55,6 +55,7 @@ import { usePreviewsGate } from "@/queries/previews";
  * `collapsible="none"`, in normal flow, rail beside it.
  */
 export function ContextPane() {
+  const { t } = useTranslation();
   const layout = useShellLayout();
   // A phone hides the rail, so the drawer inherits its duties. A tablet keeps
   // the rail — the drawer there is only the pane itself, collapsed to give the
@@ -107,7 +108,7 @@ export function ContextPane() {
                   render={
                     <SidebarMenuButton>
                       <Settings aria-hidden />
-                      <span>Settings</span>
+                      <span>{t("settings.nav_label")}</span>
                     </SidebarMenuButton>
                   }
                 />

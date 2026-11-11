@@ -611,8 +611,11 @@
       }
     }
   },
+  "settings": {
+    "nav_label": "Settings"
+  },
   "feedback": {
-    "nav_label": "Send feedback",
+    "nav_label": "Feedback",
     "title": "Submit feedback / bug report",
     "message": "Your feedback",
     "placeholder": "Describe the issue",

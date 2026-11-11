@@ -254,7 +254,7 @@ describe("shell layout: phone", () => {
     render(<Shell />);
     const user = await openDrawer();
 
-    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+    await user.click(screen.getByRole("button", { name: "Feedback" }));
 
     expect(mocks.openFeedback).toHaveBeenCalled();
   });
@@ -263,7 +263,7 @@ describe("shell layout: phone", () => {
     render(<Shell />);
     const user = await openDrawer();
 
-    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+    await user.click(screen.getByRole("button", { name: "Feedback" }));
 
     expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
   });
