@@ -1,9 +1,11 @@
 import { useMemo, useState, type SetStateAction } from "react";
 import { Columns3, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
+import type { DateRange } from "@/api/period-to-date-range";
 import { useViewer } from "@/auth";
 import { MetricsComparePicker } from "@/components/portal/metrics-compare-picker";
 import { MetricsCompareTable } from "@/components/portal/metrics-compare-table";
+import { MetricsDownloadMenu } from "@/components/portal/metrics-download-menu";
 import {
   MetricsTable,
   type MetricsSort,
@@ -205,6 +207,7 @@ export function MetricsView() {
           byKey={data.byKey}
           helpByKey={helpByKey}
           loading={data.isPending}
+          range={dateRange}
         />
       )}
     </div>
@@ -268,6 +271,7 @@ function MetricsBody({
   byKey,
   helpByKey,
   loading,
+  range,
 }: {
   pivot: IdentityPerson | null;
   people: ReadonlyArray<{ person_id: string; display_name?: string | null }>;
@@ -276,6 +280,7 @@ function MetricsBody({
   byKey: Map<string, NormalizedMetricResult>;
   helpByKey: ReadonlyMap<string, MetricHelpText>;
   loading: boolean;
+  range: DateRange;
 }) {
   const { setScope } = usePortalNavActions();
   const { compare: compareParam } = usePortalSearch();
@@ -347,6 +352,10 @@ function MetricsBody({
             teams={teams}
             picked={comparing ?? []}
             onCompare={setComparing}
+          />
+          <MetricsDownloadMenu
+            view={{ people: comparing ? compared : rows, keys: columns, byKey, roles, range }}
+            disabled={metricKeys.length === 0 || loading}
           />
         </div>
       </div>
