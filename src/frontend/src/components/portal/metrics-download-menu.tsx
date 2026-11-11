@@ -8,6 +8,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  toast,
 } from "@gears-frontx/ui-kit";
 import { downloadMatrixCsv, downloadMatrixXlsx } from "@/lib/export/matrix";
 import {
@@ -36,6 +37,8 @@ export function MetricsDownloadMenu({
         t("metrics_view.title"),
         metricsViewMatrix(view),
       );
+    } catch {
+      toast.add({ type: "error", title: t("metrics_view.download.failed") });
     } finally {
       setExporting(false);
     }

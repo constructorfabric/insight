@@ -632,7 +632,8 @@
     "title": "Metrics view",
     "download": {
       "xlsx": "Excel (.xlsx)",
-      "csv": "CSV (.csv)"
+      "csv": "CSV (.csv)",
+      "failed": "The download failed. Try again."
     }
   }
 }
