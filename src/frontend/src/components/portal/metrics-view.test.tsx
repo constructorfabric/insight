@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { PeopleListItem } from "@/api/identity-client";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
+import i18n from "@/i18n";
 import {
   setMetricsViewPaneShown,
   useMetricsViewPaneShown,
@@ -742,6 +743,37 @@ describe("MetricsView", () => {
       ["a", PERIOD, 10, 4],
       ["b", PERIOD, 20, 6],
     ]);
+  });
+
+  it("labels the download menu from the translations", async () => {
+    const original = {
+      download: i18n.t("common.actions.download"),
+      csv: i18n.t("metrics_view.download.csv"),
+    };
+    i18n.addResourceBundle(
+      "en",
+      "translation",
+      { common: { actions: { download: "Herunterladen" } }, metrics_view: { download: { csv: "CSV-Datei" } } },
+      true,
+      true,
+    );
+
+    try {
+      const user = userEvent.setup();
+      render(<MetricsView />);
+
+      await user.click(screen.getByRole("button", { name: "Herunterladen" }));
+
+      expect(await screen.findByRole("menuitem", { name: "CSV-Datei" })).toBeInTheDocument();
+    } finally {
+      i18n.addResourceBundle(
+        "en",
+        "translation",
+        { common: { actions: { download: original.download } }, metrics_view: { download: { csv: original.csv } } },
+        true,
+        true,
+      );
+    }
   });
 
   it("offers no download while no metric is picked", async () => {

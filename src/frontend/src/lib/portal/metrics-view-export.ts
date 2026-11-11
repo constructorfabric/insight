@@ -1,4 +1,5 @@
 import type { DateRange } from "@/api/period-to-date-range";
+import i18n from "@/i18n";
 import type { Matrix, MatrixCell } from "@/lib/export/matrix";
 import { isDurationUnit, roundMetricValue } from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
@@ -66,9 +67,9 @@ export function metricsViewMatrix({
   const period = `${range.from} – ${range.to}`;
 
   const columns = [
-    "Person",
-    ...(withRoles ? ["Role"] : []),
-    "Period",
+    i18n.t("common.table.person"),
+    ...(withRoles ? [i18n.t("common.table.role")] : []),
+    i18n.t("common.table.period"),
     ...keys.map((key) => columnTitle(key, byKey.get(key))),
   ];
   const rows = people.map((person): MatrixCell[] => [

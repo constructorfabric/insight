@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import i18n from "@/i18n";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 
 import { metricsViewFilename, metricsViewMatrix } from "./metrics-view-export";
@@ -53,6 +54,35 @@ describe("metricsViewMatrix", () => {
         ["Jane Doe", PERIOD, 6, 4],
       ],
     });
+  });
+
+  it("titles the person, role and period columns from the translations", () => {
+    const original = {
+      person: i18n.t("common.table.person"),
+      role: i18n.t("common.table.role"),
+      period: i18n.t("common.table.period"),
+    };
+    i18n.addResourceBundle(
+      "en",
+      "translation",
+      { common: { table: { person: "Persona", role: "Rol", period: "Periodo" } } },
+      true,
+      true,
+    );
+
+    try {
+      const matrix = metricsViewMatrix({
+        people: [jane],
+        keys: [],
+        byKey: new Map(),
+        roles: new Map([["p-jane", "Engineer"]]),
+        range: RANGE,
+      });
+
+      expect(matrix.columns).toEqual(["Persona", "Rol", "Periodo"]);
+    } finally {
+      i18n.addResourceBundle("en", "translation", { common: { table: original } }, true, true);
+    }
   });
 
   it("leaves a cell empty where the page shows no value", () => {

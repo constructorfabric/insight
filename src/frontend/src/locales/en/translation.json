@@ -29,6 +29,7 @@
     },
     "table": {
       "member": "Member",
+      "period": "Period",
       "person": "Person",
       "role": "Role",
       "status": "Status",
@@ -60,7 +61,8 @@
       "retry": "Retry",
       "cancel": "Cancel",
       "scroll_to_top": "Back to the top of the list",
-      "scroll_to_bottom": "Jump to the end of the list"
+      "scroll_to_bottom": "Jump to the end of the list",
+      "download": "Download"
     },
     "ui_components": {
       "sidebar": {
@@ -625,5 +627,12 @@
     "title": "Worth a look",
     "overview_title": "Overview · Worth a look",
     "nothing_stands_out": "Nothing stands out this period."
+  },
+  "metrics_view": {
+    "title": "Metrics view",
+    "download": {
+      "xlsx": "Excel (.xlsx)",
+      "csv": "CSV (.csv)"
+    }
   }
 }

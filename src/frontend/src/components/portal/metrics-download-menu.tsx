@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Download, FileSpreadsheet, FileText } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   Button,
@@ -16,8 +17,6 @@ import {
 } from "@/lib/portal/metrics-view-export";
 import { recordUsageEvent } from "@/telemetry";
 
-const SHEET_NAME = "Metrics view";
-
 export function MetricsDownloadMenu({
   view,
   disabled,
@@ -25,6 +24,7 @@ export function MetricsDownloadMenu({
   view: MetricsViewExport;
   disabled: boolean;
 }) {
+  const { t } = useTranslation();
   const [exporting, setExporting] = useState(false);
 
   async function downloadXlsx(): Promise<void> {
@@ -33,7 +33,7 @@ export function MetricsDownloadMenu({
     try {
       await downloadMatrixXlsx(
         metricsViewFilename(view.range, "xlsx"),
-        SHEET_NAME,
+        t("metrics_view.title"),
         metricsViewMatrix(view),
       );
     } finally {
@@ -58,18 +58,18 @@ export function MetricsDownloadMenu({
             icon={<Download />}
             loading={exporting}
           >
-            Download
+            {t("common.actions.download")}
           </Button>
         }
       />
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => void downloadXlsx()}>
           <FileSpreadsheet className="size-4" />
-          Excel (.xlsx)
+          {t("metrics_view.download.xlsx")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={downloadCsv}>
           <FileText className="size-4" />
-          CSV (.csv)
+          {t("metrics_view.download.csv")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
