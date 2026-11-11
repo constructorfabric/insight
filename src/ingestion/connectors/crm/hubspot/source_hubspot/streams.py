@@ -55,6 +55,7 @@ from source_hubspot.constants import (
     BATCH_READ_LIMIT,
     HISTORY_BATCH_READ_LIMIT,
     LIST_PAGE_LIMIT,
+    MISSING_CURSOR_TIMESTAMP,
     PROPERTY_DEFINITION_OBJECT_TYPES,
     SEARCH_AFTER_HARD_CAP,
     SEARCH_PAGE_LIMIT,
@@ -650,7 +651,7 @@ class PipelinesStream(HubspotStream):
         url = f"{BASE_URL}/crm/v3/pipelines/{self._object_type}"
         _, resp = self._http_client.send_request("GET", url, headers={}, request_kwargs={})
         for pipeline in resp.json().get("results") or []:
-            yield {**pipeline, "objectType": self._object_type}
+            yield _with_cursor({**pipeline, "objectType": self._object_type}, self.cursor_field)
 
 
 # =============================================================================
@@ -703,12 +704,13 @@ class PropertyDefinitionsStream(HubspotStream):
                     name = definition.get("name")
                     if not name:
                         continue
-                    yield {
+                    record = {
                         **definition,
                         "id": f"{object_type}:{name}",
                         "objectType": object_type,
                         "archived": archived or bool(definition.get("archived")),
                     }
+                    yield _with_cursor(record, self.cursor_field)
 
     def _list_definitions(self, object_type: str, *, archived: bool) -> list[Mapping[str, Any]]:
         url = f"{BASE_URL}/crm/v3/properties/{object_type}"
@@ -821,6 +823,13 @@ def _parse_datetime(value: Any) -> pendulum.DateTime | None:
     if isinstance(parsed, pendulum.DateTime):
         return parsed
     return None
+
+
+def _with_cursor(record: Mapping[str, Any], cursor_field: str | None) -> Mapping[str, Any]:
+    """Return ``record`` with a non-null ``cursor_field``, falling back to ``createdAt``."""
+    if cursor_field is None or record.get(cursor_field):
+        return record
+    return {**record, cursor_field: record.get("createdAt") or MISSING_CURSOR_TIMESTAMP}
 
 
 def _record_cursor_passes(

@@ -105,3 +105,9 @@ LIMIT 1 BY {{ cte }}.unique_key
       a row older than its poll by more than this window was not in it. -#}
   {{ extracted_at }} < {{ polled_at }} - INTERVAL 10 MINUTE
 {%- endmacro %}
+
+
+{% macro hubspot_known_time(column) -%}
+  {#- INVARIANT: matches MISSING_CURSOR_TIMESTAMP, which the connector stamps on a record HubSpot sent without a cursor. -#}
+  nullIf({{ column }}, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))
+{%- endmacro %}

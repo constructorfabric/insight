@@ -280,6 +280,10 @@ PROPERTY_DEFINITION_OBJECT_TYPES = tuple(
 # HubSpot caps a batch_read that requests ``propertiesWithHistory`` at 50 inputs.
 HISTORY_BATCH_READ_LIMIT = 50
 
+# INVARIANT: the destination stores a stream's cursor column NOT NULL; a record
+# sent without one is stamped with its ``createdAt``, else this instant.
+MISSING_CURSOR_TIMESTAMP = "1970-01-01T00:00:00Z"
+
 # Stream-name suffix used by the source to derive archived siblings.
 ARCHIVED_STREAM_SUFFIX = _ARCHIVED_STREAM_SUFFIX
 

@@ -5,13 +5,52 @@ from __future__ import annotations
 import json
 
 import pytest
-from source_hubspot.constants import BASE_URL, HISTORY_BATCH_READ_LIMIT, PROPERTY_DEFINITION_OBJECT_TYPES
+from source_hubspot.constants import (
+    BASE_URL,
+    HISTORY_BATCH_READ_LIMIT,
+    MISSING_CURSOR_TIMESTAMP,
+    PROPERTY_DEFINITION_OBJECT_TYPES,
+)
 from source_hubspot.streams import PipelinesStream, PropertyDefinitionsStream, PropertyHistoryStream
 from tests.conftest import SOURCE, TENANT, FakeResponse, make_stream, wire
 
 
 def change(value, ts="2024-06-01T00:00:00Z", source_type="CRM_UI", user=7):
     return {"value": value, "timestamp": ts, "sourceType": source_type, "sourceId": "u", "updatedByUserId": user}
+
+
+def definition_pages(*results):
+    pages = [FakeResponse({"results": []}) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
+    pages[0] = FakeResponse({"results": list(results)})
+    return pages
+
+
+@pytest.mark.parametrize(
+    ("stream_cls", "name", "pages"),
+    [
+        (PipelinesStream, "deal_pipelines", lambda results: [FakeResponse({"results": results})]),
+        (PropertyDefinitionsStream, "property_definitions", lambda results: definition_pages(*results)),
+    ],
+)
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (
+            {"id": "a", "name": "a", "updatedAt": "2024-06-02T00:00:00Z", "createdAt": "2024-01-01T00:00:00Z"},
+            "2024-06-02T00:00:00Z",
+        ),
+        ({"id": "b", "name": "b", "createdAt": "2024-01-01T00:00:00Z"}, "2024-01-01T00:00:00Z"),
+        ({"id": "c", "name": "c", "updatedAt": None}, MISSING_CURSOR_TIMESTAMP),
+        ({"id": "d", "name": "d"}, MISSING_CURSOR_TIMESTAMP),
+    ],
+)
+def test_every_record_carries_a_cursor_the_destination_can_store(stream_cls, name, pages, record, expected):
+    stream = make_stream(stream_cls, name)
+    wire(stream, pages([record]))
+
+    out = list(stream.read_records(None))
+
+    assert [r["updatedAt"] for r in out] == [expected], f"cursor for {record!r}"
 
 
 class TestPipelines:
