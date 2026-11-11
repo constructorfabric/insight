@@ -236,6 +236,18 @@ models:
               arguments:
                 values: ['merge_result', 'patch_duplicate']
 
+  - name: git_commit_line_contributions
+    description: >
+      Materialized commit-line contributions consumed by git_metric_evidence,
+      one row per tenant/source/measure/entity/date/record. File-derived rows
+      retain their category and file dimensions; commits with no collected
+      file changes contribute reported totals with unknown file dimensions.
+      Accepted measure keys are lines_added, lines_removed, code_lines_added,
+      test_lines_added, test_and_code_lines_added, default_lines_added,
+      non_default_lines_added, default_lines_removed, non_default_lines_removed,
+      default_code_lines_added and non_default_code_lines_added.
+    columns: *metric_evidence_columns
+
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.
@@ -1026,6 +1038,41 @@ models:
         description: "Span start (status event time)"
         tests:
           - not_null
+
+  - name: task_person_day_rows
+    description: >
+      Account-issue-day time rows consumed by task_worklog_flow, carrying the
+      person-day grouping key. In-progress seconds and worklog seconds are
+      separate UNION ALL arms. Each arm groups by tenant, entity, account,
+      date, source and issue, but the arms can share those keys, so this
+      relation has no unique key.
+    columns:
+      - name: day_tenant_id
+        description: "Nullable tenant isolation field"
+      - name: day_entity_id
+        description: "Normalized email of the assignee or worklog author; '' when the account has none"
+      - name: day_account_source_type
+        description: "Tracker account family in the identity store's vocabulary"
+      - name: day_account_source_id
+        description: "Raw connector source id of the tracker account"
+      - name: day_account_id
+        description: "Tracker account id of the assignee or worklog author"
+      - name: person_day
+        description: "Empty for an email-keyed person-day; otherwise the tracker family, source id and account id joined by colons"
+      - name: day_metric_date
+        description: "Calendar day the seconds fall on"
+      - name: day_insight_source_id
+        description: "Connector source id of the issue"
+      - name: day_issue_id
+        description: "Tracker id of the issue; '' for a worklog that names none"
+      - name: day_data_source
+        description: "Tracker family of the issue (jira, youtrack, github)"
+      - name: day_id_readable
+        description: "Issue key carried by the status or worklog row"
+      - name: day_in_progress_seconds
+        description: "Seconds assigned to the person on the issue that day; zero on a worklog-arm row"
+      - name: day_worklog_seconds
+        description: "Seconds logged on the issue by the author that day; zero on an in-progress-arm row"
 
   - name: task_worklog_flow
     description: >

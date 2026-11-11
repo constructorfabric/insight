@@ -247,9 +247,9 @@ Consumption policy (implemented):
   not per issue, so absence from a re-read list is never evidence: nothing
   re-reads an issue's worklogs as a whole. Comments have no such feed and
   keep the comment-list comparison above.
-- `gold/task_worklog_flow.sql` — the in-progress side inherits the filter
-  through its `task_issue_state` join; the worklog side filters
-  `ifNull(is_deleted, 0) = 0` from the class contract.
+- `gold/task_person_day_rows.sql` (read by `task_worklog_flow`) — the
+  in-progress side inherits the filter through its `task_issue_state` join;
+  the worklog side filters `ifNull(is_deleted, 0) = 0` from the class contract.
 
 Changing the policy (e.g. excluding deleted issues from historical throughput
 vs only from open-issue counts) is a one-line change in the gold filter; the

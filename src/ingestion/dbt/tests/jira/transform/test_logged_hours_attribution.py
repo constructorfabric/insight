@@ -74,6 +74,7 @@ def logged_hours(warehouse: Warehouse) -> dict[str, float]:
         "task_field_roles_current",
         "task_issue_state",
         "task_status_spans",
+        "task_person_day_rows",
         "task_worklog_flow",
         "task_metric_evidence",
         "--full-refresh",
