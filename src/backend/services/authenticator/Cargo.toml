@@ -62,6 +62,7 @@ rdkafka = { version = "0.39", features = ["cmake-build", "tokio"] }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }
+insight-http-client = { workspace = true }
 redis = { workspace = true }
 url = "2.5"
 openidconnect = "4"

@@ -107,7 +107,7 @@ fn spawn_server_with(
 }
 
 async fn wait_healthy(port: u16) -> R {
-    let client = reqwest::Client::new();
+    let client = http_client();
     let url = format!("http://127.0.0.1:{port}/healthz");
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -367,7 +367,7 @@ async fn get_json(
     path: &str,
     repo: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
+    let client = http_client();
     let url = format!("http://127.0.0.1:{port}{path}");
     let deadline = Instant::now() + Duration::from_mins(1);
     loop {
@@ -402,7 +402,7 @@ async fn boots_and_enforces_bearer_auth() -> R {
     let server = spawn_server("auth", TOKEN)?;
     wait_healthy(server.port).await?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
 
     let health = client.get(format!("{base}/healthz")).send().await?;
@@ -444,7 +444,7 @@ async fn non_http_origins_are_refused_in_the_shipped_configuration() -> R {
     wait_healthy(server.port).await?;
     let repo = fixture_origin(&server.dir)?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
 
     // The fixture origin is a real, reachable repository — only its transport
@@ -540,7 +540,7 @@ async fn paginates_commits_with_a_snapshot_bound_cursor() -> R {
     // Warm the cache first so the paging requests do not race the clone.
     get_json(server.port, "/v1/commits", &repo).await?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let first_page: serde_json::Value = client
         .get(format!("{base}/v1/commits"))
@@ -611,7 +611,7 @@ async fn pagination_never_drops_commits_with_non_monotonic_dates() -> R {
         .collect();
     assert_eq!(expected.len(), 3, "the fixture has three commits");
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let mut seen: Vec<String> = Vec::new();
     let mut token: Option<String> = None;
@@ -688,7 +688,7 @@ async fn since_returns_every_reachable_commit_at_or_after_it() -> R {
     // >= 08-02 would reach only the tip and prune the 08-03 root behind it.
     let repo = skewed_origin(&server.dir, "sincefilter")?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     get_json(server.port, "/v1/commits", &repo).await?;
 
@@ -801,7 +801,7 @@ async fn a_deleted_branch_stops_being_enumerated_even_when_a_tag_pins_it() -> R 
     // refspec prunes refs/heads only, so `--all` would keep enumerating it.
     run_in(&server.dir.join("taggable"), "git branch -qD doomed")?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let after: serde_json::Value = client
         .get(format!("{base}/v1/commits"))
@@ -832,7 +832,7 @@ async fn a_fetch_that_changed_nothing_keeps_live_page_tokens_valid() -> R {
     let repo = fixture_origin(&server.dir)?;
     get_json(server.port, "/v1/commits", &repo).await?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let page = |token: Option<String>, staleness: &'static str| {
         let (client, base, repo) = (client.clone(), base.clone(), repo.clone());
@@ -955,7 +955,7 @@ async fn an_interrupted_sync_resumes_without_losing_a_commit() -> R {
     let repo = mixed_timezone_origin(&server.dir)?;
     get_json(server.port, "/v1/commits", &repo).await?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let ask = |params: Vec<(String, String)>| {
         let (client, base) = (client.clone(), base.clone());
@@ -1025,7 +1025,7 @@ async fn a_page_token_from_another_repository_is_refused() -> R {
     get_json(server.port, "/v1/commits", &mine).await?;
     get_json(server.port, "/v1/commits", &theirs).await?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let first: serde_json::Value = client
         .get(format!("{base}/v1/commits"))
@@ -1078,7 +1078,7 @@ async fn sha_filter_selects_one_commit_across_both_endpoints() -> R {
     let target = items[1]["sha"].as_str().ok_or("no sha")?.to_owned();
     let prefix = &target[..8];
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let ask = |path: &str, sha: String| {
         let url = format!("{base}{path}");
@@ -1151,7 +1151,7 @@ async fn branches_honour_page_size_and_paginate_by_name() -> R {
 
     get_json(server.port, "/v1/branches", &repo).await?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base = format!("http://127.0.0.1:{}", server.port);
     let page = |token: Option<String>| {
         let client = client.clone();
@@ -1460,4 +1460,11 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
         "a truncated index must fall back to the live walk, never serve short history"
     );
     Ok(())
+}
+
+/// A plain test client on the same TLS stack as production clients.
+fn http_client() -> reqwest::Client {
+    insight_http_client::client_builder()
+        .and_then(|builder| Ok(builder.build()?))
+        .unwrap_or_else(|error| panic!("a client builds: {error}"))
 }

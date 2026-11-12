@@ -98,7 +98,7 @@ impl TokenVerifier {
         } else {
             jwks_url.trim().to_owned()
         };
-        let client = reqwest::Client::builder()
+        let client = insight_http_client::client_builder()?
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(5))
             .build()?;

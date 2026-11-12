@@ -338,9 +338,8 @@ mod delivery {
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build()
+        let http = insight_http_client::client_builder()
+            .and_then(|builder| Ok(builder.timeout(Duration::from_secs(2)).build()?))
             .unwrap_or_else(|error| panic!("a client builds: {error}"));
 
         (

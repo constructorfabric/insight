@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "libs/insight-clickhouse",
+    "libs/insight-http-client",
     "libs/insight-http-metrics",
     "libs/insight-log-context",
     "libs/insight-migration",
@@ -99,7 +100,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 secrecy = { version = "0.10", features = ["serde"] }
 
 # HTTP client (for Identity Resolution API)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2", "system-proxy", "rustls-tls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+rustls-pki-types = { version = "1", features = ["std"] }
 
 # Caching
 redis = { version = "1.5", features = ["tokio-comp", "connection-manager"] }
@@ -164,6 +168,7 @@ opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto",
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
 insight-http-metrics = { path = "libs/insight-http-metrics" }
+insight-http-client = { path = "libs/insight-http-client" }
 insight-log-context = { path = "libs/insight-log-context" }
 insight-migration = { path = "libs/insight-migration" }
 insight-openapi = { path = "libs/insight-openapi" }

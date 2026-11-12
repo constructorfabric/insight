@@ -29,7 +29,8 @@ pub fn user_password() -> String {
 /// Redirects OFF, like the suites' own client: the 302 back to the RP is the
 /// observation, not something to follow.
 fn http() -> reqwest::Client {
-    reqwest::Client::builder()
+    insight_http_client::client_builder()
+        .expect("TLS config must build")
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("reqwest client must build")

@@ -45,6 +45,7 @@ chrono = { workspace = true }
 chrono-tz = { workspace = true }
 clickhouse = { workspace = true }
 reqwest = { workspace = true }
+insight-http-client = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 secrecy = { workspace = true }
