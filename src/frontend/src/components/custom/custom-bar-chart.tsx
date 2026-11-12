@@ -6,6 +6,7 @@ import {
   pointClick,
   points,
   seriesConfig,
+  stackColor,
   stacks,
 } from "@/components/custom/chart-data";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
@@ -41,12 +42,14 @@ export function CustomBarChart({
   const stacked = series ? stacks(result, x, y, series) : null;
   const data = stacked?.rows ?? points(result, [x, y]);
   const segments = stacked?.series ?? [{ key: y, label: y }];
-  const config: ChartConfig = Object.fromEntries(
-    segments.map(({ key, label }, index) => [
-      key,
-      { ...seriesConfig(key, index)[key], label },
-    ])
-  );
+  const config: ChartConfig = stacked
+    ? Object.fromEntries(
+        segments.map(({ key, label }, index) => [
+          key,
+          { label, color: stackColor(index) },
+        ])
+      )
+    : seriesConfig(y);
 
   return (
     <ChartFrame
@@ -66,9 +69,12 @@ export function CustomBarChart({
           unit={unit}
         />
         {stacked && (
-          <ChartLegend content={<ChartLegendContent />} itemSorter={null} />
+          <ChartLegend
+            content={<ChartLegendContent className="flex-wrap gap-y-1" />}
+            itemSorter={null}
+          />
         )}
-        {segments.map(({ key, label }, index) => (
+        {segments.map(({ key, label }) => (
           <ChartBar
             key={key}
             dataKey={key}
@@ -77,9 +83,18 @@ export function CustomBarChart({
             stackId={stacked ? "stack" : undefined}
             radius={stacked ? 0 : undefined}
           >
-            {labels && index === segments.length - 1 && (
+            {labels && (
               <LabelList
-                dataKey={stacked?.total ?? y}
+                {...(stacked
+                  ? {
+                      valueAccessor: (entry: {
+                        payload: Record<string, unknown>;
+                      }) =>
+                        entry.payload[stacked.top] === key
+                          ? (entry.payload[stacked.total] as number)
+                          : undefined,
+                    }
+                  : { dataKey: y })}
                 position="top"
                 className="fill-foreground"
                 fontSize={11}

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MouseHandlerDataParam } from "recharts";
 
-import { pointClick, stacks } from "./chart-data";
+import { pointClick, stackColor, stacks } from "./chart-data";
 
 const at = (activeTooltipIndex: unknown) =>
   ({ activeTooltipIndex }) as MouseHandlerDataParam;
@@ -72,5 +72,35 @@ describe("stacks", () => {
 
     expect(series[0].label).toBe("build.timed out");
     expect(series[0].key).toMatch(/^[a-z0-9_]+$/);
+  });
+});
+
+describe("stacks' top segment", () => {
+  it("is the highest segment holding a value, so a total sits on the visible top", () => {
+    const { rows, series, top } = stacks(
+      {
+        columns: ["week", "result", "mrs"],
+        rows: [
+          ["2026-11-02", "merged", 4],
+          ["2026-11-02", "open", 1],
+          ["2026-11-09", "merged", 2],
+        ],
+      },
+      "week",
+      "mrs",
+      "result"
+    );
+    const [merged, open] = series.map((segment) => segment.key);
+
+    expect(rows.map((row) => row[top])).toEqual([open, merged]);
+  });
+});
+
+describe("stackColor", () => {
+  it("paints twelve segments apart before it repeats", () => {
+    const colors = Array.from({ length: 13 }, (_, index) => stackColor(index));
+
+    expect(new Set(colors.slice(0, 12)).size).toBe(12);
+    expect(colors[12]).toBe(colors[0]);
   });
 });

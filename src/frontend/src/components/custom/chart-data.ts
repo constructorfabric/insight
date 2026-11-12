@@ -27,9 +27,16 @@ export interface Stacks {
   rows: Record<string, unknown>[];
   series: { key: string; label: string }[];
   total: string;
+  top: string;
 }
 
 const STACK_TOTAL = "stack_total";
+const STACK_TOP = "stack_top";
+const STACK_COLORS = 12;
+
+export function stackColor(index: number): string {
+  return `var(--chart-${(index % STACK_COLORS) + 1})`;
+}
 
 /**
  * Recharts reads a dotted `dataKey` as a path and a chart colour is a CSS
@@ -64,17 +71,18 @@ export function stacks(
     bar[STACK_TOTAL] = Number(bar[STACK_TOTAL]) + value;
   }
 
-  const rows = [...bars.values()].map((bar) =>
-    Object.fromEntries([
-      ...[...keys.values()].map((key) => [key, 0]),
-      ...Object.entries(bar),
-    ])
-  );
+  const ordered = [...keys.values()];
+  const rows = [...bars.values()].map((bar) => ({
+    ...Object.fromEntries(ordered.map((key) => [key, 0])),
+    ...bar,
+    [STACK_TOP]: ordered.findLast((key) => Number(bar[key] ?? 0) > 0),
+  }));
 
   return {
     rows,
     series: [...keys].map(([label, key]) => ({ key, label })),
     total: STACK_TOTAL,
+    top: STACK_TOP,
   };
 }
 

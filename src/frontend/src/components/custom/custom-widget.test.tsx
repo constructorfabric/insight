@@ -87,8 +87,18 @@ vi.mock("recharts", async (importOriginal) => {
     PieChart: chart("pie-chart"),
     CartesianGrid: () => null,
     Tooltip: () => null,
-    Legend: ({ itemSorter }: { itemSorter?: unknown }) => (
-      <div data-testid="legend" data-item-sorter={String(itemSorter)} />
+    Legend: ({
+      itemSorter,
+      content,
+    }: {
+      itemSorter?: unknown;
+      content?: React.ReactElement<{ className?: string }>;
+    }) => (
+      <div
+        data-testid="legend"
+        data-item-sorter={String(itemSorter)}
+        data-content-class={content?.props.className}
+      />
     ),
     LabelList: ({ dataKey }: { dataKey: string }) => (
       <div data-testid="label-list" data-key={dataKey} />
@@ -452,14 +462,24 @@ describe("<CustomWidget>", () => {
       );
     });
 
-    it("labels each stack's total once, on top", () => {
+    it("can label a stack's total on whichever segment ends up on top", () => {
       render(
         <CustomWidget widget={{ ...stacked, labels: true }} result={runs} />
       );
 
-      const labels = screen.getAllByTestId("label-list");
-      expect(labels).toHaveLength(1);
-      expect(screen.getAllByTestId("bar").at(-1)).toContainElement(labels[0]);
+      for (const segment of screen.getAllByTestId("bar")) {
+        expect(
+          segment.querySelector('[data-testid="label-list"]')
+        ).not.toBeNull();
+      }
+    });
+
+    it("wraps a long legend rather than clipping it", () => {
+      render(<CustomWidget widget={stacked} result={runs} />);
+
+      expect(screen.getByTestId("legend").dataset.contentClass).toContain(
+        "flex-wrap"
+      );
     });
 
     it("draws no labels unless asked", () => {
