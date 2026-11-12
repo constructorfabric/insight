@@ -4,14 +4,11 @@
 //! and person, so a ciphertext lifted into another person's row fails to open
 //! rather than handing that person someone else's key.
 
-use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{Aead, Generate, KeyInit, Nonce, Payload};
+use toolkit_security::crypto::aead::{Aes256Gcm, NONCE_LEN};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::config::KEY_BYTES;
-
-const NONCE_BYTES: usize = 12;
 
 /// A sealed token as it is stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,20 +28,12 @@ pub fn seal(
     person: Uuid,
     token: &str,
 ) -> anyhow::Result<Sealed> {
-    let cipher = Aes256Gcm::new(key.into());
-    let nonce = Nonce::<Aes256Gcm>::try_generate()
-        .map_err(|_| anyhow::anyhow!("failed to draw a nonce"))?;
-
+    let cipher =
+        Aes256Gcm::new(key).map_err(|error| anyhow::anyhow!("AES-GCM key rejected: {error}"))?;
     let aad = associated_data(tenant, person);
-    let ciphertext = cipher
-        .encrypt(
-            &nonce,
-            Payload {
-                msg: token.as_bytes(),
-                aad: &aad,
-            },
-        )
-        .map_err(|_| anyhow::anyhow!("failed to seal the token"))?;
+    let (nonce, ciphertext) = cipher
+        .seal(&aad, token.as_bytes())
+        .map_err(|error| anyhow::anyhow!("failed to seal the token: {error}"))?;
 
     Ok(Sealed {
         nonce: nonce.to_vec(),
@@ -64,30 +53,25 @@ pub fn open(
     person: Uuid,
     sealed: &Sealed,
 ) -> anyhow::Result<Zeroizing<String>> {
-    let nonce = Nonce::<Aes256Gcm>::try_from(sealed.nonce.as_slice()).map_err(|_| {
+    let nonce = <[u8; NONCE_LEN]>::try_from(sealed.nonce.as_slice()).map_err(|_| {
         anyhow::anyhow!(
-            "stored nonce is {} bytes, expected {NONCE_BYTES}",
+            "stored nonce is {} bytes, expected {NONCE_LEN}",
             sealed.nonce.len()
         )
     })?;
 
-    let cipher = Aes256Gcm::new(key.into());
+    let cipher =
+        Aes256Gcm::new(key).map_err(|error| anyhow::anyhow!("AES-GCM key rejected: {error}"))?;
     let aad = associated_data(tenant, person);
 
     let plaintext = cipher
-        .decrypt(
-            &nonce,
-            Payload {
-                msg: &sealed.ciphertext,
-                aad: &aad,
-            },
-        )
+        .open(&nonce, &aad, &sealed.ciphertext)
         .map_err(|_| anyhow::anyhow!("failed to open the sealed token"))?;
 
-    let token = String::from_utf8(plaintext)
+    let token = std::str::from_utf8(&plaintext)
         .map_err(|_| anyhow::anyhow!("sealed token is not valid UTF-8"))?;
 
-    Ok(Zeroizing::new(token))
+    Ok(Zeroizing::new(token.to_owned()))
 }
 
 /// The last four characters of a token — all the UI ever learns about it.
@@ -175,6 +159,22 @@ mod tests {
         sealed.nonce.pop();
 
         assert!(open(&KEY, tenant(), person(), &sealed).is_err());
+        Ok(())
+    }
+
+    // A row sealed outside insight (python `cryptography` AESGCM, same key,
+    // tenant/person AAD and token as above). Stored rows must keep opening
+    // whatever AES-GCM implementation seals new ones.
+    #[test]
+    fn opens_a_row_sealed_by_another_implementation() -> anyhow::Result<()> {
+        let sealed = Sealed {
+            nonce: hex::decode("000102030405060708090a0b")?,
+            ciphertext: hex::decode(
+                "34da5b2da194706f41ac5695ca8cff94d2a0125b14abcd737bf3241ce5316e46480859e347f141eba3c65ad8a85104f08dc59eee79",
+            )?,
+        };
+
+        assert_eq!(open(&KEY, tenant(), person(), &sealed)?.as_str(), TOKEN);
         Ok(())
     }
 
