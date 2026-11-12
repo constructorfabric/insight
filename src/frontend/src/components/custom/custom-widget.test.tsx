@@ -435,8 +435,8 @@ describe("<CustomWidget>", () => {
 
       const segments = screen.getAllByTestId("bar");
       expect(segments.map((bar) => bar.dataset.name)).toEqual([
-        "merged",
         "failed",
+        "merged",
       ]);
       expect(new Set(segments.map((bar) => bar.dataset.stackId)).size).toBe(1);
       expect(segments[0].dataset.stackId).toBeTruthy();

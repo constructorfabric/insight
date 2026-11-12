@@ -33,19 +33,19 @@ describe("stacks", () => {
     ],
   };
 
-  it("draws one bar per x, split by the series in the order the rows name them", () => {
+  it("draws one bar per x in row order, split by the series sorted by name", () => {
     const { rows, series } = stacks(runs, "week", "runs", "outcome");
 
     expect(series.map((segment) => segment.label)).toEqual([
-      "merged",
       "failed",
+      "merged",
     ]);
     expect(rows.map((row) => row.week)).toEqual(["2026-11-02", "2026-11-09"]);
   });
 
   it("puts each row's value in its series' segment, and nothing where a series is absent", () => {
     const { rows, series } = stacks(runs, "week", "runs", "outcome");
-    const [merged, failed] = series.map((segment) => segment.key);
+    const [failed, merged] = series.map((segment) => segment.key);
 
     expect(rows[0][merged]).toBe(3);
     expect(rows[0][failed]).toBe(1);

@@ -45,13 +45,15 @@ export function stacks(
   const yAt = result.columns.indexOf(y);
   const seriesAt = result.columns.indexOf(series);
 
-  const keys = new Map<string, string>();
+  const label = (row: unknown[]) => String(row[seriesAt] ?? "—");
+  const labels = [...new Set(result.rows.map(label))].sort((a, b) =>
+    a.localeCompare(b, "en", { numeric: true })
+  );
+  const keys = new Map(labels.map((name, index) => [name, `stack_${index}`]));
   const bars = new Map<unknown, Record<string, unknown>>();
 
   for (const row of result.rows) {
-    const label = String(row[seriesAt] ?? "—");
-    const key = keys.get(label) ?? `stack_${keys.size}`;
-    keys.set(label, key);
+    const key = keys.get(label(row))!;
 
     const bar = bars.get(row[xAt]) ?? { [x]: row[xAt], [STACK_TOTAL]: 0 };
     bars.set(row[xAt], bar);
