@@ -87,7 +87,7 @@ impl IdentityClient {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
-            http: reqwest::Client::builder()
+            http: insight_http_client::client_builder()?
                 .timeout(REQUEST_TIMEOUT)
                 .build()?,
         })

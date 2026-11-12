@@ -50,6 +50,7 @@ regex-lite = { workspace = true }
 
 # OCI registry tag listing (GET /v1/images).
 reqwest = { workspace = true }
+insight-http-client = { workspace = true }
 
 # Kubernetes: the Deployment/Service/HTTPRoute trio IS the experiment store.
 kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"] }

@@ -1,0 +1,24 @@
+[package]
+name = "insight-http-client"
+version = "0.1.0"
+description = "reqwest clients on rustls with the platform-selected crypto provider"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+rustls-pki-types = { workspace = true }
+toolkit-security = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

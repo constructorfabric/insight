@@ -110,7 +110,10 @@ impl ServiceTokenClient {
         let signing = EcdsaP256KeyPair::from_pkcs8_pem(private_key_pem).map_err(|e| {
             CanonicalError::internal(format!("invalid service private key PEM: {e}")).create()
         })?;
-        let http = reqwest::Client::builder()
+        let http = insight_http_client::client_builder()
+            .map_err(|e| {
+                CanonicalError::internal(format!("build service-token HTTP client: {e}")).create()
+            })?
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()

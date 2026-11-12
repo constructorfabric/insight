@@ -52,7 +52,9 @@ impl AnthropicClient {
     ///
     /// Returns an error when the HTTP client cannot be built.
     pub fn new(api_base: &str, timeout: Duration) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder().timeout(timeout).build()?;
+        let http = insight_http_client::client_builder()?
+            .timeout(timeout)
+            .build()?;
 
         Ok(Self {
             http,

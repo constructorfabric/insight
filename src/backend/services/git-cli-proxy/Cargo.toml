@@ -63,6 +63,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+insight-http-client = { workspace = true }
 insight-log-context = { workspace = true, features = ["test-support"] }
 uuid = { workspace = true }
 # `start_paused` virtual time, so the preparation-wait test does not sleep.

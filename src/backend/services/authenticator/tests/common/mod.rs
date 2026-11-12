@@ -36,7 +36,8 @@ pub struct Client {
 /// `/authorize`, and `/auth/callback` are observed rather than followed.
 pub fn client() -> Client {
     Client {
-        inner: reqwest::Client::builder()
+        inner: insight_http_client::client_builder()
+            .expect("TLS config must build")
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client must build"),

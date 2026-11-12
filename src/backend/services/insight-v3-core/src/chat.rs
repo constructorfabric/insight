@@ -159,9 +159,12 @@ impl ChatClient {
             return Self::keyless();
         }
 
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(CHAT_TIMEOUT_SECS))
-            .build()
+        let http = insight_http_client::client_builder()
+            .and_then(|builder| {
+                Ok(builder
+                    .timeout(Duration::from_secs(CHAT_TIMEOUT_SECS))
+                    .build()?)
+            })
             .unwrap_or_else(|error| panic!("the HTTP client must build: {error}"));
 
         Self {

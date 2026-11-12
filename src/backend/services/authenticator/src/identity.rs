@@ -179,7 +179,7 @@ impl IdentityPersonResolver {
         audience: String,
         source_type: String,
     ) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder()
+        let http = insight_http_client::client_builder()?
             .timeout(std::time::Duration::from_secs(
                 IDENTITY_REQUEST_TIMEOUT_SECS,
             ))

@@ -188,7 +188,7 @@ impl TokenVerifier {
     fn new(public_url: &str, allow_insecure_private_network: bool) -> anyhow::Result<Self> {
         validate_public_url(public_url, allow_insecure_private_network)?;
         let issuer = public_url.trim_end_matches('/').to_owned();
-        let client = reqwest::Client::builder()
+        let client = insight_http_client::client_builder()?
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(5))
             .build()?;

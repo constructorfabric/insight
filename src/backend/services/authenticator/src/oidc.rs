@@ -82,42 +82,27 @@ pub fn build_http(idp: &IdpConfig) -> anyhow::Result<reqwest::Client> {
     // same one-time-use refresh token, and the IdP burns it → false logout.
     // It also caps semaphore-permit hold time so hung calls can't wedge the
     // whole refresher (G5).
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(10))
-        .connect_timeout(std::time::Duration::from_secs(5));
-    // Trust an extra internal/corporate CA for the IdP connection, on
-    // top of whichever trust store this build's TLS backend resolves by
-    // default. Explicit `.add_root_certificate()` works regardless of
-    // whether Cargo's feature unification landed on native-tls (OS trust
-    // store) or rustls (bundled webpki-roots) for this binary — unlike
-    // an OS-level trust-store file/env-var (e.g. SSL_CERT_FILE), which
-    // only applies if native-tls won and cannot be relied on here.
-    if !idp.extra_ca_cert_path.is_empty() {
+    let builder = if idp.extra_ca_cert_path.is_empty() {
+        insight_http_client::client_builder()?
+    } else {
+        // Trust an extra internal/corporate CA for the IdP connection on top
+        // of the system store. The file may carry a full chain (intermediate
+        // + root); a file with no certificate fails loudly at startup.
         let pem = std::fs::read(&idp.extra_ca_cert_path)
             .with_context(|| format!("read extra_ca_cert_path {:?}", idp.extra_ca_cert_path))?;
-        // `from_pem_bundle`, not `from_pem`: the file may carry a full
-        // chain (e.g. intermediate + root); `from_pem` only parses the
-        // first certificate in the blob and silently drops the rest.
-        let certs = reqwest::Certificate::from_pem_bundle(&pem).with_context(|| {
+        insight_http_client::client_builder_with_extra_roots(&pem).with_context(|| {
             format!(
-                "parse PEM cert bundle from extra_ca_cert_path {:?}",
+                "load PEM cert bundle from extra_ca_cert_path {:?}",
                 idp.extra_ca_cert_path
             )
-        })?;
-        // A whitespace/comment-only file parses to zero certs without
-        // erroring, silently leaving only the default trust store —
-        // reject it so a misconfigured mount fails loudly at startup.
-        anyhow::ensure!(
-            !certs.is_empty(),
-            "extra_ca_cert_path {:?} contained no certificates",
-            idp.extra_ca_cert_path
-        );
-        for cert in certs {
-            builder = builder.add_root_certificate(cert);
-        }
-    }
-    builder.build().context("build OIDC HTTP client")
+        })?
+    };
+    builder
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .context("build OIDC HTTP client")
 }
 
 /// The OIDC client for ONE issuer — holds that issuer's client registration;

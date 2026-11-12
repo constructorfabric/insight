@@ -52,6 +52,7 @@ grpc_hub = { workspace = true }
 service_discovery = { workspace = true }
 types_registry = { workspace = true }
 reqwest = { workspace = true }
+insight-http-client = { workspace = true }
 jsonwebtoken = { workspace = true }
 redis = { workspace = true }
 

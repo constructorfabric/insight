@@ -25,7 +25,7 @@ impl Registry {
         } else {
             Some(bearer(token)?)
         };
-        let http = reqwest::Client::builder()
+        let http = insight_http_client::client_builder()?
             .timeout(REGISTRY_TIMEOUT)
             .build()
             .context("registry http client")?;

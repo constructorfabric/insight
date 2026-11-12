@@ -32,7 +32,7 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 pub(crate) fn providers(
     destinations: &BTreeMap<String, DestinationConfig>,
     timeout: Duration,
-) -> Result<BTreeMap<String, Arc<dyn Provider>>, reqwest::Error> {
+) -> anyhow::Result<BTreeMap<String, Arc<dyn Provider>>> {
     let http = client(timeout)?;
 
     Ok(destinations
@@ -74,11 +74,11 @@ pub(crate) fn providers(
 /// The one client every adapter posts through: a bounded wait, and no
 /// following of redirects, since what a redirect's target answers is not
 /// the provider's answer to the message.
-fn client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
+fn client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
+    Ok(insight_http_client::client_builder()?
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
-        .build()
+        .build()?)
 }
 
 /// What a transport failure means: a timeout or a dropped connection

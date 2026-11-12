@@ -22,6 +22,7 @@ toolkit-canonical-errors = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
+insight-http-client = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 # ES256 assertion signing. Workspace dep so the whole tree shares one
