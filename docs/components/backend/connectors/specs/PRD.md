@@ -98,7 +98,7 @@ request gets 401.
 1. The schedule is shown full width at the top of the expanded row.
 2. Below it:
    - a strip of up to the last 50 syncs, one small coloured bar each, with the share of finished syncs
-     that succeeded and the share that failed, for example "94% succeeded · 6% failed";
+     that succeeded, for example "94% succeeded";
    - a table of the latest 10 syncs with column headers (status, start in UTC, duration,
      records), which expands to show the rest.
 3. The heading states how many syncs it shows, for example "Latest 10 of 50 recorded".
