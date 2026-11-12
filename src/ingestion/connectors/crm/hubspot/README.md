@@ -163,7 +163,8 @@ The connector's staging models (`dbt/hubspot__crm_*.sql`, tag `hubspot`) feed th
 - `unique_key` is `{tenant}-{source}-{natural key}`; the natural key includes the object type wherever HubSpot ids are unique only per type (associations, pipelines, stages, history, property definitions).
 - **Deletion is a row state, not a missing row.** Archived records stay with `is_deleted = 1` and `deleted_at`; filter `is_deleted = 0` for the live picture.
 - **`properties`** (`Map(String, String)`) on accounts, contacts, deals, activities, leads and tickets holds every non-empty property of the record — standard and custom — as HubSpot returns it (`properties['my_custom_field']`). Labels, types and option labels are in `class_crm_property_definitions`. It is read from `raw_data`, so each value is capped at 2 KiB; dedicated columns carry the untruncated bodies.
-- Staging keeps one row per `unique_key` per batch (`LIMIT 1 BY unique_key` over `_version DESC`), and silver is delete+insert on `unique_key`; `FINAL` still guards against parts that have not merged yet.
+- Staging keeps the latest version of each `unique_key` per batch, and silver is delete+insert on `unique_key`; `FINAL` still guards against parts that have not merged yet.
+- Staging and silver pass a record when its `_version` is newer than the one they already hold for that `unique_key`, so a stream added later or a backfill of old records lands with its original versions. A record re-read at an unchanged version is skipped: a newly extracted column reaches existing rows only through a `--full-refresh` of the HubSpot models.
 - Owner columns (`owner_id`) join `class_crm_users.user_id` (owners.id); creator columns (`created_by_user_id`, `changed_by_user_id`) join `class_crm_users.hs_user_id` (owners.userId).
 
 ### Classes

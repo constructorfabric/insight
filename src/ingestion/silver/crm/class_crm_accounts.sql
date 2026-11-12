@@ -14,16 +14,6 @@
 WITH src AS (
     {{ union_by_tag('silver:class_crm_accounts') }}
 )
-{% if is_incremental() %}
 SELECT src.*
 FROM src
-LEFT JOIN (
-    SELECT tenant_id, source_id, max(_version) AS hwm
-    FROM {{ this }}
-    GROUP BY tenant_id, source_id
-) w
-  ON w.tenant_id = src.tenant_id AND w.source_id = src.source_id
-WHERE src._version > coalesce(w.hwm, 0)
-{% else %}
-SELECT * FROM src
-{% endif %}
+{{ silver_incremental_watermark(['unique_key'], alias='src') }}

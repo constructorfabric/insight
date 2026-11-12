@@ -49,4 +49,4 @@ WITH src AS (
     {% endfor %}
 )
 
-{{ hubspot_staging_tail('src', source_key='insight_source_id') }}
+{{ hubspot_staging_tail('src') }}

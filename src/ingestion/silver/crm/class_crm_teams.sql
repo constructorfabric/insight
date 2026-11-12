@@ -13,4 +13,4 @@
 SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_crm_teams') }}
 ) AS candidate
-{{ silver_incremental_watermark(['tenant_id', 'source_id']) }}
+{{ silver_incremental_watermark(['unique_key']) }}

@@ -50,21 +50,22 @@
 {%- endmacro %}
 
 
-{% macro hubspot_staging_tail(cte, source_key='source_id') %}
+{% macro hubspot_staging_tail(cte) %}
 {#-
-  Incremental boundary per source instance, then one row per unique_key: a
-  batch can carry several versions of a record (unmerged Bronze parts, a live
-  and an archived arm), and silver must not inherit them.
+  One row per unique_key at a version this table does not hold yet: a batch
+  can carry several versions of a record (unmerged Bronze parts, a live and an
+  archived arm), and silver must not inherit them.
 -#}
 SELECT {{ cte }}.*
 FROM {{ cte }}
 {% if is_incremental() %}
+{#- INVARIANT: the boundary is per record; a per-source maximum drops every record a new stream or a backfill brings with an older version. -#}
 LEFT JOIN (
-    SELECT tenant_id, {{ source_key }}, max(_version) AS hwm
+    SELECT unique_key, max(_version) AS stored_version
     FROM {{ this }}
-    GROUP BY tenant_id, {{ source_key }}
-) AS w
-    ON w.tenant_id = {{ cte }}.tenant_id AND w.{{ source_key }} = {{ cte }}.{{ source_key }}
+    GROUP BY unique_key
+) AS stored
+    ON stored.unique_key = {{ cte }}.unique_key
 {% endif %}
 {#- INVARIANT: the latest version is chosen over (unique_key, _version) alone; sorting the wide rows exhausts server memory. -#}
 WHERE ({{ cte }}.unique_key, {{ cte }}._version) IN (
@@ -73,7 +74,7 @@ WHERE ({{ cte }}.unique_key, {{ cte }}._version) IN (
     GROUP BY unique_key
 )
 {% if is_incremental() %}
-  AND {{ cte }}._version > coalesce(w.hwm, 0)
+  AND {{ cte }}._version > coalesce(stored.stored_version, 0)
 {% endif %}
 LIMIT 1 BY {{ cte }}.unique_key
 {% endmacro %}
