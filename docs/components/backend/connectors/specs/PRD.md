@@ -49,18 +49,18 @@ request gets 401.
 | Badge | Meaning |
 |---|---|
 | Applied | The sync job runs the saved schedule |
-| Applying | Saved; the service is applying it and retries within a minute |
-| Waiting for reconcile | Saved; the sync job is not yet prepared to take it; applies at the next reconcile pass, whose expected time is shown |
+| Waiting for reconcile | Saved, but the sync job does not run it yet; the next reconcile pass applies it, and its expected time is shown |
 | Not scheduled yet | Saved; the instance has no sync job yet; the next reconcile pass creates it with this schedule |
-| Error | Saved, but the cluster refused it; the service retries every minute |
 | Default | No saved schedule; the default schedule runs |
 
-5. While a save is not yet applied, the strip shows one short line: when it takes effect, or that it
-   is being retried, and what runs until then.
-6. The badge's tooltip carries the detail: the reason, the error message, and exact times.
-7. A change to Applied or Error shows a short notification.
-8. The row's next sync follows the applied schedule as soon as it is applied.
-9. A schedule another admin saves appears on an open page within a minute, with that admin's name.
+5. While a save is not yet applied, the strip shows one short line: when it takes effect and what runs
+   until then.
+6. The badge's tooltip carries the detail: the reason (for example, the cluster refused the change and
+   its message) and exact times.
+7. A change to Applied shows a short notification.
+8. The status always reflects the sync job as it is when the page reads it.
+9. The row's next sync follows the applied schedule as soon as it is applied.
+10. A schedule another admin saves appears on an open page within a minute, with that admin's name.
 
 ### 4.3 Changing a schedule
 
@@ -72,7 +72,8 @@ request gets 401.
 2. Any frequency is allowed.
 3. Before saving, the editor shows the cron that will be stored and the next three runs.
 4. An invalid value shows an error next to the field, and Save stays disabled.
-5. Save stores the schedule and applies it to the sync job at once.
+5. Save stores the schedule and applies it to the sync job at once. If the sync job cannot take it at
+   that moment, the next reconcile pass applies it.
 6. The badge says Applied only after the service has read the sync job back and found the saved schedule on it.
 7. If another admin changed the schedule in the meantime, the save is refused, and the editor
    reloads the current schedule and says so.
@@ -80,14 +81,16 @@ request gets 401.
 ### 4.4 Resetting a schedule
 
 1. "Reset to default" removes the saved schedule.
-2. The sync job returns to the default schedule at once, and the badge says Default.
+2. The sync job returns to the default schedule at once, and the badge says Default. If it cannot at
+   that moment, the next reconcile pass returns it.
 
 ### 4.5 Keeping a saved schedule
 
 1. A saved schedule survives reconcile passes: a pass leaves it in place.
 2. If anything else changes the sync job's schedule — a pass that started before the save, or a manual
-   edit — the service restores the saved schedule within a minute.
-3. A schedule the cluster refused stays saved and is retried every minute until it applies.
+   edit — the next reconcile pass restores the saved schedule.
+3. A schedule the cluster refused stays saved; the next reconcile pass applies it. The service does not
+   retry on its own.
 4. The order of precedence is: saved schedule, then the instance's deployment setting, then the
    connector's, then daily at 00:00 UTC.
 5. If a reconcile pass cannot read the saved schedules, it changes no sync job's schedule and reports
@@ -111,19 +114,20 @@ request gets 401.
 3. The service runs as one replica and uses the install's existing database credentials; it adds no
    new secret.
 4. The reconcile loop reads saved schedules through a read-only database account.
-5. Each correction the service makes to a sync job is logged, and Kubernetes records the service as
-   the writer.
+5. Each change the service makes to a sync job is logged, and Kubernetes records the service as the
+   writer.
 
 ## 6. Acceptance criteria
 
 1. Saving `*/5 * * * *` for an instance shows Applied, and the sync job runs `*/5 * * * *` right away.
 2. A reconcile pass after the save leaves `*/5 * * * *` in place.
-3. A pass that started before the save and writes the old schedule is corrected within 60 seconds,
-   and the badge says Applied.
+3. A pass that started before the save and writes the old schedule leaves the badge at Waiting for
+   reconcile; the next pass restores the saved schedule, and the badge says Applied.
 4. Reset to default shows Default at once; the sync job runs the default schedule, and the next pass
    keeps it.
-5. With the service's permission to change sync jobs removed, a save shows Error, and the saved
-   schedule is kept. Within a minute of restoring the permission, it applies and shows Applied.
+5. With the service's permission to change sync jobs removed, a save shows Waiting for reconcile with
+   the refusal in its tooltip, and the saved schedule is kept. The next reconcile pass applies it, and
+   the badge says Applied.
 6. The saved schedule fires, the sync succeeds, and the row shows the sync as succeeded.
 7. A failed sync shows as failed in the row, sorts first, and is listed in the sync history.
 8. With the read-only account unable to read saved schedules, a reconcile pass changes no sync job's
