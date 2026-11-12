@@ -50,7 +50,7 @@ fn the_summary_contract_describes_the_recorded_schedule() -> Result<(), Box<dyn 
     );
     assert_eq!(
         schemas["ScheduleOrigin"]["enum"],
-        serde_json::json!(["annotation", "descriptor", "default"])
+        serde_json::json!(["api", "annotation", "descriptor", "default"])
     );
     Ok(())
 }

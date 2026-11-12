@@ -40,6 +40,7 @@ SOME_ACCOUNT_ID: Final[str] = "stand-in-account"
 #: hyphens and refuses anything else, so a stand-in outside that shape would be
 #: refused before the gate under test was reached.
 SOME_CONNECTOR: Final[str] = "stand-in-connector"
+SOME_SOURCE_ID: Final[str] = "stand-in-source"
 
 #: Stand-in for `{metric_key}`, which is a dotted `family.name` string rather
 #: than a UUID. Kept a DOTTED key on purpose: the literal `export`/`import`
@@ -199,6 +200,13 @@ CONNECTORS_OPERATIONS: Final[tuple[Operation, ...]] = tuple(
         # test_ingestion.py.
         "/v1/ingestion/intensity",
     )
+) + tuple(
+    Operation(
+        method,
+        connectors_path(f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),
+        "connectors",
+    )
+    for method in ("GET", "PUT", "DELETE")
 )
 
 ALL_OPERATIONS: Final[tuple[Operation, ...]] = (

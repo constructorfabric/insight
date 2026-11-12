@@ -33,7 +33,19 @@ impl Gear for ConnectorsGear {
                 config.clickhouse_password.expose_secret(),
             );
         }
+        let cluster = if config.cluster.enabled {
+            crate::infra::cluster::Cluster::new(
+                kube::Client::try_default().await?,
+                &config.namespace,
+                &config.tenant_id,
+            )
+        } else {
+            crate::infra::cluster::Cluster::disabled()
+        }
+        .with_reconcile_workflow(config.reconcile_workflow_name);
         let state = api::AppState {
+            cluster,
+            schedule_slots: tokio::sync::Semaphore::new(4),
             db,
             ch: insight_clickhouse::Client::new(ch_config),
             identity: infra::identity::IdentityClient::new(&config.identity_url)?,

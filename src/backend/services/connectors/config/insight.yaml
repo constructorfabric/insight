@@ -14,6 +14,8 @@ opentelemetry:
 gears:
   api-gateway:
     config:
+      defaults:
+        request_timeout: 60s
       metrics:
         prefix: "host"
       bind_addr: "0.0.0.0:8088"
@@ -83,6 +85,8 @@ gears:
 
   connectors:
     config:
+      cluster:
+        enabled: false
       database_url: ""
       clickhouse_url: ""
       clickhouse_database: "insight"

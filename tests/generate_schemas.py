@@ -343,6 +343,12 @@ def generate(target: Generated) -> str:
             capture_output=True,
             text=True,
         )
+        subprocess.run(
+            ["ruff", "check", "--isolated", "--select", "I", "--fix", str(out)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         body = out.read_text(encoding="utf-8")
 
     # The generator's own two-line provenance comment is replaced by the target's

@@ -18,6 +18,8 @@ fn state(url: &str) -> Result<AppState, reqwest::Error> {
             "insight",
         )),
         identity: IdentityClient::new(url)?,
+        cluster: crate::infra::cluster::Cluster::disabled(),
+        schedule_slots: tokio::sync::Semaphore::new(4),
     })
 }
 

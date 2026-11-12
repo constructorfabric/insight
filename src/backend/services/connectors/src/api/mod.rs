@@ -1,4 +1,5 @@
 mod connector_health;
+mod connector_schedules;
 mod error;
 mod ingestion;
 
@@ -16,10 +17,11 @@ use crate::infra::identity::IdentityClient;
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
 
 pub(crate) struct AppState {
-    #[expect(dead_code, reason = "reserved for schedule storage")]
     pub(crate) db: DatabaseConnection,
     pub(crate) ch: insight_clickhouse::Client,
     pub(crate) identity: IdentityClient,
+    pub(crate) cluster: crate::infra::cluster::Cluster,
+    pub(crate) schedule_slots: tokio::sync::Semaphore,
 }
 
 impl std::fmt::Debug for AppState {
@@ -147,7 +149,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(ingestion::get_ingestion_intensity)
         .register(router, openapi);
 
-    router
+    connector_schedules::register(router, openapi)
 }
 
 pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {

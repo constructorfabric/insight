@@ -3,6 +3,9 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::schedules::HealthScheduleRequest;
+pub(crate) use crate::domain::connector_schedules::dto::ScheduleOrigin;
+
 /// Every status the mover's job listing documents, plus the one this service
 /// adds for a word it did not recognise.
 ///
@@ -202,14 +205,6 @@ pub struct SyncFact {
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ScheduleOrigin {
-    Annotation,
-    Descriptor,
-    Default,
-}
-
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AppliedSchedule {
     /// The non-empty list recorded from the instance's `CronWorkflow`.
     #[schema(min_items = 1)]
@@ -234,6 +229,7 @@ impl AppliedSchedule {
         }
 
         let origin = match origin {
+            "api" => Some(ScheduleOrigin::Api),
             "annotation" => Some(ScheduleOrigin::Annotation),
             "descriptor" => Some(ScheduleOrigin::Descriptor),
             "default" => Some(ScheduleOrigin::Default),
@@ -263,6 +259,7 @@ pub struct ConnectorHealth {
     /// Applied schedule recorded on the newest sealed tick. Absent outside its
     /// configured set or when that row records no cron expressions.
     pub schedule: Option<AppliedSchedule>,
+    pub(crate) schedule_request: Option<HealthScheduleRequest>,
     /// Absent for a configured connector that has never synced.
     pub last_sync: Option<SyncFact>,
 }
@@ -281,6 +278,7 @@ pub struct ConnectorHealthResponse {
     /// False when nothing has been recorded at all, so the page can say so
     /// instead of implying health.
     pub history_available: bool,
+    pub schedule_read_error: Option<String>,
     pub connectors: Vec<ConnectorHealth>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for ConnectorHealthResponse {}
@@ -312,6 +310,7 @@ impl ConnectorHealthResponse {
     pub(crate) fn from_facts(facts: LedgerFacts, as_of: DateTime<Utc>) -> Self {
         Self {
             as_of: stamp(as_of),
+            schedule_read_error: None,
             checked_at: facts.sealed_at.map(stamp),
             typical_read_interval_ms: facts.typical_read_interval_ms,
             history_available: facts.has_history,
@@ -371,6 +370,7 @@ impl From<ConnectorSummary> for ConnectorHealth {
             source_id: label(summary.instance.source_id),
             configured: summary.configured,
             schedule: summary.schedule,
+            schedule_request: None,
             last_sync: summary.last_sync.map(Into::into),
         }
     }

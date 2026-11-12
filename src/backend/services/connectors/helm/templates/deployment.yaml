@@ -72,6 +72,12 @@ spec:
                 name: {{ . | quote }}
             {{- end }}
           env:
+            {{- if .Values.cluster.enabled }}
+            - name: APP__gears__connectors__config__tenant_id
+              value: {{ required "tenantId is required" .Values.tenantId | quote }}
+            {{- end }}
+            - name: APP__gears__connectors__config__reconcile_workflow_name
+              value: {{ printf "%s-reconcile-loop" .Release.Name | quote }}
             {{- include "insight-connectors.databaseEnv" . | nindent 12 }}
             {{- include "insight-connectors.readEnv" . | nindent 12 }}
           securityContext:

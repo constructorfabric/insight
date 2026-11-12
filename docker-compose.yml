@@ -466,7 +466,7 @@ services:
       APP__gears__connectors__config__identity_url: "http://identity-resolution:8082"
     volumes:
       - ./deploy/compose/connectors-fullauth.yaml:/app/config/insight.yaml:ro
-      - ./deploy/compose/certs:/certs:ro
+      - ./deploy/compose/authn-tls-certs:/certs:ro
     command: ["/app/connectors", "--", "/app/connectors", "-c", "/app/config/insight.yaml", "run"]
     ports:
       - "127.0.0.1:${CONNECTORS_PORT:-8088}:8088"

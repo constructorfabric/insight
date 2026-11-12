@@ -71,6 +71,16 @@
               }
             ]
           },
+          "schedule_request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HealthScheduleRequest"
+              }
+            ]
+          },
           "source_id": {
             "description": "The installation's own id within that tenant. Absent with `tenant_id`.",
             "type": [
@@ -115,6 +125,12 @@
             "description": "False when nothing has been recorded at all, so the page can say so\ninstead of implying health.",
             "type": "boolean"
           },
+          "schedule_read_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "typical_read_interval_ms": {
             "description": "The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.",
             "format": "int64",
@@ -139,6 +155,42 @@
           "1s"
         ],
         "type": "string"
+      },
+      "HealthScheduleRequest": {
+        "properties": {
+          "crons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "last_observation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduleObservation"
+              }
+            ]
+          },
+          "read_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "crons"
+        ],
+        "type": "object"
       },
       "IngestionIntensityResponse": {
         "properties": {
@@ -206,6 +258,72 @@
         ],
         "type": "object"
       },
+      "InheritedSchedule": {
+        "additionalProperties": false,
+        "properties": {
+          "crons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ScheduleOrigin"
+          }
+        },
+        "required": [
+          "crons",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "LiveSchedule": {
+        "properties": {
+          "crons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduleOrigin"
+              }
+            ]
+          },
+          "suspended": {
+            "type": "boolean"
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "crons",
+          "suspended",
+          "observed_at"
+        ],
+        "type": "object"
+      },
+      "PendingReason": {
+        "enum": [
+          "no_cronworkflow",
+          "awaiting_reconcile",
+          "different_schedule"
+        ],
+        "type": "string"
+      },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
         "properties": {
@@ -241,11 +359,169 @@
         ],
         "type": "object"
       },
+      "RequestedSchedule": {
+        "properties": {
+          "crons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "crons",
+          "updated_by",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ScheduleObservation": {
+        "properties": {
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleStatus"
+          }
+        },
+        "required": [
+          "status",
+          "observed_at"
+        ],
+        "type": "object"
+      },
       "ScheduleOrigin": {
         "enum": [
+          "api",
           "annotation",
           "descriptor",
           "default"
+        ],
+        "type": "string"
+      },
+      "ScheduleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "crons": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "crons"
+        ],
+        "type": "object"
+      },
+      "ScheduleResponse": {
+        "properties": {
+          "connector": {
+            "type": "string"
+          },
+          "inherited": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InheritedSchedule"
+              }
+            ]
+          },
+          "live": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LiveSchedule"
+              }
+            ]
+          },
+          "next_reconcile_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PendingReason"
+              }
+            ]
+          },
+          "read_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reconcile_interval_secs": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "requested": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RequestedSchedule"
+              }
+            ]
+          },
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduleStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "connector",
+          "source_id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "ScheduleStatus": {
+        "enum": [
+          "applied",
+          "pending",
+          "inherited",
+          "paused"
         ],
         "type": "string"
       },
@@ -575,6 +851,490 @@
           }
         ],
         "summary": "Recent syncs of one connector, newest first"
+      }
+    },
+    "/v1/connectors/{connector}/{source_id}/schedule": {
+      "delete": {
+        "operationId": "connectors_api.schedules.delete",
+        "parameters": [
+          {
+            "description": "Connector name",
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connector instance source id",
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Single quoted decimal revision, e.g. \"0\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            },
+            "description": "Schedule state after clearing, including Paused or Unavailable for an unconfirmed patch; unknown outcomes require a resourceVersion fence before rollback; Reset without a recorded deployment schedule returns 409; stored requests can also be cleared after instance removal",
+            "headers": {
+              "ETag": {
+                "description": "Single quoted decimal schedule revision",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Stale schedule revision; context.revision and ETag give the current revision",
+            "headers": {
+              "ETag": {
+                "description": "Single quoted decimal schedule revision",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "If-Match required"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Clear requested connector schedules (admin)"
+      },
+      "get": {
+        "operationId": "connectors_api.schedules.get",
+        "parameters": [
+          {
+            "description": "Connector name",
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connector instance source id",
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            },
+            "description": "Schedule state; stored requests remain readable after instance removal with live observations",
+            "headers": {
+              "ETag": {
+                "description": "Single quoted decimal schedule revision",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Requested and live schedules of a connector instance (admin)"
+      },
+      "put": {
+        "operationId": "connectors_api.schedules.put",
+        "parameters": [
+          {
+            "description": "Connector name",
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connector instance source id",
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Single quoted decimal revision, e.g. \"0\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRequest"
+              }
+            }
+          },
+          "description": "One to ten five-field UTC cron expressions",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            },
+            "description": "Saved schedule state, including Paused; an unknown patch stays saved unless rollback is fenced by resourceVersion; unreadable confirmation returns null status and read_error; a readable different job remains pending",
+            "headers": {
+              "ETag": {
+                "description": "Single quoted decimal schedule revision",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Stale schedule revision; context.revision and ETag give the current revision",
+            "headers": {
+              "ETag": {
+                "description": "Single quoted decimal schedule revision",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Content-Type application/json required"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "If-Match required"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Request connector schedules (admin)"
       }
     },
     "/v1/ingestion/intensity": {

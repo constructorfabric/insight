@@ -13,3 +13,7 @@ pub struct IngestionError;
 pub(super) fn identity_unavailable() -> CanonicalError {
     CanonicalError::internal("failed to verify caller permissions").create()
 }
+
+#[derive(Debug)]
+#[toolkit_canonical_errors::resource_error("gts.cf.insight.connectors_api.schedule.v1~")]
+pub(super) struct ConnectorScheduleError;

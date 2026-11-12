@@ -45,7 +45,21 @@ pub async fn get_connector_health(
 
     let facts = read_health(&state.ch).await.map_err(read_error)?;
 
-    Ok(Json(ConnectorHealthResponse::from_facts(facts, Utc::now())))
+    let mut response = ConnectorHealthResponse::from_facts(facts, Utc::now());
+    if let Err(error) =
+        crate::domain::connector_health::schedules::enrich(&state.db, &state.cluster, &mut response)
+            .await
+    {
+        tracing::error!(error = %error, "connector health schedule read failed");
+        response.schedule_read_error =
+            Some("Current sync job schedules could not be read.".to_owned());
+        for row in &mut response.connectors {
+            row.schedule = None;
+            row.schedule_request = None;
+        }
+    }
+
+    Ok(Json(response))
 }
 
 pub async fn get_connector_syncs(

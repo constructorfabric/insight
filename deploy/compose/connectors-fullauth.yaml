@@ -84,6 +84,8 @@ gears:
 
   connectors:
     config:
+      cluster:
+        enabled: false
       database_url: ""
       clickhouse_url: ""
       clickhouse_database: "insight"
