@@ -55,7 +55,7 @@ describe("Manage · What's new", () => {
   });
 });
 
-describe("Manage · Connector health", () => {
+describe("Manage · Connectors", () => {
   it("is instance-wide, so a non-admin is refused rather than shown an empty page", () => {
     adminGate.value = { ...adminGate.value, isAdmin: false };
     render(<ManageView item="connector-health" />);
@@ -140,4 +140,10 @@ describe("identities gate", () => {
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(retry).toHaveBeenCalledOnce();
   });
+});
+
+it("names the existing connector-health menu item Connectors", () => {
+  expect(
+    MANAGE_ITEMS.find((item) => item.id === "connector-health")?.label
+  ).toBe("Connectors");
 });

@@ -1,9 +1,6 @@
-import { AnalyticsApiError } from "@/api/analytics-client";
+import { CONNECTORS_BASE, ConnectorsApiError } from "@/api/connectors-client";
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 import { lookbackFrom } from "@/lib/ingestion-chart";
-
-const BASE =
-  (import.meta.env.VITE_CONNECTORS_BASE as string | undefined) ?? "/api/connectors/v1";
 
 /** Bucket widths the server will answer. The set is closed there too. */
 export type IngestionGrain = "15m" | "1s";
@@ -52,7 +49,7 @@ export interface IngestionIntensityRequest {
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetchWithAuth(url);
   if (!res.ok) {
-    throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
+    throw new ConnectorsApiError(res.status, await res.json().catch(() => null));
   }
   return (await res.json()) as T;
 }
@@ -80,6 +77,6 @@ export async function getIngestionIntensity(
   // Inside the request, so the clock is read when the read happens rather
   // than while a component renders.
   return getJson<IngestionIntensity>(
-    `${BASE}/ingestion/intensity?${intensityParams(req, Date.now())}`,
+    `${CONNECTORS_BASE}/ingestion/intensity?${intensityParams(req, Date.now())}`,
   );
 }

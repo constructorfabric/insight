@@ -13,7 +13,7 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 import { getIngestionIntensity, intensityParams } from "./ingestion-client";
-import { AnalyticsApiError } from "./analytics-client";
+import { ConnectorsApiError } from "./connectors-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
@@ -138,7 +138,7 @@ describe("getIngestionIntensity", () => {
     );
 
     await expect(getIngestionIntensity({ grain: "15m" })).rejects.toBeInstanceOf(
-      AnalyticsApiError,
+      ConnectorsApiError,
     );
   });
 });

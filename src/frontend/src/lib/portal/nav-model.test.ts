@@ -155,7 +155,7 @@ describe("manageGroupsFor", () => {
 
   it("groups an admin's pane into Data, People & access and Platform", () => {
     expect(labelsOf(true, true)).toEqual({
-      Data: ["Sources & connectors", "Data exclusions", "Org snapshots"],
+      Data: ["Connectors", "Data exclusions", "Org snapshots"],
       "People & access": [
         "Identities · roles & taxonomy",
         "Access",

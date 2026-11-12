@@ -5,7 +5,7 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 import { getConnectorHealth, getConnectorSyncs } from "./connector-health-client";
-import { AnalyticsApiError } from "./analytics-client";
+import { ConnectorsApiError } from "./connectors-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
@@ -44,7 +44,7 @@ describe("getConnectorHealth", () => {
       response({ title: "forbidden" }, { ok: false, status: 403 }),
     );
 
-    await expect(getConnectorHealth()).rejects.toBeInstanceOf(AnalyticsApiError);
+    await expect(getConnectorHealth()).rejects.toBeInstanceOf(ConnectorsApiError);
   });
 });
 
@@ -109,7 +109,7 @@ describe("getConnectorSyncs", () => {
     );
 
     await expect(getConnectorSyncs({ connector: "example-tracker" })).rejects.toBeInstanceOf(
-      AnalyticsApiError,
+      ConnectorsApiError,
     );
   });
 });
