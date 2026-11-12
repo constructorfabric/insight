@@ -577,6 +577,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit-canonical-errors",
+ "cf-gears-toolkit-security",
  "jsonwebtoken",
  "reqwest 0.12.28",
  "serde",

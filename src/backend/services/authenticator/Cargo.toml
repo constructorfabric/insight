@@ -73,15 +73,14 @@ time = { workspace = true }
 # EC keys natively via jsonwebtoken's JwkSet), JWKS export, PKCE, CSPRNG.
 # jsonwebtoken is a workspace dep (one version + one crypto provider, aws_lc_rs,
 # across the workspace — v10 panics if two providers are active under feature
-# unification). `p256` is also used for the ES256 service-token client
-# assertions (RFC 7523), whose keys are the services' own EC identity keys.
+# unification).
 jsonwebtoken = { workspace = true }
-p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
 base64 = "0.23"
 rand = "0.10"
 
 [dev-dependencies]
 insight-log-context = { workspace = true, features = ["test-support"] }
+p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
 tower = { version = "0.5", features = ["util"] }
 # Parse the dev config in a test so a YAML mistake in the service-token registry
 # fails fast, not only at container boot.

@@ -14,12 +14,10 @@ use std::path::Path;
 use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, encode};
-use p256::SecretKey;
-use p256::elliptic_curve::sec1::ToSec1Point as _;
-use p256::pkcs8::DecodePrivateKey as _;
+use jsonwebtoken::{Algorithm, DecodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use toolkit_security::crypto::hash::Sha256;
+use toolkit_security::crypto::signature::EcdsaP256KeyPair;
 
 /// The gateway JWT claim set (§3.8). Serializes to the wire claims verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +70,7 @@ pub struct McpAccessClaims {
 /// verifier (used by the JWKS-verify path and tests).
 struct LoadedKey {
     kid: String,
-    encoding: EncodingKey,
+    signing: EcdsaP256KeyPair,
     // Read by `KeyStore::verify` (unit-tested; downstream services verify via
     // the published JWKS rather than this in-process path).
     #[allow(dead_code)]
@@ -83,14 +81,15 @@ struct LoadedKey {
 impl LoadedKey {
     /// Load from a PKCS#8 EC P-256 private-key PEM.
     fn from_pkcs8_pem(pem: &str) -> anyhow::Result<Self> {
-        let secret = SecretKey::from_pkcs8_pem(pem)
+        let signing = EcdsaP256KeyPair::from_pkcs8_pem(pem)
             .context("parse PKCS#8 EC P-256 private key (expected an ES256 signing key)")?;
-        let public = secret.public_key();
 
         // Uncompressed SEC1 point: 0x04 || X(32) || Y(32).
-        let point = public.to_sec1_point(false);
-        let x = point.x().context("EC public key missing X coordinate")?;
-        let y = point.y().context("EC public key missing Y coordinate")?;
+        let point = signing.public_key();
+        let (x, y) = point
+            .get(1..)
+            .context("EC public key is not an uncompressed point")?
+            .split_at(32);
         let x_b64 = B64.encode(x);
         let y_b64 = B64.encode(y);
 
@@ -106,14 +105,12 @@ impl LoadedKey {
             "kid": kid,
         });
 
-        let encoding = EncodingKey::from_ec_pem(pem.as_bytes())
-            .context("build ES256 encoding key from PEM")?;
         let decoding = DecodingKey::from_ec_components(&x_b64, &y_b64)
             .context("build ES256 decoding key from EC components")?;
 
         Ok(Self {
             kid,
-            encoding,
+            signing,
             decoding,
             jwk,
         })
@@ -190,7 +187,8 @@ impl KeyStore {
         );
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.current.kid.clone());
-        encode(&header, claims, &self.current.encoding).context("sign gateway JWT")
+        toolkit_security::jwt::encode(&header, claims, &self.current.signing)
+            .context("sign gateway JWT")
     }
 
     pub fn sign_mcp_access_token(&self, claims: &McpAccessClaims) -> anyhow::Result<String> {
@@ -200,7 +198,8 @@ impl KeyStore {
         );
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.current.kid.clone());
-        encode(&header, claims, &self.current.encoding).context("sign MCP access token")
+        toolkit_security::jwt::encode(&header, claims, &self.current.signing)
+            .context("sign MCP access token")
     }
 
     /// Build a store directly from a PKCS#8 PEM (tests only).
@@ -352,6 +351,34 @@ mod tests {
         assert!(key["kid"].as_str().is_some_and(|k| !k.is_empty()));
         assert!(key["x"].as_str().is_some());
         assert!(key["y"].as_str().is_some());
+    }
+
+    #[test]
+    fn published_jwk_verifies_tokens_independently_of_the_facade() {
+        use p256::elliptic_curve::sec1::ToSec1Point as _;
+        use p256::pkcs8::DecodePrivateKey as _;
+        let pem = gen_pem();
+        let store = KeyStore::from_pem_for_test(&pem).unwrap();
+        let jwks = store.jwks();
+        let jwk = &jwks["keys"][0];
+
+        // x/y match the point p256 derives from the same private key.
+        let point = p256::SecretKey::from_pkcs8_pem(&pem)
+            .unwrap()
+            .public_key()
+            .to_sec1_point(false);
+        assert_eq!(jwk["x"], B64.encode(point.x().unwrap()));
+        assert_eq!(jwk["y"], B64.encode(point.y().unwrap()));
+
+        // jsonwebtoken's own verifier accepts the facade signature via the JWK.
+        let set: jsonwebtoken::jwk::JwkSet = serde_json::from_value(jwks.clone()).unwrap();
+        let key = DecodingKey::from_jwk(&set.keys[0]).unwrap();
+        let mut validation = Validation::new(Algorithm::ES256);
+        validation.set_audience(&["internal-services"]);
+        let jwt = store.sign(&sample_claims()).unwrap();
+        let data = jsonwebtoken::decode::<GatewayClaims>(&jwt, &key, &validation).unwrap();
+        assert_eq!(data.claims.sub, "person-123");
+        assert_eq!(data.header.kid.as_deref(), jwk["kid"].as_str());
     }
 
     #[test]
