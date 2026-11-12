@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 
+import { defaultZoneItem, resolveZoneItem } from "@/lib/portal/nav-model";
+
 import {
   dashboardSubject,
   documentTitle,
   titleScreenPath,
 } from "./document-title";
+
+function screen(over: Partial<Parameters<typeof titleScreenPath>[0]> = {}) {
+  return titleScreenPath({
+    pathname: "/portal",
+    search: "",
+    zone: "overview",
+    item: null,
+    ...over,
+  });
+}
 
 describe("documentTitle", () => {
   it("puts the screen name's specific part first and Insight last", () => {
@@ -19,12 +31,8 @@ describe("documentTitle", () => {
     );
   });
 
-  it("names home the way the root path is named", () => {
-    expect(documentTitle("/portal")).toBe("Home · Insight");
-    expect(documentTitle("/portal/overview")).toBe("Home · Insight");
-    expect(documentTitle("/portal/overview/at-a-glance")).toBe(
-      "Home · Insight"
-    );
+  it("names the root path Home", () => {
+    expect(documentTitle("/")).toBe("Home · Insight");
   });
 
   it("uses the translated name of an item", () => {
@@ -72,22 +80,61 @@ describe("documentTitle", () => {
 });
 
 describe("titleScreenPath", () => {
+  it("names home only when the resolved zone is the overview default", () => {
+    const home = defaultZoneItem("overview");
+    expect(screen({ item: home })).toBe("/");
+    expect(documentTitle(screen({ item: home }))).toBe("Home · Insight");
+    expect(screen({ item: "by-direction" })).toBe("/portal/overview/by-direction");
+  });
+
+  it("names a bare portal as the person page when that is the resolved zone", () => {
+    const path = screen({ zone: "person", item: null });
+    expect(path).toBe("/ic/viewer/personal");
+    expect(documentTitle(path, "Ada")).toBe("Ada · Personal · Person · Insight");
+  });
+
+  it("uses the people item the shell resolves, not a stray section id", () => {
+    const item = resolveZoneItem("people", "git_output");
+    const path = screen({
+      pathname: "/ic/bob/team",
+      search: "?item=git_output",
+      zone: "people",
+      item,
+    });
+    expect(path).toBe("/ic/bob/team/roster");
+    expect(documentTitle(path)).toBe("My team · People · Insight");
+  });
+
+  it("keeps a person section the person page actually opens", () => {
+    expect(
+      screen({
+        pathname: "/ic/ada/personal",
+        search: "?item=git_output",
+        zone: "person",
+        item: "git_output",
+      })
+    ).toBe("/ic/ada/personal/git_output");
+  });
+
   it("composes a portal zone the way a recorded screen does", () => {
     expect(
-      titleScreenPath("/portal", "?zone=manage&item=connector-health")
+      screen({
+        search: "?zone=manage&item=connector-health",
+        zone: "manage",
+        item: "connector-health",
+      })
     ).toBe("/portal/manage/connector-health");
   });
 
-  it("does not append a stale zone onto a custom or person path", () => {
+  it("does not append a stale zone onto a custom path", () => {
     expect(
-      titleScreenPath(
-        "/portal/custom/delivery-overview",
-        "?zone=overview&item=by-direction"
-      )
+      screen({
+        pathname: "/portal/custom/delivery-overview",
+        search: "?zone=overview&item=by-direction",
+        zone: "custom",
+        item: "by-direction",
+      })
     ).toBe("/portal/custom/delivery-overview");
-    expect(
-      titleScreenPath("/ic/ada/personal", "?zone=overview&item=git_output")
-    ).toBe("/ic/ada/personal/git_output");
   });
 });
 

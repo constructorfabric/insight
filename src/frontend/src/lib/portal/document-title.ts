@@ -1,3 +1,4 @@
+import { defaultZoneItem } from "@/lib/portal/nav-model";
 import { screenLabel } from "@/lib/portal/screen-label";
 import { screenOf } from "@/usage-collection";
 
@@ -6,20 +7,11 @@ export const DOCUMENT_TITLE_APP = "Insight";
 const CRUMB = " › ";
 const DOT = " · ";
 
-// INVARIANT: `screenLabel("/")` is Home. A bare portal and the default
-// overview item are that screen; the zone's own label is Overview.
-const HOME_PATHS = new Set([
-  "/portal",
-  "/portal/overview",
-  "/portal/overview/at-a-glance",
-]);
-
 export function documentTitle(
   screenPath: string,
   subject?: string | null
 ): string {
-  const path = HOME_PATHS.has(strip(screenPath)) ? "/" : screenPath;
-  const named = screenLabel(path);
+  const named = screenLabel(screenPath);
   if (named.startsWith("/")) {
     return finish(subject?.trim() ? [subject.trim()] : []);
   }
@@ -36,13 +28,40 @@ export function documentTitle(
   return finish(parts);
 }
 
-export function titleScreenPath(pathname: string, search: string): string {
-  const path = strip(pathname);
+export function titleScreenPath(input: {
+  pathname: string;
+  search: string;
+  zone: string;
+  item: string | null;
+}): string {
+  const path = strip(input.pathname);
   if (path.startsWith("/portal/custom")) return path;
-  if (path.startsWith("/ic/")) {
-    return screenOf({ pathname: path, search: searchWithoutZone(search) });
+
+  if (input.zone === "person") {
+    const id = path.match(/^\/ic\/([^/]+)/)?.[1] ?? "viewer";
+    const base = `/ic/${id}/personal`;
+    return input.item ? `${base}/${input.item}` : base;
   }
-  return screenOf({ pathname: path, search });
+
+  if (input.zone === "people") {
+    const id = path.match(/^\/ic\/([^/]+)/)?.[1] ?? "viewer";
+    const base = `/ic/${id}/team`;
+    return input.item ? `${base}/${input.item}` : base;
+  }
+
+  // INVARIANT: the overview page titles its default item Home, and that is
+  // `screenLabel("/")`. Any other resolved zone, including Person when an
+  // install hides Home, keeps its own screen name.
+  if (input.zone === "overview" && input.item === defaultZoneItem("overview")) {
+    return "/";
+  }
+
+  const params = new URLSearchParams(input.search);
+  params.set("zone", input.zone);
+  if (input.item) params.set("item", input.item);
+  else params.delete("item");
+  const rest = params.toString();
+  return screenOf({ pathname: "/portal", search: rest ? `?${rest}` : "" });
 }
 
 export function dashboardSubject(
@@ -77,12 +96,3 @@ function pathSegments(screenPath: string): Set<string> {
   return segments;
 }
 
-function searchWithoutZone(search: string): string {
-  const params = new URLSearchParams(search);
-  params.delete("zone");
-  params.delete("dir");
-  params.delete("lens");
-  params.delete("mode");
-  const rest = params.toString();
-  return rest ? `?${rest}` : "";
-}

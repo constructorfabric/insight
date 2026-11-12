@@ -24,7 +24,7 @@ describe("DocumentTitleFrame", () => {
   });
 
   it("sets the screen title and restores Insight when the shell unmounts", () => {
-    const { unmount } = render(shown("/portal", "/portal", null));
+    const { unmount } = render(shown("/portal", "/", null));
     expect(document.title).toBe("Home · Insight");
 
     unmount();
@@ -70,7 +70,7 @@ describe("DocumentTitleFrame", () => {
       )
     );
 
-    rerender(shown("/portal", "/portal", null));
+    rerender(shown("/portal", "/", null));
     expect(document.title).toBe("Home · Insight");
   });
 });

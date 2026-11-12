@@ -16,6 +16,10 @@ import {
   documentTitle,
   titleScreenPath,
 } from "@/lib/portal/document-title";
+import { resolveZoneItem } from "@/lib/portal/nav-model";
+import { usePortalItem } from "@/lib/portal/portal-nav";
+import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { useSelectedPersonSection } from "@/lib/portal/use-person-sections";
 
 interface TitleSubject {
   pathname: string;
@@ -33,11 +37,21 @@ export function PortalDocumentTitle({ children }: { children: ReactNode }) {
   const search = useRouterState({
     select: (state) => state.location.searchStr,
   });
+  const { activeZone } = useActiveZone();
+  const rawItem = usePortalItem();
+  const section = useSelectedPersonSection();
+  const item =
+    activeZone === "person" ? section : resolveZoneItem(activeZone, rawItem);
 
   return (
     <DocumentTitleFrame
       pathname={pathname}
-      screenPath={titleScreenPath(pathname, search)}
+      screenPath={titleScreenPath({
+        pathname,
+        search: search ?? "",
+        zone: activeZone,
+        item,
+      })}
     >
       {children}
     </DocumentTitleFrame>
