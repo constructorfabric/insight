@@ -7,7 +7,7 @@ date: 2026-11-10
 
 ## 1. Purpose
 
-An instance admin changes how often each connector instance syncs, from the Connector health page,
+An instance admin changes how often each connector instance syncs, from the Connectors page,
 and sees whether the change is in effect. Connector health, sync history and ingestion intensity are
 served by a new `connectors` service, owned by ingestion, instead of analytics.
 
@@ -33,17 +33,17 @@ request gets 401.
 
 ## 4. Requirements
 
-### 4.1 Connector health moves to the connectors service
+### 4.1 The Connectors page and the connectors service
 
-1. The Connector health page, an instance's sync history and ingestion intensity read from the
-   `connectors` service.
-2. What the page shows and how it sorts stay as they are, except for the changes in 4.6.
+1. The admin page that lists connector instances is called Connectors, in the menu and in its heading.
+2. The page, an instance's sync history and ingestion intensity read from the `connectors` service.
+3. The table keeps its columns and sort order.
 
 ### 4.2 Viewing a schedule
 
 1. Each instance shows its schedule in words and as cron, with times in UTC.
 2. It shows the next three runs, in UTC.
-3. A saved schedule shows who set it and when, and that it overrides the default schedule.
+3. A saved schedule shows who set it, by the admin's name ("you" for the viewer), and when.
 4. One status badge shows the state:
 
 | Badge | Meaning |
@@ -60,6 +60,7 @@ request gets 401.
 6. The badge's tooltip carries the detail: the reason, the error message, and exact times.
 7. A change to Applied or Error shows a short notification.
 8. The row's next sync follows the applied schedule as soon as it is applied.
+9. A schedule another admin saves appears on an open page within a minute, with that admin's name.
 
 ### 4.3 Changing a schedule
 
@@ -96,7 +97,8 @@ request gets 401.
 
 1. The schedule is shown full width at the top of the expanded row.
 2. Below it:
-   - a strip of up to the last 50 syncs, one small coloured bar each, with totals by status;
+   - a strip of up to the last 50 syncs, one small coloured bar each, with the share of finished syncs
+     that succeeded and the share that failed, for example "94% succeeded · 6% failed";
    - a table of the latest 10 syncs with column headers (status, start in UTC, duration,
      records), which expands to show the rest.
 3. The heading states how many syncs it shows, for example "Latest 10 of 50 recorded".
@@ -127,3 +129,6 @@ request gets 401.
 8. With the read-only account unable to read saved schedules, a reconcile pass changes no sync job's
    schedule and reports one failure; once access is back, the next pass is clean.
 9. A non-admin gets 403 from every schedule and health API.
+10. With the page open for admin A, admin B saves a schedule for the same instance. Within a minute A's
+    page shows B's schedule and B's name. A save from an editor A opened before B's save is refused,
+    and the editor shows B's schedule.
