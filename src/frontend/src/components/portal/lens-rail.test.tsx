@@ -294,6 +294,12 @@ describe("LensRail state that only breaks in a particular order", () => {
       expect(button.querySelector("svg"), name).not.toHaveClass("size-[19px]");
     }
 
+    const anchor = screen
+      .getByRole("button", { name: "Settings" })
+      .parentElement?.querySelector("[data-popover-anchor]");
+    expect(anchor).toHaveClass("w-10");
+    expect(anchor).toHaveClass("absolute");
+
     await user.hover(screen.getByTestId("lens-rail"));
     settle();
     expect(labelOf("Feedback")).toHaveClass("opacity-100");

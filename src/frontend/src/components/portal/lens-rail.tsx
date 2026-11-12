@@ -106,6 +106,7 @@ export function LensRail() {
   // sets it — see the note where it is set.
   const [dismissed, setDismissed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsAnchor = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => {
@@ -294,6 +295,13 @@ export function LensRail() {
             <FeedbackButton open={open} />
             <SidebarMenuItem className="relative z-10">
               <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+                {/* INVARIANT: the menu anchors to the shut width. The button widens over the pane, and a popover that follows that edge slides out from under the pointer. */}
+                <span
+                  ref={settingsAnchor}
+                  aria-hidden
+                  data-popover-anchor=""
+                  className="pointer-events-none absolute inset-y-0 start-0 w-10"
+                />
                 <PopoverTrigger
                   render={
                     <RailItemButton
@@ -304,6 +312,7 @@ export function LensRail() {
                   }
                 />
                 <PopoverContent
+                  anchor={settingsAnchor}
                   side="right"
                   align="end"
                   className="w-64 gap-0 p-1"
