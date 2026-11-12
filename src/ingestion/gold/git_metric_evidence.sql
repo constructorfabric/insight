@@ -1,4 +1,4 @@
-{{ metric_evidence_table(join_use_nulls=1) }}
+{{ metric_evidence_table(join_use_nulls=1, query_settings_overrides={'max_memory_usage': 4294967296}) }}
 
 -- Resolution happens at READ time, and account-first: a row naming its author's
 -- account (pull requests) resolves through that binding, everything else
