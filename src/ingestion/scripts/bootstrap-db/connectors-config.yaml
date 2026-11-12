@@ -285,6 +285,17 @@ connectors:
         value: perm:synthetic-token
       youtrack_base_url:
         value: https://example.youtrack.cloud
+  mock:
+    path: testing/mock
+    config:
+      api_token:
+        value: fake
+      base_url:
+        value: fake
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
   confluence:
     path: wiki/confluence
     config:

@@ -1,0 +1,35 @@
+version: 2
+sources:
+  - name: bronze_mock
+    schema: bronze_mock
+    tables:
+      - name: mock_events
+      - name: mock_updates
+models:
+  - name: mock__events
+    description: "Synthetic full-refresh records. No measure keys."
+    columns: &columns
+      - name: tenant_id
+        description: "Tenant identity injected by reconcile."
+      - name: source_id
+        description: "Instance identity injected by reconcile."
+      - name: unique_key
+        description: "Tenant, source and stable source-native id."
+        tests: [unique, not_null]
+      - name: id
+        description: "Stream name and zero-based record index."
+      - name: value
+        description: "Integer derived from the first seven SHA-256 hex digits."
+      - name: checksum
+        description: "SHA-256 of seed:instance:stream:index."
+      - name: last_updated_at
+        description: "UTC epoch plus index seconds; incremental cursor on updates."
+      - name: scenario_revision
+        description: "Captured control revision, excluded from deterministic checksum."
+      - name: _version
+        description: "Bronze extraction timestamp in milliseconds."
+      - name: _airbyte_extracted_at
+        description: "Airbyte extraction timestamp."
+  - name: mock__updates
+    description: "Synthetic incremental records. No measure keys."
+    columns: *columns

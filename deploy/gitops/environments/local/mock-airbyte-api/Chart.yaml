@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mock-airbyte-api
+description: Local scheduling harness Airbyte fault proxy
+type: application
+version: 0.1.0

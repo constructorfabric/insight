@@ -1,0 +1,4 @@
+image: ""
+upstream: ""
+upstreamTimeout: 300
+journalRetention: 1000

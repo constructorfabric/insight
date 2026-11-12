@@ -1,0 +1,120 @@
+version: 7.0.4
+type: DeclarativeSource
+check:
+  type: CheckStream
+  stream_names: [mock_probe]
+definitions:
+  requester:
+    type: HttpRequester
+    url: "{{ config['base_url'] }}/streams/{{ parameters['name'] }}"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['api_token'] }}"
+    error_handler:
+      type: DefaultErrorHandler
+      max_retries: 3
+      response_filters:
+        - type: HttpResponseFilter
+          http_codes: [429, 500, 502, 503, 504]
+          action: RETRY
+        - type: HttpResponseFilter
+          http_codes: [400, 401, 403, 404, 410]
+          action: FAIL
+      backoff_strategies:
+        - type: WaitTimeFromHeader
+          header: Retry-After
+  retriever:
+    type: SimpleRetriever
+    requester:
+      $ref: "#/definitions/requester"
+    record_selector:
+      type: RecordSelector
+      extractor:
+        type: DpathExtractor
+        field_path: [records]
+    paginator:
+      type: DefaultPaginator
+      page_token_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: page_token
+      pagination_strategy:
+        type: CursorPagination
+        cursor_value: "{{ response.get('next_page_token') }}"
+        stop_condition: "{{ not response.get('next_page_token') }}"
+  stream:
+    type: DeclarativeStream
+    primary_key: unique_key
+    retriever:
+      $ref: "#/definitions/retriever"
+    transformations:
+      - type: AddFields
+        fields:
+          - path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/schemas/record"
+streams:
+  - $ref: "#/definitions/stream"
+    name: mock_events
+    $parameters:
+      name: mock_events
+  - $ref: "#/definitions/stream"
+    name: mock_updates
+    $parameters:
+      name: mock_updates
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_updated_at
+      cursor_datetime_formats: ["%Y-%m-%dT%H:%M:%SZ"]
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "1970-01-01T00:00:00Z"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: cursor
+  - $ref: "#/definitions/stream"
+    name: mock_probe
+    $parameters:
+      name: mock_probe
+    retriever:
+      $ref: "#/definitions/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        url: "{{ config['base_url'] }}/probe"
+      paginator:
+        type: NoPagination
+schemas:
+  record:
+    type: object
+    additionalProperties: true
+    required: [id, value, checksum, last_updated_at, scenario_revision, tenant_id, source_id, unique_key]
+    properties:
+      id: {type: string}
+      value: {type: integer}
+      checksum: {type: string}
+      last_updated_at: {type: string, format: date-time}
+      scenario_revision: {type: integer}
+      tenant_id: {type: string}
+      source_id: {type: string}
+      unique_key: {type: string}
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    required: [base_url, api_token, insight_tenant_id, insight_source_id]
+    properties:
+      base_url: {type: string, title: Instance URL}
+      api_token: {type: string, title: API token, airbyte_secret: true}
+      insight_tenant_id: {type: string}
+      insight_source_id: {type: string}

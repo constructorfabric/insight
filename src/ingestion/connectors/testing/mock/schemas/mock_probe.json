@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "id",
+    "value",
+    "checksum",
+    "last_updated_at",
+    "scenario_revision",
+    "tenant_id",
+    "source_id",
+    "unique_key"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "value": {
+      "type": "integer"
+    },
+    "checksum": {
+      "type": "string"
+    },
+    "last_updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scenario_revision": {
+      "type": "integer"
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "unique_key": {
+      "type": "string"
+    }
+  }
+}
