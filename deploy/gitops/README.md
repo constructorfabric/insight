@@ -16,6 +16,39 @@ when you go past sandbox, and you have a working gitops setup.
 > Below is the operator-facing summary; the linked docs go deeper into
 > rationale (DESIGN, PRD, ADR).
 
+## Connector schedule requests
+
+With `ingestion.templates.enabled: true`, reconcile runs and reads schedule
+requests from the connectors service's MariaDB database with its own account.
+
+The provisioning hook creates the schedule-account Secret at runtime in both Helm
+and GitOps modes, using a cryptographically random password. Upgrades reuse the
+existing credentials and reapply the account's grants. A supplied Secret takes
+precedence and the hook never updates it. If creation races with another writer,
+the hook rereads the Secret and provisions with the winning credentials.
+Chart values under `global.connectorSchedules.database` select the Secret name,
+initial username and username/password keys. No schedule password needs to be
+supplied for GitOps upgrades. `connectors.databaseName` selects the database
+(default `connectors`). With ingestion templates disabled, the hook and reconcile
+CronWorkflow are absent.
+
+The hook reads MariaDB admin credentials from `insight-db-creds`. Its dedicated
+ServiceAccount can get and patch only the named schedule Secret and create Secrets in the
+release namespace. Kubernetes RBAC cannot restrict `create` by resource name;
+the Role grants no update, delete or list access. Created Secrets carry
+release labels and persist independently of the hook Job. Reconcile's required
+`secretKeyRef` entries keep its container waiting in `CreateContainerConfigError`
+if its first pass precedes Secret creation. Kubelet retries container startup
+once the Secret exists, within the workflow's 1800-second deadline; later cron
+passes retry if that deadline expires. Only the dedicated credentials reach reconcile.
+
+The idempotent account hook runs at weight 15, after the connectors service's
+migration at 10. Its default role permits exactly SELECT on
+`<connectors.databaseName>.connector_schedule_requests_v1`. An external database
+administrator must allow the provisioning account to create this account and
+role, or provision the equivalent grants before deployment. The runtime account
+needs no base-table, write or DDL privileges.
+
 ## What's in this directory
 
 ```text

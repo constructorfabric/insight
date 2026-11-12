@@ -10,6 +10,7 @@ Run: pytest src/ingestion/reconcile-connectors/tests
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -69,7 +70,13 @@ def tick(tmp_path: Path, proxy_token: str) -> list[str]:
     _reconcile_one_connector bitbucket-cloud "{CONNECTOR_DIR}" 1.0.0 nocode "" "" \\
       bronze_bitbucket_cloud main insight-bitbucket-cloud-main {SECRET_HASH} 0 0 "" ""
     """
-    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        env={key: value for key, value in os.environ.items() if not key.startswith("CONNECTOR_SCHEDULES_DB_")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
 

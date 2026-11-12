@@ -16,6 +16,7 @@ Run: pytest src/ingestion/reconcile-connectors/tests
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -81,7 +82,13 @@ def _run(call: str, definitions: str, tmp_path: Path) -> tuple[int, list[str], s
     ab_list_sources() {{ printf '%s' {json.dumps(listing([DOOMED]))}; }}
     {call}
     """
-    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        env={key: value for key, value in os.environ.items() if not key.startswith("CONNECTOR_SCHEDULES_DB_")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result.returncode, recorded, result.stderr
 
@@ -174,7 +181,13 @@ class TestTheRestOfTheTick:
         disc_load_instances() {{ printf '%b\\n' '{plan}'; }}
         reconcile_run 0 1 0 "" ""
         """
-        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["bash", "-c", script],
+            env={key: value for key, value in os.environ.items() if not key.startswith("CONNECTOR_SCHEDULES_DB_")},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
 
         assert "RECONCILE gitlab gitlab-main" in recorded, result.stderr

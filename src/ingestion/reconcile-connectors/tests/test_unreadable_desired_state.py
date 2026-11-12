@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 #: Everything `reconcile_run` reaches for, answering harmlessly and recording
 #: that it was called. Only the plan read is varied per case.
 STUBS = """
+connector_schedules_read() { _CONNECTOR_SCHEDULES_STATUS=ok; _CONNECTOR_SCHEDULES_RESULT='{"schedules":[]}'; }
 log_init()          { :; }
 log_close()         { :; }
 log_run_summary()   { :; }
@@ -31,6 +32,7 @@ reconcile__log()    { printf '%s\\n' "$*" >&2; }
 sweep_run()         { :; }
 reconcile_gc_orphans()             { printf 'GC\\n' >> "$CALLS"; }
 reconcile_prune_removed_instances() { printf 'PRUNE\\n' >> "$CALLS"; }
+reconcile_sweep_orphan_schedules()   { printf 'SCHEDULE SWEEP\\n' >> "$CALLS"; }
 reconcile_cascade_delete()          { printf 'CASCADE %s\\n' "$1" >> "$CALLS"; }
 _reconcile_one_connector()          { printf 'RECONCILE %s\\n' "$1" >> "$CALLS"; }
 """
@@ -92,4 +94,4 @@ class TestAReadableDesiredStateIsActedOn:
         code, calls, stderr = run_tick(f"printf '%b\\\\n' '{plan}'", tmp_path)
 
         assert code == 0, stderr
-        assert calls == ["RECONCILE alpha", "RECONCILE alpha", "RECONCILE beta", "PRUNE", "GC"]
+        assert calls == ["RECONCILE alpha", "RECONCILE alpha", "RECONCILE beta", "PRUNE", "SCHEDULE SWEEP", "GC"]

@@ -1564,27 +1564,36 @@ _reconcile_one_connector() {
   # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
   local conn_name schedule tenant schedule_details schedule_origin
   conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
-  schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}")"
-  schedule_origin="${schedule_details%%$'\n'*}"
-  schedule="${schedule_details#*$'\n'}"
   tenant="$(reconcile_compute_tenant "${name}")"
-  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-    log_line INFO "${name}: would create/update Argo CronWorkflow"
-  else
-    local apply_rc=0 apply_error
-    apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
-      || apply_rc=$?
-    apply_error="$(argo_error_reason "${apply_error}")"
-    if [[ "${apply_rc}" -eq 2 ]]; then
-      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
+  if connector_schedules_writable; then
+    local deployment
+    if ! deployment="$(reconcile_resolve_deployment_schedule "${name}" "${secret_name}")" \
+        || ! schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}" "${source_id_label}" "${deployment}")"; then
+      log_line ERROR "${name}: failed to resolve schedule; CronWorkflow was left unchanged"
       rc=1
-    elif [[ "${apply_rc}" -ne 0 ]]; then
-      log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
-      rc=1
-    elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
-      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"
-      rc=1
+    else
+      schedule_origin="${schedule_details%%$'\n'*}"
+      schedule="${schedule_details#*$'\n'}"
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        log_line INFO "${name}: would create/update Argo CronWorkflow (origin=${schedule_origin})"
+      else
+        local apply_rc=0 apply_error
+        apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                                "${source_id_label}" "${dbt_select}" "${schedule_origin}" "${deployment}" 2>&1 >/dev/null)" \
+          || apply_rc=$?
+        apply_error="$(argo_error_reason "${apply_error}")"
+        argo_log_schedule_release_failure "${name}" "${apply_rc}" "${apply_error}"
+        if [[ "${apply_rc}" -eq 2 ]]; then
+          log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
+          rc=1
+        elif [[ "${apply_rc}" -ne 0 ]]; then
+          log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
+          rc=1
+        elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
+          log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"
+          rc=1
+        fi
+      fi
     fi
   fi
 
@@ -1676,6 +1685,36 @@ reconcile_prune_removed_instances() {
   rm -f "${plan_file}" "${definitions_file}"   # explicit cleanup; sourced libs MUST NOT install RETURN traps
 }
 
+reconcile_sweep_orphan_schedules() {
+  local opt_connector="${1:-}" opt_source_id="${2:-}"
+  if [[ "${RECONCILE_NO_GC:-0}" -eq 1 || "${RECONCILE_DRY_RUN:-0}" -eq 1 || -n "${opt_source_id}" ]]; then
+    return 0
+  fi
+  local secrets_file errors_file failures reason
+  secrets_file="$(mktemp -t insight-schedule-secrets.XXXXXX)" || { _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1)); return 0; }
+  errors_file="$(mktemp -t insight-schedule-errors.XXXXXX)" || { rm -f "${secrets_file}"; _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1)); return 0; }
+  if ! disc_load_secrets > "${secrets_file}"; then
+    rm -f "${secrets_file}" "${errors_file}"
+    log_line ERROR "schedule orphan sweep skipped: cannot read connector Secrets"
+    _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+    return 0
+  fi
+  if ! failures="$(python3 "${_RECONCILE_PY_DIR}/sweep_connector_schedules.py" "${secrets_file}" --connector "${opt_connector}" 2>"${errors_file}")" \
+      || [[ ! "${failures}" =~ ^[0-9]+$ ]]; then
+    failures=1
+  fi
+  while IFS= read -r reason; do
+    [[ -n "${reason}" ]] || continue
+    if [[ "${reason}" == *"schedule lock release failed:"* ]]; then
+      log_line WARN "${reason}"
+    else
+      log_line ERROR "${reason}"
+    fi
+  done < "${errors_file}"
+  rm -f "${secrets_file}" "${errors_file}"
+  _RECONCILE_FAILED=$((_RECONCILE_FAILED + failures))
+}
+
 # ---------------------------------------------------------------------------
 # _reconcile_mark_colliding_connectors <plan_tsv>
 # Connectors whose instances do not render distinct CronWorkflow names, refused
@@ -1736,6 +1775,8 @@ reconcile_run() {
   _RECONCILE_SKIPPED=0
 
   log_init
+  connector_schedules_read
+  connector_schedules_writable || _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
 
   # INVARIANT: the desired state is read once, and a read that failed stops the
   # tick. Every destructive path below is driven by "this instance is not in the
@@ -1782,6 +1823,7 @@ reconcile_run() {
 
   # Layer 4a — instances whose Secret is gone while their siblings' remain.
   reconcile_prune_removed_instances "${plan_tsv}" "${opt_connector}" "${opt_source_id}"
+  reconcile_sweep_orphan_schedules "${opt_connector}" "${opt_source_id}"
 
   # Layer 4b — GC (skipped when --no-gc).
   reconcile_gc_orphans
