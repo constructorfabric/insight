@@ -30,8 +30,8 @@ export interface Stacks {
   top: string;
 }
 
-const STACK_TOTAL = "stack_total";
-const STACK_TOP = "stack_top";
+const STACK_TOTAL = "stack-total";
+const STACK_TOP = "stack-top";
 const STACK_COLORS = 12;
 
 export function stackColor(index: number): string {
@@ -40,7 +40,8 @@ export function stackColor(index: number): string {
 
 /**
  * Recharts reads a dotted `dataKey` as a path and a chart colour is a CSS
- * custom property, so a series value is never used as a key itself.
+ * custom property, so a series value is never used as a key itself. The keys
+ * added here hold a `-`, which no `as_name` can, so none overwrites a column.
  */
 export function stacks(
   result: MetricResult,
@@ -56,7 +57,7 @@ export function stacks(
   const labels = [...new Set(result.rows.map(label))].sort((a, b) =>
     a.localeCompare(b, "en", { numeric: true })
   );
-  const keys = new Map(labels.map((name, index) => [name, `stack_${index}`]));
+  const keys = new Map(labels.map((name, index) => [name, `stack-${index}`]));
   const bars = new Map<unknown, Record<string, unknown>>();
 
   for (const row of result.rows) {

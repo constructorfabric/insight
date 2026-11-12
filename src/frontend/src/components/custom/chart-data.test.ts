@@ -71,7 +71,25 @@ describe("stacks", () => {
     );
 
     expect(series[0].label).toBe("build.timed out");
-    expect(series[0].key).toMatch(/^[a-z0-9_]+$/);
+    expect(series[0].key).not.toMatch(/[.\s]/);
+  });
+
+  it("keeps an x column whose name looks like a key it adds", () => {
+    const { rows, total } = stacks(
+      {
+        columns: ["stack_total", "outcome", "runs"],
+        rows: [
+          ["2026-11-02", "merged", 3],
+          ["2026-11-02", "failed", 1],
+        ],
+      },
+      "stack_total",
+      "runs",
+      "outcome"
+    );
+
+    expect(rows[0].stack_total).toBe("2026-11-02");
+    expect(rows[0][total]).toBe(4);
   });
 });
 
