@@ -15,8 +15,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 from source_slack import client as client_module
 from source_slack.client import SlackAnalyticsClient, SlackApiError, SlackResponseError
+from source_slack.models import MemberRow, Refusal
 
-_ROWS = [{"user_id": "U1", "date": "2026-10-01"}, {"user_id": "U2", "date": "2026-10-01"}]
+_ROWS = [MemberRow(user_id=user, date="2026-10-01").model_dump(mode="json") for user in ("U1", "U2")]
 _FILE = gzip.compress("\n".join(json.dumps(r) for r in _ROWS).encode())
 
 _BOMB = gzip.compress(b"\n".join([json.dumps(_ROWS[0]).encode()] + [b" " * 1000] * 20_000))
@@ -44,12 +45,15 @@ _ANSWERS = {
         gzip.compress(json.dumps(_ROWS[0]).encode()),
         {"Content-Type": "application/gzip", "Content-Encoding": "gzip"},
     ),
-    "refusal": (b'{"ok":false,"error":"file_not_found"}', {"Content-Type": "application/json; charset=utf-8"}),
+    "refusal": (
+        Refusal(ok=False, error="file_not_found").model_dump_json().encode(),
+        {"Content-Type": "application/json; charset=utf-8"},
+    ),
 }
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's hook name
+    def do_GET(self) -> None:
         body, headers = _ANSWERS[self.path.rsplit("/", 1)[-1].split("?")[0]]
         self.send_response(200)
         for name, value in headers.items():

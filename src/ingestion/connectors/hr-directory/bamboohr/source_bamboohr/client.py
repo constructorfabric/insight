@@ -74,19 +74,14 @@ class BambooClient:
         self._session.auth = HTTPBasicAuth(api_key, "x")
         self._session.headers.update({"Accept": "application/json"})
 
-    def get(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
-        return self._json(self._request("GET", path, params=params, body=None))
+    def get(self, path: str, params: Mapping[str, Any] | None = None) -> bytes:
+        return self._request("GET", path, params=params, body=None).content
 
-    def post(self, path: str, body: Mapping[str, Any]) -> Any:
-        return self._json(self._request("POST", path, params=None, body=body))
+    def post(self, path: str, body: Mapping[str, Any]) -> bytes:
+        return self._request("POST", path, params=None, body=body).content
 
     def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: Mapping[str, Any] | None,
-        body: Mapping[str, Any] | None,
+        self, method: str, path: str, *, params: Mapping[str, Any] | None, body: Mapping[str, Any] | None
     ) -> requests.Response:
         url = f"{self._base_url}{path.lstrip('/')}"
         attempt = 0
@@ -109,12 +104,6 @@ class BambooClient:
                 continue
 
             raise _api_error(response)
-
-    def _json(self, response: requests.Response) -> Any:
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise RuntimeError(f"BambooHR returned invalid JSON from {response.url}") from exc
 
 
 def _api_error(response: requests.Response) -> BambooHrApiError:

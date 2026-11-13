@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 
 from source_hubspot.constants import BASE_URL
+from source_hubspot.models import NextPage, Paging, RecordPage
 from tests.conftest import SOURCE, TENANT, FakeResponse, wire
 
 
 def owners_page(records, next_after=None):
-    payload = {"results": records}
-    if next_after is not None:
-        payload["paging"] = {"next": {"after": next_after}}
-    return FakeResponse(payload)
+    paging = Paging(next=NextPage(after=next_after)) if next_after is not None else None
+    return FakeResponse(RecordPage(results=records, paging=paging).model_dump(mode="json"))
 
 
 def owner(i, updated="2024-06-01T00:00:00Z", **extra):

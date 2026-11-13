@@ -14,17 +14,19 @@ memory; a decompression bomb stops at the limit.
 from __future__ import annotations
 
 import itertools
-import json
 import logging
 import math
 import time
 import zlib
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
 import requests
+from pydantic import TypeAdapter, ValidationError
+
+from source_slack.models import Refusal, describe
 
 logger = logging.getLogger("airbyte")
 
@@ -48,6 +50,8 @@ _READ_CHUNK = 64 * 1024
 _INFLATE_STEP = 1024**2
 # Transport Content-Encoding plus the file itself; anything deeper is not Slack.
 _MAX_GZIP_LAYERS = 2
+
+_LINE = TypeAdapter(dict[str, Any])
 
 
 class SlackApiError(Exception):
@@ -172,13 +176,25 @@ def _lines(chunks: Iterable[bytes], day: str) -> Iterator[bytes]:
         yield tail
 
 
-def _parse(line: bytes, response: requests.Response, day: str) -> Any:
+def _parse(line: bytes, response: requests.Response, day: str) -> dict[str, Any]:
     try:
-        return json.loads(line)
-    except ValueError as error:
-        raise SlackResponseError(
-            f"{day}: body is not JSON Lines (Content-Type {response.headers.get('Content-Type')!r})"
-        ) from error
+        return _LINE.validate_json(line)
+    except ValidationError as error:
+        if any(detail["type"] == "json_invalid" for detail in error.errors(include_input=False)):
+            raise SlackResponseError(
+                f"{day}: body is not JSON Lines (Content-Type {response.headers.get('Content-Type')!r})"
+            ) from None
+        raise SlackResponseError(f"{day}: a member file line is not a JSON object ({describe(error)})") from None
+
+
+def _refusal_error(row: dict[str, Any], day: str) -> SlackApiError:
+    try:
+        refusal = Refusal.model_validate(row)
+    except ValidationError as error:
+        raise SlackResponseError(f"{day}: JSON answer without a member file ({describe(error)})") from None
+    if refusal.ok:
+        raise SlackResponseError(f"{day}: JSON answer without a member file")
+    return SlackApiError(refusal.error or "unknown_error", day)
 
 
 def _rows(response: requests.Response, day: str) -> Iterator[dict[str, Any]]:
@@ -192,14 +208,10 @@ def _rows(response: requests.Response, day: str) -> Iterator[dict[str, Any]]:
         if not line.strip():
             continue
         row = _parse(line, response, day)
-        if not isinstance(row, Mapping):
-            raise SlackResponseError(f"{day}: a member file line is not a JSON object")
         if first and "ok" in row:
-            if row["ok"] is False:
-                raise SlackApiError(str(row.get("error") or "unknown_error"), day)
-            raise SlackResponseError(f"{day}: JSON answer without a member file")
+            raise _refusal_error(row, day)
         first = False
-        yield dict(row)
+        yield row
 
 
 class SlackAnalyticsClient:

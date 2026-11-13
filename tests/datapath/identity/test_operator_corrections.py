@@ -29,13 +29,21 @@ from insight_datapath.connector_path import ConnectorPath
 from insight_datapath.identity_journal import SYSTEM_AUTHOR, Decision
 from insight_datapath.instance import InstanceConfig
 from insight_datapath.subjects import Subjects
-from insight_stand.api import ApiClient, ApiResponse, JsonValue, identity_path
+from insight_stand.api import ApiClient, ApiResponse, identity_path
 from insight_stand.personas import PersonaSession
 from insight_stand.scratch_identity import SCRATCH_SOURCE_ID, SCRATCH_SOURCE_TYPE, scratch_name
+from pydantic import BaseModel
+
+from stand.api.schemas import (
+    PROBLEM_CONTENT_TYPE,
+    AccountBindingResponse,
+    CorrectionResponse,
+    PersonAccountsResponse,
+    ProblemDocument,
+)
 
 #: The toolkit stamps every refusal with this scheme; tests assert the prefix, not the id.
 ERROR_TYPE_PREFIX = "gts://"
-PROBLEM_CONTENT_TYPE = "application/problem+json"
 
 pytestmark = pytest.mark.fixture
 
@@ -53,7 +61,6 @@ MODULE_TAG = uuid.uuid4().hex[:10]
 SPEC_PEOPLE = (("a", "Ann Anchor"), ("b", "Ben Branch"), ("c", "Cam Cedar"))
 
 type Account = dict[str, str]
-type Body = dict[str, JsonValue]
 
 
 @dataclass(frozen=True)
@@ -116,20 +123,9 @@ def _canonical(value: str) -> str:
     return str(uuid.UUID(value))
 
 
-def _uuid(value: JsonValue) -> str:
-    assert isinstance(value, str), f"not a uuid: {value!r}"
-    return _canonical(value)
-
-
-def _object(response: ApiResponse, what: str) -> Body:
-    body = response.json()
-    assert isinstance(body, dict), f"{what}: body is not an object: {response.text[:300]}"
-    return body
-
-
-def _applied(response: ApiResponse, what: str) -> Body:
+def _applied[T: BaseModel](response: ApiResponse, model: type[T], what: str) -> T:
     assert response.status_code == 200, f"{what}: {response.status_code} {response.text[:300]}"
-    return _object(response, what)
+    return response.parse(model)
 
 
 def _problem(response: ApiResponse, status: int) -> None:
@@ -143,23 +139,10 @@ def _problem(response: ApiResponse, status: int) -> None:
         f"refusal arrived as {response.content_type!r}, not {PROBLEM_CONTENT_TYPE!r}"
     )
 
-    body = _object(response, f"problem {status}")
-    title = body.get("title")
-    assert body.get("status") == status, body
-    assert str(body.get("type", "")).startswith(ERROR_TYPE_PREFIX), body
-    assert isinstance(title, str) and title.strip(), body
-    assert "detail" in body, body
-
-
-def _entries(value: JsonValue, what: str) -> list[Body]:
-    assert isinstance(value, list), f"{what} is not a list: {value!r}"
-    entries = [entry for entry in value if isinstance(entry, dict)]
-    assert len(entries) == len(value), f"{what} holds a non-object entry: {value!r}"
-    return entries
-
-
-def _by_account_id(value: JsonValue, what: str) -> dict[str, Body]:
-    return {str(entry["account_id"]): entry for entry in _entries(value, what)}
+    problem = response.parse(ProblemDocument)
+    assert problem.status == status, problem
+    assert problem.type.startswith(ERROR_TYPE_PREFIX), problem
+    assert problem.title.strip(), problem
 
 
 def _scratch(tag: str) -> Account:
@@ -206,12 +189,15 @@ def _decisions(cfg: InstanceConfig, tenant: str, account: Account) -> list[Decis
 def _mint_person(operator: ApiClient, account: Account, host: str) -> str:
     """A person nothing else owns: pre-register `account` on `host`, then detach it."""
     bound = _applied(
-        _bind(operator, account, host, "datapath: pre-register before minting"), "bind"
+        _bind(operator, account, host, "datapath: pre-register before minting"),
+        CorrectionResponse,
+        "bind",
     )
-    assert bound["applied"] == 1, bound
+    assert bound.applied == 1, bound
 
-    detached = _applied(_detach(operator, account, "datapath: mint"), "detach")
-    return _uuid(detached["new_person_id"])
+    detached = _applied(_detach(operator, account, "datapath: mint"), CorrectionResponse, "detach")
+    assert detached.new_person_id is not None, detached
+    return str(detached.new_person_id)
 
 
 def test_a_persons_accounts_are_listed_with_who_bound_them(
@@ -219,24 +205,28 @@ def test_a_persons_accounts_are_listed_with_who_bound_them(
 ) -> None:
     """A person's matching table lists every account bound to them and tells the roster
     binding automation made from the one an operator added."""
-    before = _applied(_accounts_of(operator, people.a.person_id), "accounts")
-    roster = _by_account_id(before["accounts"], "accounts")
+    before = _applied(
+        _accounts_of(operator, people.a.person_id), PersonAccountsResponse, "accounts"
+    )
+    roster = {entry.account_id: entry for entry in before.accounts}
 
-    assert _uuid(before["person_id"]) == people.a.person_id, before
+    assert str(before.person_id) == people.a.person_id, before
     assert people.a.key in roster, before
-    assert roster[people.a.key]["source"] == ROSTER_SOURCE_TYPE, roster[people.a.key]
-    assert _uuid(roster[people.a.key]["source_id"]) == people.a.account["source_id"], roster
-    assert roster[people.a.key]["bound_by_operator"] is False, roster[people.a.key]
+    assert roster[people.a.key].source == ROSTER_SOURCE_TYPE, roster[people.a.key]
+    assert str(roster[people.a.key].source_id) == people.a.account["source_id"], roster
+    assert roster[people.a.key].bound_by_operator is False, roster[people.a.key]
 
     scratch = _scratch(f"listed-{run_tag}")
-    bound = _applied(_bind(operator, scratch, people.a.person_id, "datapath: listed"), "bind")
-    assert bound["applied"] == 1, bound
+    bound = _applied(
+        _bind(operator, scratch, people.a.person_id, "datapath: listed"), CorrectionResponse, "bind"
+    )
+    assert bound.applied == 1, bound
 
-    after = _applied(_accounts_of(operator, people.a.person_id), "accounts")
-    listed = _by_account_id(after["accounts"], "accounts")
+    after = _applied(_accounts_of(operator, people.a.person_id), PersonAccountsResponse, "accounts")
+    listed = {entry.account_id: entry for entry in after.accounts}
     assert scratch["id"] in listed, after
-    assert listed[scratch["id"]]["bound_by_operator"] is True, listed[scratch["id"]]
-    assert listed[people.a.key]["bound_by_operator"] is False, listed[people.a.key]
+    assert listed[scratch["id"]].bound_by_operator is True, listed[scratch["id"]]
+    assert listed[people.a.key].bound_by_operator is False, listed[people.a.key]
 
 
 def test_confirming_an_automatic_binding_records_the_operator(
@@ -253,9 +243,11 @@ def test_confirming_an_automatic_binding_records_the_operator(
     assert before[0].author_person_id == SYSTEM_AUTHOR, before[0]
 
     confirm = _applied(
-        _bind(operator, people.a.account, people.a.person_id, "datapath: confirm"), "confirm"
+        _bind(operator, people.a.account, people.a.person_id, "datapath: confirm"),
+        CorrectionResponse,
+        "confirm",
     )
-    assert confirm["applied"] == 1, confirm
+    assert confirm.applied == 1, confirm
 
     after = _decisions(instance_cfg, tenant, people.a.account)
     assert len(after) == len(before) + 1, "the confirmation is a new observation"
@@ -263,10 +255,12 @@ def test_confirming_an_automatic_binding_records_the_operator(
     assert after[0].author_person_id == _canonical(operator_session.person.uuid), after[0]
 
     repeat = _applied(
-        _bind(operator, people.a.account, people.a.person_id, "datapath: repeat"), "repeat"
+        _bind(operator, people.a.account, people.a.person_id, "datapath: repeat"),
+        CorrectionResponse,
+        "repeat",
     )
-    assert repeat["applied"] == 0, repeat
-    assert repeat["already_decided"] == 1, repeat
+    assert repeat.applied == 0, repeat
+    assert repeat.already_decided == 1, repeat
     assert _decisions(instance_cfg, tenant, people.a.account) == after, "no duplicate history"
 
 
@@ -277,9 +271,12 @@ def test_detach_moves_the_account_and_names_the_person_it_reached(
     actually reached."""
     before = _decisions(instance_cfg, tenant, people.b.account)
 
-    detached = _applied(_detach(operator, people.b.account, "datapath: detach"), "detach")
-    assert detached["applied"] == 1, detached
-    new_person = _uuid(detached["new_person_id"])
+    detached = _applied(
+        _detach(operator, people.b.account, "datapath: detach"), CorrectionResponse, "detach"
+    )
+    assert detached.applied == 1, detached
+    assert detached.new_person_id is not None, detached
+    new_person = str(detached.new_person_id)
 
     after = _decisions(instance_cfg, tenant, people.b.account)
     assert len(after) == len(before) + 1, "the detach is a new observation"
@@ -295,17 +292,21 @@ def test_an_excluded_account_no_longer_resolves_at_login(
     account = _scratch(f"bot-{run_tag}")
     lookup = {"source_type": account["source"], "external_id": account["id"]}
     bound = _applied(
-        _bind(operator, account, people.c.person_id, "datapath: pre-register the bot"), "bind"
+        _bind(operator, account, people.c.person_id, "datapath: pre-register the bot"),
+        CorrectionResponse,
+        "bind",
     )
-    assert bound["applied"] == 1, bound
+    assert bound.applied == 1, bound
 
     resolves = service_client.get(BY_EXTERNAL_ID, params=lookup)
     assert resolves.status_code == 200, (
         f"a bound account resolves before the exclusion: {resolves.text[:300]}"
     )
 
-    excluded = _applied(_exclude(operator, account, "datapath: not a person"), "exclude")
-    assert excluded["applied"] == 1, excluded
+    excluded = _applied(
+        _exclude(operator, account, "datapath: not a person"), CorrectionResponse, "exclude"
+    )
+    assert excluded.applied == 1, excluded
 
     gone = service_client.get(BY_EXTERNAL_ID, params=lookup)
     _problem(gone, 404)
@@ -320,8 +321,10 @@ def test_merge_moves_every_account_of_the_absorbed_person(
     second = _scratch(f"merge-b-{run_tag}")
     source = _mint_person(operator, first, people.c.person_id)
     survivor = _mint_person(operator, _scratch(f"merge-keep-{run_tag}"), people.c.person_id)
-    joined = _applied(_bind(operator, second, source, "datapath: second account"), "bind")
-    assert joined["applied"] == 1, joined
+    joined = _applied(
+        _bind(operator, second, source, "datapath: second account"), CorrectionResponse, "bind"
+    )
+    assert joined.applied == 1, joined
     before = {
         account["id"]: _decisions(instance_cfg, tenant, account) for account in (first, second)
     }
@@ -335,9 +338,10 @@ def test_merge_moves_every_account_of_the_absorbed_person(
                 "comment": "datapath: one human",
             },
         ),
+        CorrectionResponse,
         "merge",
     )
-    assert merged["applied"] == 2, merged
+    assert merged.applied == 2, merged
 
     for account in (first, second):
         after = _decisions(instance_cfg, tenant, account)
@@ -363,29 +367,31 @@ def test_an_accounts_history_names_every_decision_and_its_author(
     person = _mint_person(operator, account, people.c.person_id)
     author = _canonical(operator_session.person.uuid)
 
-    body = _applied(_history_of(operator, account), "account history")
-    history = _entries(body["history"], "history")
+    body = _applied(_history_of(operator, account), AccountBindingResponse, "account history")
+    history = body.history
 
-    assert body["account_id"] == account["id"], body
-    assert _uuid(body["person_id"]) == person, "the binding in force is the newest decision"
-    assert [entry["reason"] for entry in history] == ["operator-detach", "operator-bind"], history
-    assert all(entry["by_operator"] is True for entry in history), history
-    assert all(_uuid(entry["author_person_id"]) == author for entry in history), history
+    assert body.account_id == account["id"], body
+    assert str(body.person_id) == person, "the binding in force is the newest decision"
+    assert [entry.reason for entry in history] == ["operator-detach", "operator-bind"], history
+    assert all(entry.by_operator for entry in history), history
+    assert all(str(entry.author_person_id) == author for entry in history), history
 
 
 def test_an_unknown_accounts_history_is_empty_rather_than_missing(operator: ApiClient) -> None:
     """An account nobody has bound is a legitimate question with an empty answer, not a 404."""
-    body = _applied(_history_of(operator, _scratch("never-seen")), "account history")
+    body = _applied(
+        _history_of(operator, _scratch("never-seen")), AccountBindingResponse, "account history"
+    )
 
-    assert body["person_id"] is None, body
-    assert body["history"] == [], body
+    assert body.person_id is None, body
+    assert body.history == [], body
 
 
 def test_a_person_with_no_accounts_lists_none(operator: ApiClient) -> None:
     """A person id the journal never bound an account to answers with an empty table."""
-    body = _applied(_accounts_of(operator, str(uuid.uuid4())), "accounts")
+    body = _applied(_accounts_of(operator, str(uuid.uuid4())), PersonAccountsResponse, "accounts")
 
-    assert body["accounts"] == [], body
+    assert body.accounts == [], body
 
 
 def test_an_operator_decision_survives_the_next_seed_run(
@@ -403,9 +409,11 @@ def test_an_operator_decision_survives_the_next_seed_run(
     assert origin[-1].author_person_id == SYSTEM_AUTHOR, "the binding began as automation's"
 
     moved = _applied(
-        _bind(operator, people.a.account, people.b.person_id, "datapath: one human"), "bind"
+        _bind(operator, people.a.account, people.b.person_id, "datapath: one human"),
+        CorrectionResponse,
+        "bind",
     )
-    assert moved["applied"] == 1, moved
+    assert moved.applied == 1, moved
     subjects.publish()
 
     after = _decisions(instance_cfg, tenant, people.a.account)

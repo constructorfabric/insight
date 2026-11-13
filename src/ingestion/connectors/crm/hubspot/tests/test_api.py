@@ -10,7 +10,10 @@ from airbyte_cdk.models import FailureType
 from airbyte_cdk.utils import AirbyteTracedException
 from source_hubspot.api import Hubspot, _TimeoutSession
 from source_hubspot.constants import ALLOWED_PROPERTIES_BY_OBJECT, BASE_URL
-from tests.conftest import FakeHttpClient, FakeResponse
+from source_hubspot.models import PropertiesPage, PropertyDescriptor
+from tests.conftest import FakeHttpClient, FakeResponse, assert_no_leak
+
+PERSONAL = "person@example.com"
 
 
 def make_client(responses=()):
@@ -19,8 +22,8 @@ def make_client(responses=()):
     return hs
 
 
-def prop(name, hubspot_defined=True, type_="string"):
-    return {"name": name, "hubspotDefined": hubspot_defined, "type": type_}
+def properties_page(*names):
+    return FakeResponse(PropertiesPage(results=[PropertyDescriptor(name=n) for n in names]).model_dump(mode="json"))
 
 
 class TestTimeoutSession:
@@ -79,20 +82,20 @@ class TestCheckConnection:
 
 class TestPropertiesFor:
     def test_v3_results_wrapper(self):
-        hs = make_client([FakeResponse({"results": [prop("email")]})])
+        hs = make_client([properties_page("email")])
         props = hs.properties_for("contacts")
-        assert props == (prop("email"),)
+        assert props == (PropertyDescriptor(name="email"),)
         assert hs._http_client.calls[0]["url"] == f"{BASE_URL}/crm/v3/properties/contacts"
 
     def test_cached_per_object(self):
-        hs = make_client([FakeResponse({"results": [prop("email")]})])
+        hs = make_client([properties_page("email")])
         hs.properties_for("contacts")
         hs.properties_for("contacts")  # second call must not hit HTTP
         assert len(hs._http_client.calls) == 1
 
     def test_v2_bare_list_accepted(self):
-        hs = make_client([FakeResponse([prop("email")])])
-        assert hs.properties_for("contacts") == (prop("email"),)
+        hs = make_client([FakeResponse([PropertyDescriptor(name="email").model_dump(mode="json")])])
+        assert hs.properties_for("contacts") == (PropertyDescriptor(name="email"),)
 
     def test_http_error_is_config_error(self):
         hs = make_client([FakeResponse(status_code=403, text="forbidden")])
@@ -102,33 +105,33 @@ class TestPropertiesFor:
         assert "crm.objects" in exc_info.value.message
 
     def test_non_json_body_is_system_error(self):
-        hs = make_client([FakeResponse(ValueError("not json"), text="<html>")])
+        hs = make_client([FakeResponse(text="<html>")])
         with pytest.raises(AirbyteTracedException) as exc_info:
             hs.properties_for("deals")
         assert exc_info.value.failure_type == FailureType.system_error
-        assert "non-JSON" in exc_info.value.message
+        assert "json_invalid" in exc_info.value.message
 
-    def test_unexpected_shape_is_system_error(self):
-        hs = make_client([FakeResponse("just a string")])
+    @pytest.mark.parametrize(
+        "payload", [PERSONAL, {"results": PERSONAL}, {"results": [{"name": {"email": PERSONAL}}]}, [[PERSONAL]]]
+    )
+    def test_unexpected_shape_is_system_error_without_input(self, payload):
+        hs = make_client([FakeResponse(payload)])
         with pytest.raises(AirbyteTracedException) as exc_info:
             hs.properties_for("deals")
-        assert "Unexpected HubSpot properties payload shape" in exc_info.value.message
+        error = exc_info.value
+        assert error.failure_type == FailureType.system_error, f"should reject: {payload!r}"
+        assert "Unexpected HubSpot properties payload shape" in error.message
+        assert_no_leak(error, PERSONAL)
 
 
 class TestPropertySelection:
-    DESCRIPTORS = [
-        prop("amount"),  # allowlisted standard
-        prop("uncurated_std"),  # standard outside the allowlist
-        prop("my_custom", hubspot_defined=False),
-        {"hubspotDefined": True},  # nameless → dropped
-    ]
-
     def test_every_named_portal_property_is_requested(self):
-        hs = make_client([FakeResponse({"results": self.DESCRIPTORS})])
+        names = ("amount", "uncurated_std", "my_custom", None)
+        hs = make_client([properties_page(*names)])
         assert hs.property_names("deals") == ("amount", "uncurated_std", "my_custom")
 
     def test_property_names_independent_of_allowlist(self):
-        hs = make_client([FakeResponse({"results": [prop("anything")]})])
+        hs = make_client([properties_page("anything")])
         assert hs.property_names("unknown_object") == ("anything",)
 
 

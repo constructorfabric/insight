@@ -16,13 +16,15 @@ only the transport differs.
 import json
 import logging
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any
 
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
 
 from source_active_directory import ldap_client
+from source_active_directory.config import parse_config
 
 logger = logging.getLogger("airbyte")
 
@@ -36,28 +38,27 @@ class SourceActiveDirectory(AbstractSource):
         spec_path = Path(__file__).parent / "spec.json"
         return ConnectorSpecification(**json.loads(spec_path.read_text()))
 
-    def check_connection(
-        self,
-        logger: Any,
-        config: Mapping[str, Any],
-    ) -> Tuple[bool, Optional[Any]]:
+    def check_connection(self, logger: Any, config: Mapping[str, Any]) -> tuple[bool, Any | None]:
         """Validate config end-to-end:
 
-          1. insight_source_id and insight_tenant_id are non-empty (composite
-             unique_key collisions and tenant-isolation leaks otherwise).
-          2. LDAP bind succeeds against the configured DC with the bind credentials.
-          3. The search base is readable (size-limited probe returns without error).
+        1. insight_source_id and insight_tenant_id are non-empty (composite
+           unique_key collisions and tenant-isolation leaks otherwise).
+        2. LDAP bind succeeds against the configured DC with the bind credentials.
+        3. The search base is readable (size-limited probe returns without error).
         """
-        insight_source_id = (config.get("insight_source_id") or "").strip()
-        if not insight_source_id:
+        try:
+            parsed = parse_config(config)
+        except ValueError as exc:
+            return False, str(exc)
+
+        if not parsed.insight_source_id.strip():
             return False, (
                 "insight_source_id MUST be set via the "
                 "`insight.cyberfabric.com/source-id` annotation; an empty value "
                 "would cause silent dedup collisions in the users stream."
             )
 
-        insight_tenant_id = (config.get("insight_tenant_id") or "").strip()
-        if not insight_tenant_id:
+        if not parsed.insight_tenant_id.strip():
             return False, (
                 "insight_tenant_id MUST be set to a non-empty tenant UUID; an "
                 "empty value would stamp every record with an unscoped tenant, "
@@ -70,10 +71,10 @@ class SourceActiveDirectory(AbstractSource):
 
         conn = None
         try:
-            conn = ldap_client.connect(config)
+            conn = ldap_client.connect(parsed)
         except LDAPException as exc:
             return False, (
-                f"LDAP bind failed against '{config.get('ad_server_host')}': {exc}. "
+                f"LDAP bind failed against '{parsed.ad_server_host}': {exc}. "
                 "Check ad_server_host/ad_port/ad_use_ssl, and that ad_bind_dn + "
                 "ad_bind_password are correct for a read-enabled account."
             )
@@ -85,19 +86,19 @@ class SourceActiveDirectory(AbstractSource):
             # more than one user — that exception (raised because `connect()` sets
             # raise_exceptions=True) would otherwise be mis-read as an unreadable base.
             ok = conn.search(
-                search_base=config["ad_search_base"],
+                search_base=parsed.ad_search_base,
                 search_filter="(objectClass=*)",
                 search_scope="BASE",
                 attributes=["distinguishedName"],
             )
             if not ok and conn.result and conn.result.get("result") != 0:
                 return False, (
-                    f"Search base '{config['ad_search_base']}' not readable: "
+                    f"Search base '{parsed.ad_search_base}' not readable: "
                     f"{conn.result.get('description')} ({conn.result.get('message')})."
                 )
             return True, None
         except LDAPException as exc:
-            return False, f"LDAP search against '{config['ad_search_base']}' failed: {exc}"
+            return False, f"LDAP search against '{parsed.ad_search_base}' failed: {exc}"
         finally:
             if conn is not None:
                 try:
@@ -105,16 +106,10 @@ class SourceActiveDirectory(AbstractSource):
                 except Exception:  # noqa: BLE001 — best-effort cleanup
                     pass
 
-    def streams(self, config: Mapping[str, Any]) -> List[Stream]:
+    def streams(self, config: Mapping[str, Any]) -> list[Stream]:
         from source_active_directory.streams.users import ActiveDirectoryUsersStream
 
-        return [
-            ActiveDirectoryUsersStream(
-                config=config,
-                tenant_id=config["insight_tenant_id"],
-                source_id=config["insight_source_id"],
-            )
-        ]
+        return [ActiveDirectoryUsersStream(config=parse_config(config))]
 
 
 def main():

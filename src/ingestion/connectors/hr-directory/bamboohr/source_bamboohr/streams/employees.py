@@ -6,8 +6,11 @@ from typing import Any
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import Stream
+from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from source_bamboohr.client import BambooClient
+from source_bamboohr.parsing import Id, Lenient, Row, malformed, valid_rows
+from source_bamboohr.streams.meta_fields import MetaField, read_meta_fields
 
 logger = logging.getLogger("airbyte")
 
@@ -72,36 +75,75 @@ BUSINESS_FIELDS = tuple(name for name in SCHEMA["properties"] if name not in FRA
 SENSITIVE_FIELDS = frozenset(
     {
         # National, tax and government identifiers
-        "ssn", "sin", "nin", "nationalId",
+        "ssn",
+        "sin",
+        "nin",
+        "nationalId",
         # Protected demographics
-        "dateOfBirth", "gender", "ethnicity", "maritalStatus",
-        "veteranStatus", "disabilityStatus",
+        "dateOfBirth",
+        "gender",
+        "ethnicity",
+        "maritalStatus",
+        "veteranStatus",
+        "disabilityStatus",
         # Personal contact details
-        "homeEmail", "homePhone", "mobilePhone",
-        "workPhone", "workPhoneExtension", "workPhonePlusExtension",
+        "homeEmail",
+        "homePhone",
+        "mobilePhone",
+        "workPhone",
+        "workPhoneExtension",
+        "workPhonePlusExtension",
         # Street address (the work city and country stay — they are bronze columns)
-        "address1", "address2", "zipcode", "state", "stateCode",
+        "address1",
+        "address2",
+        "zipcode",
+        "state",
+        "stateCode",
         # Photos and social profiles
-        "photoUrl", "photoUploaded",
-        "linkedIn", "twitterFeed", "facebook", "instagram", "pinterest",
+        "photoUrl",
+        "photoUploaded",
+        "linkedIn",
+        "twitterFeed",
+        "facebook",
+        "instagram",
+        "pinterest",
         # Compensation amounts
-        "payRate", "payRateEffectiveDate", "commissionRate", "bonusAmount",
+        "payRate",
+        "payRateEffectiveDate",
+        "commissionRate",
+        "bonusAmount",
     }
 )
 
 
-def report_fields(meta_fields: Any) -> tuple[str, ...]:
+class EmployeeRow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: Id
+
+
+class ReportColumn(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: Id
+
+
+class CustomReport(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    employees: list[JsonValue]
+    fields: Lenient[list[Lenient[ReportColumn]]] = None
+
+
+def report_fields(meta_fields: Sequence[MetaField]) -> tuple[str, ...]:
     """Field keys to request from the custom report: every field BambooHR knows
     except SENSITIVE_FIELDS, with the declared bronze columns as a floor so a gap
     in the field metadata can never empty a column."""
-    if not isinstance(meta_fields, list):
-        raise RuntimeError(f"BambooHR field metadata is not a list: {type(meta_fields).__name__}")
-
     keys = list(BUSINESS_FIELDS)
     seen = set(keys)
 
     for field in meta_fields:
-        if not isinstance(field, Mapping) or field.get("deprecated"):
+        if field.deprecated:
             continue
 
         key = _request_key(field)
@@ -123,28 +165,23 @@ def field_batches(fields: Sequence[str]) -> tuple[tuple[str, ...], ...]:
     rest = [name for name in fields if name != EMPLOYEE_ID_FIELD]
     per_batch = MAX_REPORT_FIELDS - 1
 
-    return tuple(
-        (EMPLOYEE_ID_FIELD, *rest[start : start + per_batch])
-        for start in range(0, len(rest), per_batch)
-    )
+    return tuple((EMPLOYEE_ID_FIELD, *rest[start : start + per_batch]) for start in range(0, len(rest), per_batch))
 
 
-def returned_fields(payload: Mapping[str, Any], rows: Sequence[Any]) -> set[str] | None:
+def returned_fields(report: CustomReport, rows: Sequence[Row]) -> set[str] | None:
     """Field keys the report answered with, or None when it did not declare its
     columns. None is not "nothing came back" — it means the completeness of this
     batch cannot be judged, and guessing would turn an unreadable answer into a
     reported data loss."""
-    columns = payload.get("fields")
-    if not isinstance(columns, list):
+    if report.fields is None:
         return None
 
-    answered = {str(column["id"]) for column in columns if isinstance(column, Mapping) and "id" in column}
+    answered = {column.id for column in report.fields if column is not None}
 
     # A column the report declares but no row carries is still answered; a key a
     # row carries that the declaration missed is answered too.
     for row in rows:
-        if isinstance(row, Mapping):
-            answered.update(row.keys())
+        answered.update(row.keys())
 
     return answered
 
@@ -166,7 +203,7 @@ def _report_omissions(requested: Sequence[str], answered: set[str]) -> None:
         )
 
 
-def sensitive_keys(meta_fields: Sequence[Any]) -> frozenset[str]:
+def sensitive_keys(meta_fields: Sequence[MetaField]) -> frozenset[str]:
     """Every key a sensitive field could arrive under: its alias, its numeric id,
     and the indexed `<id>.N` form the report answers with. The report volunteers
     columns that were never requested, so excluding these from the request is not
@@ -174,13 +211,9 @@ def sensitive_keys(meta_fields: Sequence[Any]) -> frozenset[str]:
     keys = set(SENSITIVE_FIELDS)
 
     for field in meta_fields:
-        if not isinstance(field, Mapping):
-            continue
-
-        alias = str(field.get("alias") or "").strip()
-        field_id = field.get("id")
-        if alias in SENSITIVE_FIELDS and field_id is not None:
-            keys.add(str(field_id))
+        alias = field.alias.strip()
+        if alias in SENSITIVE_FIELDS and field.id is not None:
+            keys.add(field.id)
 
     return frozenset(keys)
 
@@ -189,16 +222,9 @@ def _is_sensitive(key: str, sensitive: frozenset[str]) -> bool:
     return key in sensitive or key.split(".", 1)[0] in sensitive
 
 
-def _request_key(field: Mapping[str, Any]) -> str | None:
-    alias = str(field.get("alias") or "").strip()
-    if alias:
-        return alias
-
-    field_id = field.get("id")
-    if field_id is None or str(field_id).strip() == "":
-        return None
-
-    return str(field_id)
+def _request_key(field: MetaField) -> str | None:
+    alias = field.alias.strip()
+    return alias or field.id
 
 
 class EmployeesStream(Stream):
@@ -217,25 +243,25 @@ class EmployeesStream(Stream):
         stream_slice: Mapping[str, Any] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
-        meta = self._client.get("meta/fields")
+        meta = [field for field, _ in read_meta_fields(self._client)]
         fields = report_fields(meta)
         sensitive = sensitive_keys(meta)
         batches = field_batches(fields)
-        logger.info(
-            "BambooHR employee report requests %d fields in %d request(s)", len(fields), len(batches)
-        )
+        logger.info("BambooHR employee report requests %d fields in %d request(s)", len(fields), len(batches))
 
         merged: dict[str, dict[str, Any]] = {}
         answered: set[str] = set()
         verifiable: set[str] = set()
 
         for batch in batches:
-            payload = self._client.post("reports/custom", {"title": REPORT_TITLE, "fields": list(batch)})
-            rows = payload.get("employees") if isinstance(payload, Mapping) else None
-            if not isinstance(rows, list):
-                raise RuntimeError("BambooHR custom report response carries no 'employees' collection")
+            body = self._client.post("reports/custom", {"title": REPORT_TITLE, "fields": list(batch)})
+            try:
+                report = CustomReport.model_validate_json(body)
+            except ValidationError as exc:
+                raise malformed("custom report response", exc) from None
 
-            batch_fields = returned_fields(payload, rows)
+            rows = list(valid_rows(EmployeeRow, report.employees, "employee row"))
+            batch_fields = returned_fields(report, [row for _, row in rows])
             if batch_fields is not None:
                 answered |= batch_fields
                 verifiable.update(batch)
@@ -244,30 +270,18 @@ class EmployeesStream(Stream):
 
         _report_omissions([name for name in fields if name in verifiable], answered)
 
-        for row in merged.values():
-            yield self._to_record(row, sensitive)
+        for employee_id, row in merged.items():
+            yield self._to_record(employee_id, row, sensitive)
 
         logger.info("BambooHR employees stream emitted %d records", len(merged))
 
     @staticmethod
-    def _merge(merged: dict[str, dict[str, Any]], rows: Sequence[Any]) -> None:
-        for row in rows:
-            if not isinstance(row, Mapping):
-                logger.warning("Skipping BambooHR employee row that is not an object")
-                continue
+    def _merge(merged: dict[str, dict[str, Any]], rows: Sequence[tuple[EmployeeRow, Row]]) -> None:
+        for employee, row in rows:
+            merged.setdefault(employee.id, {}).update(row)
 
-            employee_id = row.get("id")
-            if employee_id is None or str(employee_id).strip() == "":
-                logger.warning("Skipping BambooHR employee row without an id")
-                continue
-
-            merged.setdefault(str(employee_id), {}).update(row)
-
-    def _to_record(self, row: Mapping[str, Any], sensitive: frozenset[str]) -> Mapping[str, Any]:
-        employee_id = row["id"]
-        payload = {
-            key: value for key, value in sorted(row.items()) if not _is_sensitive(key, sensitive)
-        }
+    def _to_record(self, employee_id: str, row: Mapping[str, Any], sensitive: frozenset[str]) -> Mapping[str, Any]:
+        payload = {key: value for key, value in sorted(row.items()) if not _is_sensitive(key, sensitive)}
 
         record: dict[str, Any] = {name: row.get(name) for name in BUSINESS_FIELDS}
         record["raw_data"] = payload

@@ -160,9 +160,7 @@ def test_operator_sees_nobody_in_the_org_chart(
     """
     response = admin_operator_session.client.get(identity_path("/v1/subchart"))
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
-    body = response.json()
-    assert isinstance(body, dict)
-    assert body.get("roots") == [], (
+    assert response.parse(SubchartForest).roots == [], (
         "the admin operator has an org-chart edge — it is supposed to sit outside "
         f"the organisation entirely: {response.text[:300]}"
     )

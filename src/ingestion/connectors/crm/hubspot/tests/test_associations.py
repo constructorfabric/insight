@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from source_hubspot import associations as assoc_mod
-from source_hubspot.associations import AssociationFetcher, _chunked, _parse_association_response
+from source_hubspot.associations import AssociationFetcher, _chunked
 from source_hubspot.constants import BASE_URL
+from source_hubspot.models import AssociationBatch, AssociationResult, AssociationSource, AssociationTarget
 from tests.conftest import FakeHttpClient, FakeResponse
+
+PERSONAL = "person@example.com"
 
 
 def make_fetcher(responses=(), to_types=("companies",)):
@@ -16,8 +20,20 @@ def make_fetcher(responses=(), to_types=("companies",)):
     return fetcher, client
 
 
-def assoc_page(results):
-    return FakeResponse({"status": "COMPLETE", "results": results})
+def assoc_page(links=None):
+    """``links`` maps a from-id to its to-ids."""
+    results = [
+        AssociationResult(
+            source=AssociationSource(id=from_id), to=[AssociationTarget(toObjectId=to_id) for to_id in to_ids]
+        )
+        for from_id, to_ids in (links or {}).items()
+    ]
+    return FakeResponse(AssociationBatch(results=results).model_dump(mode="json", by_alias=True))
+
+
+def fetch(payload):
+    fetcher, _ = make_fetcher(responses=[FakeResponse(payload)])
+    return fetcher._fetch_batch("companies", ["1"])
 
 
 class TestEnrich:
@@ -38,11 +54,7 @@ class TestEnrich:
 
     def test_associations_inlined_per_target(self):
         fetcher, client = make_fetcher(
-            responses=[
-                assoc_page([{"from": {"id": "1"}, "to": [{"toObjectId": 10}, {"toObjectId": 11}]}]),
-                assoc_page([{"from": {"id": "2"}, "to": [{"toObjectId": 20}]}]),
-            ],
-            to_types=("companies", "contacts"),
+            responses=[assoc_page({"1": ["10", "11"]}), assoc_page({"2": ["20"]})], to_types=("companies", "contacts")
         )
         records = [{"id": "1"}, {"id": 2}]
         fetcher.enrich(records)
@@ -57,14 +69,14 @@ class TestEnrich:
 
     def test_batches_split_at_chunk_size(self, monkeypatch):
         monkeypatch.setattr(assoc_mod, "ASSOCIATIONS_BATCH_SIZE", 2)
-        fetcher, client = make_fetcher(responses=[assoc_page([]), assoc_page([])])
+        fetcher, client = make_fetcher(responses=[assoc_page(), assoc_page()])
         fetcher.enrich([{"id": "1"}, {"id": "2"}, {"id": "3"}])
         assert len(client.calls) == 2
         assert client.calls[0]["json"]["inputs"] == [{"id": "1"}, {"id": "2"}]
         assert client.calls[1]["json"]["inputs"] == [{"id": "3"}]
 
     def test_unknown_from_id_in_response_ignored(self):
-        fetcher, _ = make_fetcher(responses=[assoc_page([{"from": {"id": "999"}, "to": [{"toObjectId": 1}]}])])
+        fetcher, _ = make_fetcher(responses=[assoc_page({"999": ["1"]})])
         records = [{"id": "1"}]
         fetcher.enrich(records)
         assert records[0]["associations_companies"] == []
@@ -72,36 +84,39 @@ class TestEnrich:
 
 class TestFetchBatch:
     def test_non_json_response_returns_empty(self, caplog):
-        fetcher, _ = make_fetcher(responses=[FakeResponse(ValueError("not json"), text="<html>")])
+        fetcher, _ = make_fetcher(responses=[FakeResponse(text="<html>")])
         with caplog.at_level(logging.WARNING, logger="airbyte"):
             assert fetcher._fetch_batch("companies", ["1"]) == {}
-        assert "non-JSON" in caplog.text
+        assert "json_invalid" in caplog.text
+
+    @pytest.mark.parametrize("payload", [PERSONAL, None, {"results": {"from": PERSONAL}}])
+    def test_malformed_payload_returns_empty_without_quoting_input(self, caplog, payload):
+        with caplog.at_level(logging.WARNING, logger="airbyte"):
+            assert fetch(payload) == {}, f"should reject: {payload!r}"
+        assert "unexpected payload" in caplog.text
+        assert PERSONAL not in caplog.text
 
 
-class TestParseAssociationResponse:
-    def test_v4_shape(self):
-        payload = {"status": "COMPLETE", "results": [{"from": {"id": "1"}, "to": [{"toObjectId": 456}, {"id": "789"}]}]}
-        assert _parse_association_response(payload) == {"1": ["456", "789"]}
+class TestParseAssociationAnswer:
+    def test_v4_shape_with_numeric_ids(self):
+        payload = {"status": "COMPLETE", "results": [{"from": {"id": 1}, "to": [{"toObjectId": 456}, {"id": "789"}]}]}
+        assert fetch(payload) == {"1": ["456", "789"]}
 
-    def test_non_mapping_payload(self):
-        assert _parse_association_response("nope") == {}
-        assert _parse_association_response(None) == {}
-
-    def test_non_mapping_items_skipped(self):
-        assert _parse_association_response({"results": ["junk", 42]}) == {}
+    def test_malformed_items_skipped(self):
+        assert fetch({"results": ["junk", 42, {"from": "junk"}]}) == {}
 
     def test_missing_from_id_skipped(self):
-        payload = {"results": [{"from": {}, "to": [{"toObjectId": 1}]}]}
-        assert _parse_association_response(payload) == {}
+        assert fetch({"results": [{"from": {}, "to": [{"toObjectId": 1}]}]}) == {}
 
     def test_to_entries_filtered(self):
         payload = {"results": [{"from": {"id": "1"}, "to": ["junk", {"noise": True}, {"toObjectId": 2}]}]}
-        # non-mapping entries skipped; mapping without any id skipped
-        assert _parse_association_response(payload) == {"1": ["2"]}
+        assert fetch(payload) == {"1": ["2"]}
 
     def test_empty_to_list(self):
-        payload = {"results": [{"from": {"id": "1"}}]}
-        assert _parse_association_response(payload) == {"1": []}
+        assert fetch({"results": [{"from": {"id": "1"}}]}) == {"1": []}
+
+    def test_null_results(self):
+        assert fetch({"results": None}) == {}
 
 
 class TestChunked:

@@ -42,12 +42,23 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
-from .errors import PersonaError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from .errors import PersonaError, validation_problems
 from .stand import PUBLISHED_HOST, candidate_env_files, parse_env_file
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
+
+
+class TokenResponse(BaseModel):
+    """The token endpoint's 200 body, as far as this client reads it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    access_token: str = Field(min_length=1)
+
 
 #: RFC 7523 assertion type — the only one the authenticator accepts.
 ASSERTION_TYPE: Final[str] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -292,14 +303,14 @@ class ServiceTokenSession:
                 f"  tenant_id sent: {self.tenant_id!r}"
             )
 
-        body: Any = response.json()
-        token = body.get("access_token") if isinstance(body, dict) else None
-        if not isinstance(token, str) or not token:
+        try:
+            token = TokenResponse.model_validate_json(response.content)
+        except ValidationError as exc:
             raise PersonaError(
-                f"{endpoint} answered 200 with no access_token: {response.text[:300]}"
-            )
+                f"{endpoint} answered 200 with no usable access_token: {validation_problems(exc)}"
+            ) from None
 
-        self._token = token
+        self._token = token.access_token
         self._acquired_at = time.monotonic()
 
     def forget(self) -> None:

@@ -8,8 +8,10 @@ from typing import Any
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import Stream
+from pydantic import ValidationError
 
 from source_bamboohr.client import BambooClient, BambooHrApiError
+from source_bamboohr.parsing import ROWS, malformed
 
 logger = logging.getLogger("airbyte")
 
@@ -49,7 +51,7 @@ class WhosOutStream(Stream):
     ) -> Iterable[Mapping[str, Any]]:
         end = datetime.now(UTC).date().isoformat()
         try:
-            rows = self._client.get(
+            body = self._client.get(
                 "time_off/whos_out", params={"start": self._start_date, "end": end, "filter": "off"}
             )
         except BambooHrApiError as exc:
@@ -61,8 +63,10 @@ class WhosOutStream(Stream):
             )
             return
 
-        if not isinstance(rows, list):
-            raise TypeError(f"BambooHR whos_out response is not a list: {type(rows).__name__}")
+        try:
+            rows = ROWS.validate_json(body)
+        except ValidationError as exc:
+            raise malformed("whos_out response", exc, TypeError) from None
 
         yield {
             "entries_json": json.dumps(rows, separators=(",", ":")),

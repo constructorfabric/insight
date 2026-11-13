@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
+from airbyte_cdk.models import FailureType
+from airbyte_cdk.utils import AirbyteTracedException
 from source_hubspot import envelope as envelope_mod
 from source_hubspot.api import Hubspot
 from source_hubspot.constants import ALLOWED_PROPERTIES_BY_OBJECT
 from source_hubspot.envelope import _truncate, envelope, inject_envelope_properties
+from tests.conftest import assert_no_leak
+
+PERSONAL = "person@example.com"
 
 
 def wrap(record, allowed=frozenset({"amount"}), seen=None):
@@ -61,6 +67,21 @@ class TestEnvelope:
     def test_missing_properties_key_tolerated(self):
         out = wrap({"id": "1"})
         assert out["unique_key"] == "T-S-1"
+
+    def test_null_properties_tolerated(self):
+        out = wrap({"id": "1", "properties": None})
+        assert out["unique_key"] == "T-S-1"
+        assert not [k for k in out if k.startswith("properties_")]
+
+    @pytest.mark.parametrize(
+        "record", [{"id": [PERSONAL]}, {"id": {"email": PERSONAL}}, {"id": "1", "properties": PERSONAL}]
+    )
+    def test_malformed_record_is_system_error_without_input(self, record):
+        with pytest.raises(AirbyteTracedException) as exc_info:
+            wrap(record)
+        error = exc_info.value
+        assert error.failure_type == FailureType.system_error, f"should reject: {record!r}"
+        assert_no_leak(error, PERSONAL)
 
 
 class TestReservedNameCollision:

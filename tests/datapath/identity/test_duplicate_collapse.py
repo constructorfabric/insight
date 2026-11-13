@@ -5,8 +5,6 @@ lead's team holds that person once.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from insight_datapath import clickhouse, records
 from insight_datapath.connector_path import ConnectorPath
@@ -14,6 +12,8 @@ from insight_datapath.instance import InstanceConfig
 from insight_datapath.subjects import Subjects
 from insight_stand.api import ApiClient, identity_path
 from insight_stand.personas import PersonaSession
+
+from stand.api.schemas import PersonAccountsResponse, Subchart, SubchartNode
 
 pytestmark = pytest.mark.fixture
 
@@ -32,12 +32,12 @@ def _holders(cfg: InstanceConfig, *, key: str, member_id: int) -> dict[tuple[str
     return {(str(source), str(account)): str(person) for source, account, person in rows}
 
 
-def _nodes(subtrees: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _nodes(subtrees: list[SubchartNode]) -> list[SubchartNode]:
     """Every node beneath the given ones, at any depth."""
-    found: list[dict[str, Any]] = []
+    found: list[SubchartNode] = []
     for node in subtrees:
         found.append(node)
-        found.extend(_nodes(node["subordinates"]))
+        found.extend(_nodes(node.subordinates))
     return found
 
 
@@ -90,11 +90,9 @@ def test_two_accounts_sharing_an_address_are_one_person(
 
     listing = operator.get(identity_path(f"/v1/resolution/persons/{person}/accounts"))
     assert listing.status_code == 200, f"{listing.status_code} {listing.text[:300]}"
-    body = listing.json()
-    assert isinstance(body, dict), listing.text[:300]
     bound_by_operator = {
-        (str(entry["source"]), str(entry["account_id"])): entry["bound_by_operator"]
-        for entry in body["accounts"]
+        (entry.source, entry.account_id): entry.bound_by_operator
+        for entry in listing.parse(PersonAccountsResponse).accounts
     }
     assert bound_by_operator == {("bamboohr", key): False, ("github", str(member_id)): False}, (
         f"person {person} lists {bound_by_operator!r}, not both accounts as the seed's own decision"
@@ -102,11 +100,9 @@ def test_two_accounts_sharing_an_address_are_one_person(
 
     team = lead.get(identity_path(f"/v1/subchart/{caller_session.person.uuid}"))
     assert team.status_code == 200, f"{team.status_code} {team.text[:300]}"
-    tree = team.json()
-    assert isinstance(tree, dict), team.text[:300]
-    reports = _nodes(tree["root"]["subordinates"])
-    mine = [node for node in reports if str(node["person_id"]) == person]
+    reports = _nodes(team.parse(Subchart).root.subordinates)
+    mine = [node for node in reports if str(node.person_id) == person]
     assert len(mine) == 1, (
         f"the lead's team holds {person} {len(mine)} times among "
-        f"{sorted(str(node['email']) for node in reports)!r}"
+        f"{sorted(str(node.email) for node in reports)!r}"
     )

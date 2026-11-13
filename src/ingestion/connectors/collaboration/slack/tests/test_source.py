@@ -63,8 +63,19 @@ def test_check_rejects_an_empty_required_field(field: str) -> None:
     assert field in message
 
 
-def test_check_rejects_a_malformed_start_date() -> None:
-    ok, message = SourceSlack().check_connection(_LOG, {**CONFIG, "slack_start_date": "01/10/2026"})
+@pytest.mark.parametrize(("field", "value"), [("slack_start_date", "01/10/2026"), ("slack_bot_token", 4242424242)])
+def test_check_names_a_malformed_field_without_quoting_its_value(field: str, value: object) -> None:
+    ok, message = SourceSlack().check_connection(_LOG, {**CONFIG, field: value})
 
     assert not ok
-    assert "YYYY-MM-DD" in message
+    assert field in message
+    assert str(value) not in message, f"should not quote: {value!r}"
+
+
+def test_check_names_a_missing_field() -> None:
+    config = {key: value for key, value in CONFIG.items() if key != "slack_bot_token"}
+
+    ok, message = SourceSlack().check_connection(_LOG, config)
+
+    assert not ok
+    assert "slack_bot_token: missing" in message

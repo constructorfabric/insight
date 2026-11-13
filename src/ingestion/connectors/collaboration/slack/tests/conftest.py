@@ -23,6 +23,7 @@ from airbyte_cdk.test.entrypoint_wrapper import EntrypointOutput, read
 from source_slack import client as client_module
 from source_slack import streams as streams_module
 from source_slack.client import API_URL
+from source_slack.models import Refusal
 from source_slack.source import SourceSlack
 
 TODAY = date(2026, 10, 4)  # today - 2 days = 2026-10-02
@@ -58,7 +59,7 @@ def member_file(day: str) -> dict[str, Any]:
 
 
 def refusal(code: str) -> dict[str, Any]:
-    return {"json": {"ok": False, "error": code}, "status_code": 200}
+    return {"json": Refusal(ok=False, error=code).model_dump(mode="json"), "status_code": 200}
 
 
 def day_url(day: str) -> str:
@@ -86,6 +87,17 @@ def run(
     config: dict[str, Any] | None = None,
 ) -> EntrypointOutput:
     return read(SourceSlack(), config or CONFIG, catalog(), state=state, expecting_exception=expecting_exception)
+
+
+def assert_not_echoed(output: EntrypointOutput, secret: str) -> None:
+    """The value appears in no error message, error stack trace or log line."""
+    texts = [
+        text
+        for error in output.errors
+        for text in (error.trace.error.message, error.trace.error.internal_message, error.trace.error.stack_trace)
+    ]
+    texts += [message.log.message for message in output.logs]
+    assert not [text for text in texts if text and secret in text], f"should not echo {secret!r}"
 
 
 def last_state(output: EntrypointOutput) -> dict[str, Any]:

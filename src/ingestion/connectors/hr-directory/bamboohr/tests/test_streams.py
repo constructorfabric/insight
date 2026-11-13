@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from conftest import SOURCE, TENANT, FakeClient, custom_report, meta_field
 from source_bamboohr.streams.employees import MAX_REPORT_FIELDS, SCHEMA, EmployeesStream
@@ -18,10 +20,7 @@ EMPLOYEE = {
 
 def employees_stream(rows, meta=(), omit=None, declare_columns=True):
     client = FakeClient(
-        {
-            "meta/fields": list(meta),
-            "reports/custom": custom_report(rows, omit=omit, declare_columns=declare_columns),
-        }
+        {"meta/fields": list(meta), "reports/custom": custom_report(rows, omit=omit, declare_columns=declare_columns)}
     )
     return EmployeesStream(client=client, tenant_id=TENANT, source_id=SOURCE), client
 
@@ -60,6 +59,15 @@ class TestEmployeeRecords:
         assert "homePhone" not in record["raw_data"]
         assert record["raw_data"]["customTeam"] == "Platform"
 
+    @pytest.mark.parametrize("deprecated", ["maybe", 1, {"since": "2020"}, ["x"]])
+    def test_a_sensitive_field_with_odd_metadata_is_still_redacted_by_id(self, deprecated):
+        meta = [{"id": 4021, "alias": "ssn", "deprecated": deprecated}]
+        stream, _ = employees_stream([{**EMPLOYEE, "4021": "000-00-0000", "4021.0": "000-00-0000"}], meta=meta)
+        (record,) = read(stream)
+
+        assert "4021" not in record["raw_data"], f"should redact for deprecated={deprecated!r}"
+        assert "4021.0" not in record["raw_data"], f"should redact for deprecated={deprecated!r}"
+
     def test_a_sensitive_field_volunteered_under_its_id_is_not_stored(self):
         # The report returns columns that were never requested, and answers a
         # field asked for by numeric id under an indexed key.
@@ -85,6 +93,14 @@ class TestEmployeeRecords:
     def test_a_row_without_a_usable_id_is_skipped(self, row):
         stream, _ = employees_stream([row])
         assert read(stream) == [], f"should skip: {row!r}"
+
+    def test_a_skipped_row_is_logged_by_field_path_without_its_values(self, caplog):
+        stream, _ = employees_stream([{"id": ["jane.doe@example.com"]}])
+        with caplog.at_level(logging.WARNING, logger="airbyte"):
+            read(stream)
+
+        assert "id: string_type" in caplog.text
+        assert "jane.doe" not in caplog.text
 
 
 class TestEmployeeReportRequest:
@@ -130,12 +146,19 @@ class TestEmployeeReportRequest:
         assert record["raw_data"]["custom0"] == "first"
         assert record["raw_data"][last] == "last", "a later batch's fields must survive the merge"
 
-    def test_a_report_response_without_employees_is_an_error(self):
-        client = FakeClient({"meta/fields": [], "reports/custom": {}})
+    @pytest.mark.parametrize(
+        ("report", "error_type"),
+        [({}, "missing"), ({"employees": "jane.doe@example.com"}, "list_type"), (b"jane.doe@", "json_invalid")],
+    )
+    def test_a_report_response_without_an_employees_list_is_an_error(self, report, error_type):
+        client = FakeClient({"meta/fields": [], "reports/custom": report})
         stream = EmployeesStream(client=client, tenant_id=TENANT, source_id=SOURCE)
 
-        with pytest.raises(RuntimeError, match="employees"):
+        with pytest.raises(RuntimeError) as caught:
             read(stream)
+
+        assert error_type in str(caught.value), f"should name the failure for {report!r}"
+        assert "jane.doe" not in str(caught.value), "the message must not quote the answer"
 
 
 class TestSilentlyOmittedFields:
@@ -187,9 +210,7 @@ class TestSilentlyOmittedFields:
 class TestLeaveRequests:
     def test_the_window_starts_at_the_configured_date(self):
         client = FakeClient({"time_off/requests": []})
-        stream = LeaveRequestsStream(
-            client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2024-01-01"
-        )
+        stream = LeaveRequestsStream(client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2024-01-01")
         read(stream)
 
         (_, _, params) = client.calls[-1]
@@ -198,31 +219,34 @@ class TestLeaveRequests:
 
     def test_the_record_keeps_the_api_payload_and_adds_the_framework_fields(self):
         client = FakeClient({"time_off/requests": [{"id": "7", "status": {"status": "approved"}}]})
-        stream = LeaveRequestsStream(
-            client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01"
-        )
+        stream = LeaveRequestsStream(client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01")
         (record,) = read(stream)
 
         assert record["status"] == {"status": "approved"}
         assert record["unique_key"] == f"{TENANT}-{SOURCE}-7"
         assert (record["tenant_id"], record["source_id"]) == (TENANT, SOURCE)
 
-
     @pytest.mark.parametrize("row", [{"id": None}, {"id": ""}, {}, "nonsense"])
     def test_a_request_without_a_usable_id_is_skipped(self, row):
         client = FakeClient({"time_off/requests": [row]})
-        stream = LeaveRequestsStream(
-            client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01"
-        )
+        stream = LeaveRequestsStream(client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01")
         assert read(stream) == [], f"should skip: {row!r}"
 
-    def test_a_response_that_is_not_a_list_is_an_error(self):
-        client = FakeClient({"time_off/requests": {"requests": []}})
-        stream = LeaveRequestsStream(
-            client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01"
-        )
-        with pytest.raises(RuntimeError, match="not a list"):
+    def test_a_response_that_is_not_a_list_is_an_error_that_does_not_quote_it(self):
+        client = FakeClient({"time_off/requests": {"requests": "jane.doe@example.com"}})
+        stream = LeaveRequestsStream(client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01")
+        with pytest.raises(RuntimeError, match="list_type") as caught:
             read(stream)
+
+        assert "jane.doe" not in str(caught.value)
+
+    def test_a_numeric_id_keys_the_record_and_stays_raw(self):
+        client = FakeClient({"time_off/requests": [{"id": 7}]})
+        stream = LeaveRequestsStream(client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01")
+        (record,) = read(stream)
+
+        assert record["unique_key"] == f"{TENANT}-{SOURCE}-7"
+        assert record["id"] == 7
 
 
 class TestMetaFields:
@@ -235,7 +259,7 @@ class TestMetaFields:
     def test_a_response_that_is_not_a_list_is_an_error(self):
         client = FakeClient({"meta/fields": {"fields": []}})
         stream = MetaFieldsStream(client=client, tenant_id=TENANT, source_id=SOURCE)
-        with pytest.raises(RuntimeError, match="not a list"):
+        with pytest.raises(RuntimeError, match="list_type"):
             read(stream)
 
     def test_an_active_field_keys_on_its_id(self):
@@ -246,10 +270,16 @@ class TestMetaFields:
         assert record["unique"] == "9"
         assert record["unique_key"] == f"{TENANT}-{SOURCE}-9"
 
+    @pytest.mark.parametrize(("deprecated", "unique"), [("false", "d9"), ("", "9"), (0, "9"), ([1], "d9")])
+    def test_deprecation_is_read_by_truthiness(self, deprecated, unique):
+        client = FakeClient({"meta/fields": [{"id": 9, "deprecated": deprecated}]})
+        stream = MetaFieldsStream(client=client, tenant_id=TENANT, source_id=SOURCE)
+        (record,) = read(stream)
+
+        assert record["unique"] == unique, f"deprecated={deprecated!r}"
+
     def test_a_deprecated_field_keys_apart_from_the_active_one(self):
-        client = FakeClient(
-            {"meta/fields": [meta_field(9, alias="jobTitle"), meta_field(9, deprecated=True)]}
-        )
+        client = FakeClient({"meta/fields": [meta_field(9, alias="jobTitle"), meta_field(9, deprecated=True)]})
         stream = MetaFieldsStream(client=client, tenant_id=TENANT, source_id=SOURCE)
         active, deprecated = read(stream)
 

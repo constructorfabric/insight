@@ -15,15 +15,16 @@ and really carries the authority the roster says they have.
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .api import ApiClient
-from .errors import PersonaError
+from .errors import PersonaError, validation_problems
 from .manifest import Manifest, Person
 from .session import LoginSession
 
@@ -85,7 +86,31 @@ def realm_export_path() -> Path:
     return Path(override) if override else REALM_EXPORT_PATH
 
 
-def _load_realm(path: Path | None = None) -> dict[str, Any] | None:
+class RealmCredential(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    type: str | None = None
+    value: str | None = None
+
+
+class RealmUser(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    username: str | None = None
+    email: str | None = None
+    credentials: tuple[RealmCredential, ...] = ()
+    realm_roles: tuple[str, ...] = Field(default=(), alias="realmRoles")
+
+
+class RealmExport(BaseModel):
+    """The slice of a Keycloak realm export this module reads: its users."""
+
+    model_config = ConfigDict(frozen=True)
+
+    users: tuple[RealmUser, ...] = ()
+
+
+def _load_realm(path: Path | None = None) -> RealmExport | None:
     """The stand's realm export, or None when it is not on disk.
 
     Absence is not an error here: a stand reached over the network has no local
@@ -97,20 +122,17 @@ def _load_realm(path: Path | None = None) -> dict[str, Any] | None:
     except OSError:
         return None
     try:
-        doc = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise PersonaError(f"{target} is not valid JSON: {exc}") from exc
-    return doc if isinstance(doc, dict) else None
+        return RealmExport.model_validate_json(raw)
+    except ValidationError as exc:
+        raise PersonaError(f"{target} is not a realm export: {validation_problems(exc)}") from None
 
 
-def _realm_user(email: str, realm: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _realm_user(email: str, realm: RealmExport) -> RealmUser | None:
     wanted = email.strip().lower()
-    for user in realm.get("users", []):
-        if not isinstance(user, Mapping):
-            continue
-        if str(user.get("username", "")).strip().lower() == wanted:
+    for user in realm.users:
+        if (user.username or "").strip().lower() == wanted:
             return user
-        if str(user.get("email", "")).strip().lower() == wanted:
+        if (user.email or "").strip().lower() == wanted:
             return user
     return None
 
@@ -144,11 +166,9 @@ def persona_password(email: str, *, realm_path: Path | None = None) -> str:
     user = _realm_user(email, realm)
     if user is None:
         raise PersonaError(f"{email!r} is not a user in {realm_path or realm_export_path()}")
-    for credential in user.get("credentials", []):
-        if isinstance(credential, Mapping) and credential.get("type") == "password":
-            value = str(credential.get("value") or "")
-            if value:
-                return value
+    for credential in user.credentials:
+        if credential.type == "password" and credential.value:
+            return credential.value
     raise PersonaError(
         f"{email!r} has no password credential in {realm_path or realm_export_path()}; "
         f"export {PASSWORD_ENV} instead"
@@ -200,7 +220,7 @@ def verify_realm_roles(person: Person, *, realm_path: Path | None = None) -> Non
             f"{person.email!r} is in the manifest but not in the realm "
             f"{realm_path or REALM_EXPORT_PATH} — the stand cannot log them in"
         )
-    granted = {str(role) for role in user.get("realmRoles", [])}
+    granted = set(user.realm_roles)
     if granted != expected:
         raise PersonaError(
             f"{person.email!r} ({person.role}) is granted {sorted(granted)} by the realm, "

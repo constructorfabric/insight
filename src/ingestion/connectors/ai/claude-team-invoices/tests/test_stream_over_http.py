@@ -19,16 +19,29 @@ import pytest
 import requests_mock as rm_module
 from source_claude_team_invoices import streams as streams_module
 from source_claude_team_invoices import stripe_chain as chain_module
+from source_claude_team_invoices.models import (
+    Bootstrap,
+    ConnectorConfig,
+    EnrichedInvoice,
+    Invoice,
+    InvoiceLine,
+    InvoicePage,
+    LinePage,
+    LineParent,
+    LinePeriod,
+    StreamState,
+    SubscriptionItemDetails,
+)
 from source_claude_team_invoices.streams import BOOTSTRAP_HOST, STRIPE_API, STRIPE_VERSION, InvoiceLines
 from source_claude_team_invoices.stripe_chain import line_projection_id
 
-CONFIG = {
-    "proxy_url": "https://proxy.example/",
-    "proxy_auth_token": "proxy-token",
-    "claude_org_id": "org_EXAMPLE",
-    "insight_tenant_id": "11111111-1111-1111-1111-111111111111",
-    "insight_source_id": "claude-team-invoices-1",
-}
+CONFIG = ConnectorConfig(
+    proxy_url="https://proxy.example/",
+    proxy_auth_token="proxy-token",
+    claude_org_id="org_EXAMPLE",
+    insight_tenant_id="11111111-1111-1111-1111-111111111111",
+    insight_source_id="claude-team-invoices-1",
+)
 
 ACCT = "acct_1EXAMPLE"
 # base64 of `acct_1EXAMPLE,_entEXAMPLE,<rotating>` — the shape the vendor emits, so
@@ -38,42 +51,55 @@ TOKEN = "live_" + base64.urlsafe_b64encode(_PAYLOAD.encode()).decode().rstrip("=
 INVOICE_ID = "in_1EXAMPLE"
 EPHEMERAL_KEY = "ek_live_EXAMPLESECRET"
 
-INVOICES_URL = f"https://proxy.example/api/stripe/{CONFIG['claude_org_id']}/invoices"
+INVOICES_URL = f"https://proxy.example/api/stripe/{CONFIG.claude_org_id}/invoices"
 BOOTSTRAP_URL = f"{BOOTSTRAP_HOST}/hosted_invoice_page/{ACCT}/{TOKEN}"
 LINES_URL = f"{STRIPE_API}/invoices/{INVOICE_ID}/lines"
 
 
-def wrapper_invoice(**over: Any) -> dict[str, Any]:
+def wrapper_invoice(**over: Any) -> Invoice:
     """One row as the claude.ai wrapper reports it: money, no id, no lines."""
-    base = {
-        "hosted_invoice_url": f"https://invoice.stripe.com/i/{ACCT}/{TOKEN}?s=ap",
-        "status": "paid",
-        "created_ts": 1785456000,
-        "currency": "usd",
-        "total": 3300,
-        "total_excluding_tax": 3000,
-        "num_seats": 3,
-        "payment_intent": "pi_EXAMPLE",
-    }
-    base.update(over)
-    return base
+    paid = Invoice(
+        hosted_invoice_url=f"https://invoice.stripe.com/i/{ACCT}/{TOKEN}?s=ap",
+        status="paid",
+        created_ts=1785456000,
+        currency="usd",
+        total=3300,
+        total_excluding_tax=3000,
+        num_seats=3,
+        payment_intent="pi_EXAMPLE",
+    )
+    return paid.model_copy(update=over)
 
 
-def subscription_line(line_id: str = "il_standard", **over: Any) -> dict[str, Any]:
-    base = {
-        "id": line_id,
-        "description": "3 x Example plan - Standard (at $10.00 / month)",
-        "amount": 3000,
-        "currency": "usd",
-        "quantity": 3,
-        "hosted_invoice_unit_amount": 1000,
-        "hosted_invoice_product_name": "Example plan - Standard",
-        "hosted_invoice_tier_label": "Standard",
-        "parent": {"subscription_item_details": {"proration": False}},
-        "period": {"start": 1785542400, "end": 1788220800},
-    }
-    base.update(over)
-    return base
+def subscription_line(line_id: str = "il_standard") -> InvoiceLine:
+    return InvoiceLine(
+        id=line_id,
+        description="3 x Example plan - Standard (at $10.00 / month)",
+        amount=3000,
+        currency="usd",
+        quantity=3,
+        hosted_invoice_unit_amount=1000,
+        hosted_invoice_product_name="Example plan - Standard",
+        hosted_invoice_tier_label="Standard",
+        parent=LineParent(subscription_item_details=SubscriptionItemDetails(proration=False)),
+        period=LinePeriod(start=1785542400, end=1788220800),
+    )
+
+
+def listing(*invoices: Invoice) -> dict[str, Any]:
+    return InvoicePage(invoices=list(invoices)).model_dump(mode="json")
+
+
+def line_page(*lines: InvoiceLine, has_more: bool = False) -> dict[str, Any]:
+    return LinePage(data=list(lines), has_more=has_more).model_dump(mode="json")
+
+
+BOOTSTRAP = Bootstrap(invoice_id=INVOICE_ID, ephemeral_key=EPHEMERAL_KEY).model_dump(mode="json")
+
+
+def state_of(enriched: dict[str, EnrichedInvoice], projection: str | None) -> dict[str, Any]:
+    entries = {identity: entry.model_dump(mode="json") for identity, entry in enriched.items()}
+    return StreamState(enriched=entries, line_projection=projection).model_dump(mode="json")
 
 
 @pytest.fixture
@@ -91,16 +117,13 @@ def register_chain(
     http: rm_module.Mocker, lines_pages: Sequence[Mapping[str, Any]], bootstrap: Mapping[str, Any] | None = None
 ) -> None:
     """Answer all three hops: the wrapper list, the bootstrap, the line pages."""
-    http.get(INVOICES_URL, json={"invoices": [wrapper_invoice()], "next_page": None})
-    http.get(
-        BOOTSTRAP_URL,
-        json=bootstrap if bootstrap is not None else {"invoice_id": INVOICE_ID, "ephemeral_key": EPHEMERAL_KEY},
-    )
+    http.get(INVOICES_URL, json=listing(wrapper_invoice()))
+    http.get(BOOTSTRAP_URL, json=bootstrap if bootstrap is not None else BOOTSTRAP)
     http.get(LINES_URL, [{"json": page} for page in lines_pages])
 
 
 def test_the_chain_yields_the_invoice_row_and_one_record_per_line(stream: InvoiceLines, http: rm_module.Mocker) -> None:
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    register_chain(http, [line_page(subscription_line())])
 
     records = list(stream.read_records(sync_mode="full_refresh"))
 
@@ -113,20 +136,20 @@ def test_the_chain_yields_the_invoice_row_and_one_record_per_line(stream: Invoic
     assert line["invoice_total_excluding_tax"] is None, "the invoice's money is on its own row"
     # The framework fields every bronze row carries (ADR-0004).
     for record in records:
-        assert record["tenant_id"] == CONFIG["insight_tenant_id"]
-        assert record["source_id"] == CONFIG["insight_source_id"]
+        assert record["tenant_id"] == CONFIG.insight_tenant_id
+        assert record["source_id"] == CONFIG.insight_source_id
         assert record["data_source"] == "insight_claude_team"
-        assert record["unique_key"].startswith(f"{CONFIG['insight_tenant_id']}-{CONFIG['insight_source_id']}-")
+        assert record["unique_key"].startswith(f"{CONFIG.insight_tenant_id}-{CONFIG.insight_source_id}-")
     assert own["unique_key"] != line["unique_key"]
 
 
 def test_each_hop_carries_the_credential_that_authorises_it(stream: InvoiceLines, http: rm_module.Mocker) -> None:
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    register_chain(http, [line_page(subscription_line())])
 
     list(stream.read_records(sync_mode="full_refresh"))
 
     by_host = {request.url.split("/")[2]: request for request in http.request_history}
-    assert by_host["proxy.example"].headers["Authorization"] == f"Bearer {CONFIG['proxy_auth_token']}"
+    assert by_host["proxy.example"].headers["Authorization"] == f"Bearer {CONFIG.proxy_auth_token}"
     # The bootstrap hop is the one the hosted URL's token authorises, so it
     # carries no header of its own.
     assert "Authorization" not in by_host["invoicedata.stripe.com"].headers
@@ -140,11 +163,7 @@ def test_line_pages_are_walked_until_the_endpoint_stops_offering_more(
     stream: InvoiceLines, http: rm_module.Mocker
 ) -> None:
     register_chain(
-        http,
-        [
-            {"data": [subscription_line("il_first")], "has_more": True},
-            {"data": [subscription_line("il_second")], "has_more": False},
-        ],
+        http, [line_page(subscription_line("il_first"), has_more=True), line_page(subscription_line("il_second"))]
     )
 
     records = list(stream.read_records(sync_mode="full_refresh"))
@@ -164,9 +183,9 @@ def test_the_chain_is_paced_between_invoices_but_not_before_the_first(
     monkeypatch.setattr(streams_module.time, "sleep", slept.append)
 
     second = wrapper_invoice(payment_intent="pi_SECOND")
-    http.get(INVOICES_URL, json={"invoices": [wrapper_invoice(), second], "next_page": None})
-    http.get(BOOTSTRAP_URL, json={"invoice_id": INVOICE_ID, "ephemeral_key": EPHEMERAL_KEY})
-    http.get(LINES_URL, json={"data": [subscription_line()], "has_more": False})
+    http.get(INVOICES_URL, json=listing(wrapper_invoice(), second))
+    http.get(BOOTSTRAP_URL, json=BOOTSTRAP)
+    http.get(LINES_URL, json=line_page(subscription_line()))
 
     list(stream.read_records(sync_mode="full_refresh"))
 
@@ -194,7 +213,7 @@ def test_the_ephemeral_key_reaches_neither_a_record_nor_a_log_line(
     Only what the connector itself logs counts — `requests_mock` echoes every
     request URL at DEBUG, and asserting over that would test the mock.
     """
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    register_chain(http, [line_page(subscription_line())])
 
     with caplog.at_level(logging.DEBUG):
         records = list(stream.read_records(sync_mode="full_refresh"))
@@ -209,7 +228,7 @@ def test_a_sync_remembers_what_the_chain_found_so_the_next_one_can_skip_it(
     stream: InvoiceLines, http: rm_module.Mocker
 ) -> None:
     """State is an index into bronze: the invoice id is the key its rows carry."""
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    register_chain(http, [line_page(subscription_line())])
 
     list(stream.read_records(sync_mode="incremental"))
 
@@ -220,15 +239,13 @@ def test_a_sync_remembers_what_the_chain_found_so_the_next_one_can_skip_it(
 
 def test_a_remembered_invoice_costs_no_stripe_request(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     """The saving, asserted by request count rather than by how long a run took."""
-    stream.state = {
-        "enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID, "period_start_ts": 1, "period_end_ts": 2}},
-        "line_projection": line_projection_id(),
-    }
-    listing = http.get(INVOICES_URL, json={"invoices": [wrapper_invoice()], "next_page": None})
+    known = EnrichedInvoice(invoice_id=INVOICE_ID, period_start_ts=1, period_end_ts=2)
+    stream.state = state_of({f"{ACCT},_entEXAMPLE": known}, line_projection_id())
+    invoices = http.get(INVOICES_URL, json=listing(wrapper_invoice()))
 
     records = list(stream.read_records(sync_mode="incremental"))
 
-    assert listing.call_count == 1, "the listing is still read in full"
+    assert invoices.call_count == 1, "the listing is still read in full"
     stripe_calls = [r for r in http.request_history if r.netloc != "proxy.example"]
     assert stripe_calls == [], "neither the bootstrap nor the line hop was issued"
     assert [r["chain_status"] for r in records] == ["ok"], "its own row, and no line rows"
@@ -243,10 +260,9 @@ def test_a_state_from_a_narrower_line_row_chains_again(
     Its index says these invoices need no chain, and only a chain emits a line
     row — so honouring it would leave every column added since empty for good.
     """
-    stream.state = {
-        "enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID, "period_start_ts": 1, "period_end_ts": 2}}
-    }
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    known = EnrichedInvoice(invoice_id=INVOICE_ID, period_start_ts=1, period_end_ts=2)
+    stream.state = state_of({f"{ACCT},_entEXAMPLE": known}, None)
+    register_chain(http, [line_page(subscription_line())])
 
     with caplog.at_level(logging.INFO):
         records = list(stream.read_records(sync_mode="incremental"))
@@ -258,8 +274,8 @@ def test_a_state_from_a_narrower_line_row_chains_again(
 
 def test_the_extra_pass_happens_once_and_not_on_every_later_sync(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     """The state a re-chain writes has to carry the marker, or the pass repeats forever."""
-    stream.state = {"enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID}}}
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    stream.state = state_of({f"{ACCT},_entEXAMPLE": EnrichedInvoice(invoice_id=INVOICE_ID)}, None)
+    register_chain(http, [line_page(subscription_line())])
     list(stream.read_records(sync_mode="incremental"))
     carried = stream.state
 
@@ -285,7 +301,7 @@ def test_the_marker_follows_the_line_fields_rather_than_a_hand_written_number(mo
 def test_an_empty_state_chains_everything(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     """The first sync after a deploy carries nothing, so it behaves as before."""
     assert stream.state == {"enriched": {}, "line_projection": line_projection_id()}
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    register_chain(http, [line_page(subscription_line())])
 
     records = list(stream.read_records(sync_mode="incremental"))
 
@@ -297,7 +313,7 @@ def test_a_failed_chain_is_not_remembered_and_is_tried_again(
     stream: InvoiceLines, http: rm_module.Mocker, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Otherwise a transient failure would freeze that invoice unenriched."""
-    http.get(INVOICES_URL, json={"invoices": [wrapper_invoice()], "next_page": None})
+    http.get(INVOICES_URL, json=listing(wrapper_invoice()))
     http.get(BOOTSTRAP_URL, status_code=502)
 
     with caplog.at_level(logging.WARNING):
@@ -309,7 +325,7 @@ def test_a_failed_chain_is_not_remembered_and_is_tried_again(
 
 def test_state_carries_no_credential(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     """It rides the same wire as a record, so the same rule applies to it."""
-    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    register_chain(http, [line_page(subscription_line())])
 
     list(stream.read_records(sync_mode="incremental"))
 
@@ -323,10 +339,79 @@ def test_what_a_run_learns_does_not_change_what_that_run_chains(stream: InvoiceL
     invoice would be skipped because an earlier record in the same run had just
     enriched it — letting a run's own output decide its own behaviour."""
     two = [wrapper_invoice(), wrapper_invoice(payment_intent="pi_2")]
-    http.get(INVOICES_URL, json={"invoices": two, "next_page": None})
-    bootstrap = http.get(BOOTSTRAP_URL, json={"invoice_id": INVOICE_ID, "ephemeral_key": EPHEMERAL_KEY})
-    http.get(LINES_URL, json={"data": [subscription_line()], "has_more": False})
+    http.get(INVOICES_URL, json=listing(*two))
+    bootstrap = http.get(BOOTSTRAP_URL, json=BOOTSTRAP)
+    http.get(LINES_URL, json=line_page(subscription_line()))
 
     list(stream.read_records(sync_mode="incremental"))
 
     assert bootstrap.call_count == 2, "both were chained; neither was skipped by the other"
+
+
+def test_a_listing_of_the_wrong_shape_fails_the_run_naming_the_field_not_its_value(
+    stream: InvoiceLines, http: rm_module.Mocker
+) -> None:
+    http.get(INVOICES_URL, json={"invoices": [{"hosted_invoice_url": {"href": "secret-url"}}]})
+
+    with pytest.raises(RuntimeError) as raised:
+        list(stream.read_records(sync_mode="full_refresh"))
+
+    assert "invoices.0.hosted_invoice_url: string_type" in str(raised.value)
+    assert "secret-url" not in str(raised.value)
+
+
+def test_a_copied_field_of_an_unexpected_type_reaches_bronze_as_sent(
+    stream: InvoiceLines, http: rm_module.Mocker
+) -> None:
+    """The connector decides nothing on these fields, so their type is not its to judge."""
+    total = {"value": 3300, "unit": "cents"}
+    quantity = "3"
+    register_chain(http, [line_page(subscription_line().model_copy(update={"quantity": quantity}))])
+    http.get(INVOICES_URL, json=listing(wrapper_invoice(total=total)))
+
+    own, line = list(stream.read_records(sync_mode="full_refresh"))
+
+    assert (own["chain_status"], line["chain_status"]) == ("ok", "ok")
+    assert own["invoice_total"] == total
+    assert line["quantity"] == quantity
+
+
+def test_a_line_page_of_the_wrong_shape_leaves_a_gap_naming_the_field(
+    stream: InvoiceLines, http: rm_module.Mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    register_chain(http, [{"data": [{"id": "il_1", "period": {"start": "secret-start"}}], "has_more": False}])
+
+    with caplog.at_level(logging.WARNING):
+        records = list(stream.read_records(sync_mode="full_refresh"))
+
+    assert [r["chain_status"] for r in records] == ["failed"]
+    assert "line page answered an unexpected shape: data.0.period.start" in caplog.text
+    assert "secret-start" not in caplog.text
+
+
+def test_a_state_of_the_wrong_shape_chains_everything_again(
+    stream: InvoiceLines, http: rm_module.Mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Skipping on an index it cannot read would leave invoices unpriced for good."""
+    stream.state = {"enriched": [f"{ACCT},_entEXAMPLE"], "line_projection": line_projection_id()}
+    register_chain(http, [line_page(subscription_line())])
+
+    with caplog.at_level(logging.WARNING):
+        records = list(stream.read_records(sync_mode="incremental"))
+
+    assert len(records) == 2, "its own row and its line row"
+    assert "ignoring a stream state of unexpected shape (enriched: dict_type)" in caplog.text
+
+
+def test_an_unreadable_state_entry_costs_that_invoice_one_chain_and_keeps_the_others(
+    stream: InvoiceLines, caplog: pytest.LogCaptureFixture
+) -> None:
+    kept = EnrichedInvoice(invoice_id=INVOICE_ID, period_start_ts=1, period_end_ts=2)
+    state = state_of({"acct_1OTHER,_entOTHER": kept}, line_projection_id())
+    state["enriched"][f"{ACCT},_entEXAMPLE"] = {"period_start_ts": 1}
+
+    with caplog.at_level(logging.WARNING):
+        stream.state = state
+
+    assert stream.state["enriched"] == {"acct_1OTHER,_entOTHER": kept.model_dump(mode="json")}
+    assert "its state entry is unreadable (invoice_id: missing)" in caplog.text

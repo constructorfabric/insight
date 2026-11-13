@@ -7,16 +7,17 @@ from collections.abc import Mapping
 import pytest
 from ldap3.core.exceptions import LDAPBindError, LDAPSocketOpenError
 from source_active_directory import ldap_client
+from source_active_directory.config import ActiveDirectoryConfig
 from source_active_directory.source import SourceActiveDirectory
 
-CONFIG = {
-    "insight_tenant_id": "0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f",
-    "insight_source_id": "active-directory-example",
-    "ad_server_host": "dc1.example.test",
-    "ad_bind_dn": "CN=reader,DC=example,DC=test",
-    "ad_bind_password": "synthetic",
-    "ad_search_base": "DC=example,DC=test",
-}
+CONFIG = ActiveDirectoryConfig(
+    insight_tenant_id="0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f",
+    insight_source_id="active-directory-example",
+    ad_server_host="dc1.example.test",
+    ad_bind_dn="CN=reader,DC=example,DC=test",
+    ad_bind_password="synthetic",
+    ad_search_base="DC=example,DC=test",
+).model_dump(mode="json", exclude_unset=True)
 
 
 class FakeConnection:
@@ -55,6 +56,42 @@ def test_a_missing_identity_field_is_refused_before_any_bind(monkeypatch: pytest
 
     assert ok is False
     assert field in str(reason)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field", "error_type"),
+    [
+        ({"ad_page_size": "secret-page-size"}, "ad_page_size", "int_parsing"),
+        ({"ad_bind_password": None}, "ad_bind_password", "string_type"),
+        ({"ad_use_ssl": "secret-switch"}, "ad_use_ssl", "value_error"),
+    ],
+    ids=["wrong type", "null", "unreadable switch"],
+)
+def test_a_malformed_config_is_refused_without_quoting_it(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, object], field: str, error_type: str
+) -> None:
+    ok, reason = _check(monkeypatch, AssertionError("must not bind"), {**CONFIG, **overrides})
+
+    assert ok is False
+    assert f"{field}: {error_type}" in str(reason)
+    assert "secret" not in str(reason), "the input value must not reach the message"
+
+
+def test_a_config_without_a_password_is_refused_before_any_bind(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = {k: v for k, v in CONFIG.items() if k != "ad_bind_password"}
+
+    ok, reason = _check(monkeypatch, AssertionError("must not bind"), config)
+
+    assert ok is False
+    assert "ad_bind_password: missing" in str(reason)
+
+
+def test_a_read_with_a_malformed_config_fails_without_quoting_it() -> None:
+    with pytest.raises(ValueError, match="ad_page_size: int_parsing") as caught:
+        SourceActiveDirectory().streams({**CONFIG, "ad_page_size": "secret-page-size"})
+
+    assert "secret" not in str(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
 
 
 def test_a_readable_search_base_passes(monkeypatch: pytest.MonkeyPatch) -> None:

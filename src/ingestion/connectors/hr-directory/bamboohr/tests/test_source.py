@@ -3,16 +3,14 @@ from __future__ import annotations
 import logging
 
 import pytest
-from conftest import FakeClient
+from airbyte_cdk.models import FailureType
+from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from conftest import FakeClient, config
 from source_bamboohr.client import BambooHrAuthError
+from source_bamboohr.config import REMEDIES
 from source_bamboohr.source import SourceBamboohr
 
-CONFIG = {
-    "insight_tenant_id": "T",
-    "insight_source_id": "S",
-    "bamboohr_api_key": "key",
-    "bamboohr_domain": "acme",
-}
+CONFIG = config()
 
 logger = logging.getLogger("test")
 
@@ -31,16 +29,20 @@ class TestCheckConnection:
     @pytest.mark.parametrize("value", ["", "   ", None], ids=["empty", "blank", "missing"])
     def test_a_blank_required_field_fails_before_any_request(self, field, value, probe):
         probe(FakeClient({}))
-        config = {**CONFIG, field: value}
-
-        ok, message = SourceBamboohr().check_connection(logger, config)
+        ok, message = SourceBamboohr().check_connection(logger, {**CONFIG, field: value})
         assert not ok, f"should reject {field}={value!r}"
-        assert field in message
+        assert message == REMEDIES[field]
+
+    def test_a_field_of_the_wrong_type_is_rejected_without_quoting_it(self, probe):
+        probe(FakeClient({}))
+
+        ok, message = SourceBamboohr().check_connection(logger, {**CONFIG, "bamboohr_start_date": ["s3cret"]})
+        assert not ok
+        assert "bamboohr_start_date" in message
+        assert "s3cret" not in message
 
     def test_a_domain_that_is_not_a_subdomain_is_rejected_by_name(self, monkeypatch):
-        ok, message = SourceBamboohr().check_connection(
-            logger, {**CONFIG, "bamboohr_domain": "evil.example.com"}
-        )
+        ok, message = SourceBamboohr().check_connection(logger, {**CONFIG, "bamboohr_domain": "evil.example.com"})
         assert not ok
         assert "bamboohr_domain" in message
 
@@ -55,12 +57,33 @@ class TestCheckConnection:
         assert not ok
         assert "rejected" in message
 
+    def test_an_answer_that_is_not_json_fails_the_check(self, probe):
+        probe(FakeClient({"meta/fields": b"<html>login</html>"}))
+
+        ok, message = SourceBamboohr().check_connection(logger, CONFIG)
+        assert not ok
+        assert "json_invalid" in message
+
     def test_an_unreachable_host_is_reported(self, probe):
         probe(FakeClient({"meta/fields": OSError("name resolution failed")}))
 
         ok, message = SourceBamboohr().check_connection(logger, CONFIG)
         assert not ok
         assert "acme" in message
+
+
+class TestStreamsConfig:
+    @pytest.mark.parametrize("field", sorted(REMEDIES))
+    @pytest.mark.parametrize("value", ["", "   ", None], ids=["empty", "blank", "missing"])
+    def test_a_blank_required_field_is_a_config_error(self, field, value, probe):
+        probe(FakeClient({}))
+
+        with pytest.raises(AirbyteTracedException) as caught:
+            SourceBamboohr().streams({**CONFIG, field: value})
+
+        assert caught.value.failure_type == FailureType.config_error
+        assert caught.value.message == REMEDIES[field]
+        assert caught.value.__cause__ is None
 
 
 class TestWiring:

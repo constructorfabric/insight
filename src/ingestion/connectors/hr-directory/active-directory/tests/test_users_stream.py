@@ -9,12 +9,21 @@ import pytest
 from airbyte_cdk.models import SyncMode
 from ldap3.core.exceptions import LDAPSocketOpenError
 from source_active_directory import ldap_client
+from source_active_directory.config import ActiveDirectoryConfig
 from source_active_directory.streams.users import ActiveDirectoryUsersStream
 
 TENANT = "0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f"
 SOURCE = "active-directory-example"
 GUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
-CONFIG = {"ad_search_base": "DC=example,DC=test", "ad_page_size": "50"}
+CONFIG = ActiveDirectoryConfig(
+    insight_tenant_id=TENANT,
+    insight_source_id=SOURCE,
+    ad_server_host="dc1.example.test",
+    ad_bind_dn="CN=reader,DC=example,DC=test",
+    ad_bind_password="synthetic",
+    ad_search_base="DC=example,DC=test",
+    ad_page_size=50,
+)
 
 
 def _entry(**attributes: object) -> dict[str, object]:
@@ -38,7 +47,7 @@ def _entry(**attributes: object) -> dict[str, object]:
 
 
 def _stream() -> ActiveDirectoryUsersStream:
-    return ActiveDirectoryUsersStream(config=CONFIG, tenant_id=TENANT, source_id=SOURCE)
+    return ActiveDirectoryUsersStream(config=CONFIG)
 
 
 def test_a_user_maps_to_the_shared_directory_shape() -> None:

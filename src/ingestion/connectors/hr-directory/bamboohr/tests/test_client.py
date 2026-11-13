@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from email.utils import formatdate
 
@@ -13,15 +14,10 @@ BASE = "https://acme.bamboohr.com/api/v1/"
 class Response:
     def __init__(self, status_code=200, body=None, headers=None, text=""):
         self.status_code = status_code
-        self._body = body
+        self.content = json.dumps(body).encode()
         self.headers = headers or {}
         self.url = BASE + "meta/fields"
         self.text = text
-
-    def json(self):
-        if isinstance(self._body, Exception):
-            raise self._body
-        return self._body
 
 
 class FakeSession:
@@ -97,22 +93,17 @@ class TestRequests:
         client.get("meta/fields")
         assert client._session.calls[0]["timeout"] == (10, 120)
 
-    def test_a_response_that_is_not_json_is_an_error(self, slept):
-        client = make_client([Response(200, body=ValueError("boom"))])
-        with pytest.raises(RuntimeError, match="invalid JSON"):
-            client.get("meta/fields")
-
 
 class TestRetries:
     @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
     def test_a_transient_status_is_retried(self, status, slept):
         client = make_client([Response(status), Response(200, body=[])])
-        assert client.get("meta/fields") == []
+        assert client.get("meta/fields") == b"[]"
         assert len(client._session.calls) == 2
 
     def test_a_transport_failure_is_retried(self, slept):
         client = make_client([requests.ConnectionError("reset"), Response(200, body=[])])
-        assert client.get("meta/fields") == []
+        assert client.get("meta/fields") == b"[]"
 
     def test_retries_are_given_up_and_the_last_status_raised(self, slept):
         client = make_client([Response(503, text="busy")] * 6)
@@ -166,10 +157,7 @@ class TestRejections:
 
         assert len(client._session.calls) == 1
 
-    @pytest.mark.parametrize(
-        ("status", "expected"),
-        [(401, "invalid, expired, or revoked"), (403, "lacks permission")],
-    )
+    @pytest.mark.parametrize(("status", "expected"), [(401, "invalid, expired, or revoked"), (403, "lacks permission")])
     def test_the_failure_names_what_to_fix(self, status, expected, slept):
         client = make_client([Response(status)])
         with pytest.raises(BambooHrAuthError, match=expected):

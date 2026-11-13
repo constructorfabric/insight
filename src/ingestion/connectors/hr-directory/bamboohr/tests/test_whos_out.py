@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 from airbyte_cdk.models import ConfiguredAirbyteCatalog, ConfiguredAirbyteStream, DestinationSyncMode, SyncMode, Type
-from conftest import SOURCE, TENANT, FakeClient
+from conftest import SOURCE, TENANT, FakeClient, config
 from jsonschema import validate
 from source_bamboohr.client import BambooHrApiError, BambooHrAuthError
 from source_bamboohr.source import SourceBamboohr
@@ -120,9 +120,13 @@ def test_transport_failures_remain_errors() -> None:
         list(stream_for(FakeClient({PATH: OSError("unreachable")})).read_records(SyncMode.full_refresh))
 
 
-def test_non_list_response_is_an_error() -> None:
-    with pytest.raises(TypeError, match="not a list"):
-        list(stream_for(FakeClient({PATH: {"entries": []}})).read_records(SyncMode.full_refresh))
+@pytest.mark.parametrize(
+    ("body", "error_type"), [({"entries": "Example Person"}, "list_type"), (b"Example Person", "json_invalid")]
+)
+def test_unreadable_response_is_an_error_that_does_not_quote_it(body: object, error_type: str) -> None:
+    with pytest.raises(TypeError, match=error_type) as caught:
+        list(stream_for(FakeClient({PATH: body})).read_records(SyncMode.full_refresh))
+    assert "Example Person" not in str(caught.value)
 
 
 @pytest.mark.parametrize("row", [None, "invalid", {}, {"id": "", "type": "holiday", "start": "2024-05-01"}])
@@ -136,8 +140,11 @@ def test_raw_envelope_does_not_silently_discard_entries(row: object) -> None:
 def test_source_passes_shared_history_start(start_date: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeClient({PATH: []})
     monkeypatch.setattr("source_bamboohr.source._client", lambda _: client)
-    config = {"insight_tenant_id": TENANT, "insight_source_id": SOURCE, "bamboohr_start_date": start_date}
-    stream = next(stream for stream in SourceBamboohr().streams(config) if stream.name == "whos_out")
+    stream = next(
+        stream
+        for stream in SourceBamboohr().streams(config(bamboohr_start_date=start_date))
+        if stream.name == "whos_out"
+    )
 
     assert not stream.supports_incremental
     assert len(list(stream.read_records(SyncMode.full_refresh))) == 1
@@ -147,9 +154,8 @@ def test_source_passes_shared_history_start(start_date: str | None, monkeypatch:
 def test_forbidden_whos_out_does_not_stop_other_source_streams(monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeClient({PATH: BambooHrAuthError(403, "url", "disabled"), "meta/fields": [{"id": 9}]})
     monkeypatch.setattr("source_bamboohr.source._client", lambda _: client)
-    config = {"insight_tenant_id": TENANT, "insight_source_id": SOURCE}
     source = SourceBamboohr()
-    streams = {stream.name: stream for stream in source.streams(config)}
+    streams = {stream.name: stream for stream in source.streams(config())}
     catalog = ConfiguredAirbyteCatalog(
         streams=[
             ConfiguredAirbyteStream(
@@ -161,7 +167,7 @@ def test_forbidden_whos_out_does_not_stop_other_source_streams(monkeypatch: pyte
         ]
     )
 
-    messages = list(source.read(logging.getLogger("airbyte"), config, catalog))
+    messages = list(source.read(logging.getLogger("airbyte"), config(), catalog))
     records = [message.record for message in messages if message.type == Type.RECORD]
     assert len(records) == 1
     assert records[0].stream == "meta_fields"

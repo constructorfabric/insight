@@ -2,33 +2,47 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
+from airbyte_cdk.models import FailureType
+from airbyte_cdk.utils import AirbyteTracedException
 from source_hubspot.constants import (
     BASE_URL,
     HISTORY_BATCH_READ_LIMIT,
     MISSING_CURSOR_TIMESTAMP,
     PROPERTY_DEFINITION_OBJECT_TYPES,
 )
+from source_hubspot.models import HistoryObject, HistoryPage, PropertyChange, RecordPage
 from source_hubspot.streams import PipelinesStream, PropertyDefinitionsStream, PropertyHistoryStream
-from tests.conftest import SOURCE, TENANT, FakeResponse, make_stream, wire
+from tests.conftest import SOURCE, TENANT, FakeResponse, assert_no_leak, make_stream, wire
+
+PERSONAL = "person@example.com"
 
 
 def change(value, ts="2024-06-01T00:00:00Z", source_type="CRM_UI", user=7):
-    return {"value": value, "timestamp": ts, "sourceType": source_type, "sourceId": "u", "updatedByUserId": user}
+    return PropertyChange(value=value, timestamp=ts, sourceType=source_type, sourceId="u", updatedByUserId=user)
+
+
+def page(records):
+    return FakeResponse(RecordPage(results=records).model_dump(mode="json"))
+
+
+def history_page(objects):
+    return FakeResponse(HistoryPage(results=objects).model_dump(mode="json"))
 
 
 def definition_pages(*results):
-    pages = [FakeResponse({"results": []}) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
-    pages[0] = FakeResponse({"results": list(results)})
+    pages = [page([]) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
+    pages[0] = page(list(results))
     return pages
 
 
 @pytest.mark.parametrize(
     ("stream_cls", "name", "pages"),
     [
-        (PipelinesStream, "deal_pipelines", lambda results: [FakeResponse({"results": results})]),
+        (PipelinesStream, "deal_pipelines", lambda results: [page(results)]),
         (PropertyDefinitionsStream, "property_definitions", lambda results: definition_pages(*results)),
     ],
 )
@@ -56,7 +70,7 @@ def test_every_record_carries_a_cursor_the_destination_can_store(stream_cls, nam
 class TestPipelines:
     def test_emits_every_pipeline_tagged_with_its_object_type(self):
         stream = make_stream(PipelinesStream, "ticket_pipelines")
-        client = wire(stream, [FakeResponse({"results": [{"id": "0", "label": "Support", "stages": [{"id": "1"}]}]})])
+        client = wire(stream, [page([{"id": "0", "label": "Support", "stages": [{"id": "1"}]}])])
 
         out = list(stream.read_records(None))
 
@@ -74,9 +88,9 @@ class TestPipelines:
 class TestPropertyDefinitions:
     def test_lists_live_and_archived_for_every_object_type(self):
         stream = make_stream(PropertyDefinitionsStream, "property_definitions")
-        pages = [FakeResponse({"results": []}) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
-        pages[0] = FakeResponse({"results": [{"name": "amount", "label": "Amount"}]})
-        pages[1] = FakeResponse({"results": [{"name": "old_field", "label": "Old"}]})
+        pages = [page([]) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
+        pages[0] = page([{"name": "amount", "label": "Amount"}])
+        pages[1] = page([{"name": "old_field", "label": "Old"}])
         client = wire(stream, pages)
 
         out = list(stream.read_records(None))
@@ -89,10 +103,7 @@ class TestPropertyDefinitions:
 
     def test_same_name_on_two_objects_gets_two_keys(self):
         stream = make_stream(PropertyDefinitionsStream, "property_definitions")
-        pages = [
-            FakeResponse({"results": [{"name": "hubspot_owner_id"}]})
-            for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))
-        ]
+        pages = [page([{"name": "hubspot_owner_id"}]) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
         wire(stream, pages)
 
         keys = {r["unique_key"] for r in stream.read_records(None)}
@@ -101,20 +112,18 @@ class TestPropertyDefinitions:
 
     def test_nameless_definition_is_skipped(self):
         stream = make_stream(PropertyDefinitionsStream, "property_definitions")
-        pages = [
-            FakeResponse({"results": [{"label": "no name"}]}) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))
-        ]
+        pages = [page([{"label": "no name"}]) for _ in range(2 * len(PROPERTY_DEFINITION_OBJECT_TYPES))]
         wire(stream, pages)
         assert list(stream.read_records(None)) == []
 
 
 class TestPropertyHistory:
     def history_result(self, object_id, updated="2024-06-02T00:00:00Z", **history):
-        return {"id": object_id, "updatedAt": updated, "propertiesWithHistory": history}
+        return HistoryObject(id=object_id, updatedAt=updated, propertiesWithHistory=history)
 
     def test_search_requests_only_object_id(self):
         stream = make_stream(PropertyHistoryStream, "deals_property_history")
-        client = wire(stream, [FakeResponse({"results": []})])
+        client = wire(stream, [page([])])
 
         list(stream.read_records(None))
 
@@ -125,17 +134,15 @@ class TestPropertyHistory:
         client = wire(
             stream,
             [
-                FakeResponse({"results": [{"id": "10", "updatedAt": "2024-06-02T00:00:00Z"}]}),
-                FakeResponse(
-                    {
-                        "results": [
-                            self.history_result(
-                                "10",
-                                dealstage=[change("won"), change("open", ts="2024-05-01T00:00:00Z")],
-                                amount=[change("5")],
-                            )
-                        ]
-                    }
+                page([{"id": "10", "updatedAt": "2024-06-02T00:00:00Z"}]),
+                history_page(
+                    [
+                        self.history_result(
+                            "10",
+                            dealstage=[change("won"), change("open", ts="2024-05-01T00:00:00Z")],
+                            amount=[change("5")],
+                        )
+                    ]
                 ),
             ],
         )
@@ -157,9 +164,7 @@ class TestPropertyHistory:
     def test_batch_read_respects_history_limit(self):
         stream = make_stream(PropertyHistoryStream, "tickets_property_history")
         ids = [{"id": str(i), "updatedAt": "2024-06-02T00:00:00Z"} for i in range(HISTORY_BATCH_READ_LIMIT + 1)]
-        client = wire(
-            stream, [FakeResponse({"results": ids}), FakeResponse({"results": []}), FakeResponse({"results": []})]
-        )
+        client = wire(stream, [page(ids), history_page([]), history_page([])])
 
         list(stream.read_records(None))
 
@@ -179,15 +184,7 @@ class TestPropertyHistory:
         stream = make_stream(PropertyHistoryStream, "deals_property_history")
         result = self.history_result("10", dealstage=[change("won")])
         twin = self.history_result("10", dealstage=[change("won"), other])
-        wire(
-            stream,
-            [
-                FakeResponse({"results": [{"id": "10"}]}),
-                FakeResponse({"results": [result]}),
-                FakeResponse({"results": [{"id": "10"}]}),
-                FakeResponse({"results": [twin]}),
-            ],
-        )
+        wire(stream, [page([{"id": "10"}]), history_page([result]), page([{"id": "10"}]), history_page([twin])])
 
         first = list(stream.read_records(None))
         replay = list(stream.read_records(None))
@@ -197,14 +194,60 @@ class TestPropertyHistory:
 
     def test_raw_data_carries_the_change(self):
         stream = make_stream(PropertyHistoryStream, "deals_property_history")
-        wire(
-            stream,
-            [
-                FakeResponse({"results": [{"id": "10"}]}),
-                FakeResponse({"results": [self.history_result("10", pipeline=[change("default")])]}),
-            ],
-        )
+        wire(stream, [page([{"id": "10"}]), history_page([self.history_result("10", pipeline=[change("default")])])])
 
         out = list(stream.read_records(None))
 
         assert json.loads(out[0]["raw_data"])["value"] == "default"
+
+    def test_change_fields_reach_bronze_as_they_arrived(self):
+        stream = make_stream(PropertyHistoryStream, "deals_property_history")
+        odd = {"value": {"amount": 5}, "timestamp": 1717200000000, "sourceLabel": ["a"], "updatedByUserId": "7"}
+        result = {"id": "10", "updatedAt": "2024-06-02T00:00:00Z", "propertiesWithHistory": {"dealstage": [odd]}}
+        wire(stream, [page([{"id": "10"}]), FakeResponse({"results": [result]})])
+
+        out = list(stream.read_records(None))
+
+        emitted = {key: out[0][key] for key in odd}
+        assert emitted == odd
+        assert json.loads(out[0]["raw_data"])["value"] == {"amount": 5}
+
+    def test_change_key_matches_str_of_each_raw_field(self):
+        stream = make_stream(PropertyHistoryStream, "deals_property_history")
+        raw = {"value": 5, "timestamp": 0, "sourceType": None, "sourceId": "u", "updatedByUserId": 7}
+        result = {"id": "10", "propertiesWithHistory": {"dealstage": [raw]}}
+        wire(stream, [page([{"id": "10"}]), FakeResponse({"results": [result]})])
+
+        out = list(stream.read_records(None))
+
+        fields = ("", "5", "", "u", "7")
+        fingerprint = "\x1f".join(fields)
+        digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
+        assert out[0]["id"] == f"10:dealstage:{digest}"
+
+    def test_null_history_tolerated(self):
+        stream = make_stream(PropertyHistoryStream, "deals_property_history")
+        nulls = {"results": [{"id": "10", "propertiesWithHistory": {"dealstage": None}}, {"id": "11"}]}
+        wire(stream, [page([{"id": "10"}]), FakeResponse(nulls)])
+
+        assert list(stream.read_records(None)) == []
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            {"propertiesWithHistory": {}},
+            {"id": "10", "propertiesWithHistory": {"dealstage": PERSONAL}},
+            {"id": "10", "propertiesWithHistory": {"dealstage": [PERSONAL]}},
+            {"id": "10", "updatedAt": {"by": PERSONAL}},
+        ],
+    )
+    def test_malformed_history_is_system_error_without_input(self, result):
+        stream = make_stream(PropertyHistoryStream, "deals_property_history")
+        wire(stream, [page([{"id": "10"}]), FakeResponse({"results": [result]})])
+
+        with pytest.raises(AirbyteTracedException) as exc_info:
+            list(stream.read_records(None))
+
+        error = exc_info.value
+        assert error.failure_type == FailureType.system_error, f"should reject: {result!r}"
+        assert_no_leak(error, PERSONAL)

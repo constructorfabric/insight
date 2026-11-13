@@ -9,6 +9,7 @@ description = "Airbyte source connector for Claude Team invoices via the claude-
 requires-python = ">=3.12"
 dependencies = [
     "airbyte-cdk>=7.16.0",
+    "pydantic>=2,<3",
     "requests>=2.31.0",
 ]
 
