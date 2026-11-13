@@ -488,3 +488,23 @@ fn bounded_query_failures_have_stable_public_messages() {
     );
     assert_eq!(QueryFailure::Timeout.public_message(), "query timed out");
 }
+
+#[test]
+fn decode_errors_split_backend_outage_from_bad_tokens() {
+    use jsonwebtoken::errors::{Error, ErrorKind};
+    let outage = Error::from(ErrorKind::Provider("backend down".to_owned()));
+    assert!(matches!(
+        super::decode_failure(&outage),
+        super::AuthFailure::Unavailable
+    ));
+    for kind in [
+        ErrorKind::InvalidSignature,
+        ErrorKind::ExpiredSignature,
+        ErrorKind::InvalidAlgorithm,
+    ] {
+        assert!(matches!(
+            super::decode_failure(&Error::from(kind)),
+            super::AuthFailure::Unauthorized
+        ));
+    }
+}

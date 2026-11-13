@@ -310,7 +310,7 @@ A reading must be traceable to its records, and readings must leave the product 
 
 ##### Responsibility scope
 
-Drilldown authorizes the requested people first, then pages through `insight.<family>_metric_evidence` with the same person resolution, pinned to the relation snapshot it started on; it requires the definition and its evidence to be `ok`. Report preview and export run the time-series compiler over many people and metrics. Exports write CSV or XLSX off the async runtime, under row, byte, time and concurrency bounds.
+Drilldown authorizes the requested people first, then pages through `insight.<family>_metric_evidence` with the same person resolution, pinned to the relation snapshot it started on; it requires the definition and its evidence to be `ok`. A ratio pages its source records when both measures declare a `ref` column; otherwise it pages days. A summed denominator shows each record's numerator and denominator; a distinct-count denominator shows instead how many records share the record's day ("Commits that day"), so the reading is the rows divided by their distinct dates. A measure whose presentation names `record_parts` splits a record across rows by that dimension (a commit's lines by file extension); drilldown folds those rows into one, names the three largest parts and totals five or more as "N other types", and keeps only the dimensions every part shares. Report preview and export run the time-series compiler over many people and metrics. Exports write CSV or XLSX off the async runtime, under row, byte, time and concurrency bounds.
 
 ##### Responsibility boundaries
 

@@ -49,6 +49,52 @@ fn every_kind_that_draws_two_columns_checks_both() {
     }
 }
 
+fn stacked_metric() -> MetricQuery {
+    serde_json::from_value(json!({
+        "dataset": "runs",
+        "fields": [
+            { "field": "outcome", "type": "string", "as_name": "outcome" },
+            { "agg": "count", "type": "int", "as_name": "runs" }
+        ],
+        "group_by": ["bucket", "outcome"],
+        "filters": []
+    }))
+    .unwrap_or_else(|error| panic!("the fixture parses: {error}"))
+}
+
+#[test]
+fn a_bar_stacks_by_a_column_its_metric_produces() {
+    let drawn = widget(json!({
+        "type": "bar", "metric": "runs_per_week", "x": "bucket", "y": "runs",
+        "series": "outcome", "labels": true
+    }));
+
+    assert!(drawn.check_against(&stacked_metric(), CLOCKED).is_ok());
+}
+
+#[test]
+fn a_bar_stacked_by_a_column_the_metric_does_not_produce_is_refused() {
+    let drawn = widget(json!({
+        "type": "bar", "metric": "runs_per_week", "x": "bucket", "y": "runs",
+        "series": "severity"
+    }));
+
+    assert!(matches!(
+        drawn.check_against(&stacked_metric(), CLOCKED),
+        Err(WidgetError::UnknownColumn { ref column, .. }) if column == "severity"
+    ));
+}
+
+#[test]
+fn a_bar_says_whether_it_labels_its_totals_with_a_flag() {
+    let refused: Result<Widget, _> = serde_json::from_value(json!({
+        "type": "bar", "metric": "runs_per_week", "x": "bucket", "y": "runs",
+        "labels": "on top"
+    }));
+
+    assert!(refused.is_err());
+}
+
 #[test]
 fn a_stat_reads_one_value() {
     let drawn = widget(json!({

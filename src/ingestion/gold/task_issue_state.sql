@@ -38,8 +38,8 @@
 -- assignee's account, carried with its email when the tracker states one: the
 -- analytics runtime resolves account-first through identity, so an assignee
 -- with no email still reaches a person once identity binds the account.
--- This is the per-person attribution root, not a census of issues: an
--- unassigned issue attributes to nobody and has no row.
+-- An unassigned issue keeps its row with an empty account and email: it
+-- resolves to no person and counts only in the unattributed share.
 -- Class reads keep FINAL: RMT parts are not duplicate-immune and argMax over
 -- a stale version would skew the pivot.
 
@@ -250,20 +250,46 @@ issue_pivot AS (
     FROM history
     GROUP BY insight_source_id, issue_id
 ),
--- Close time: the last transition into a done-category status. OrNull so a
--- never-closed issue is NULL, not the epoch default of the non-Nullable
--- event_at — `final_close_at IS NOT NULL` gates the closed-issue measures.
-issue_close AS (
+-- One row per status event, flagged done and whether the event before it (in
+-- `event_order`) was done. A status the dimension does not know is not done.
+status_steps AS (
     SELECT
         fh.insight_source_id                                                 AS insight_source_id,
         fh.issue_id                                                          AS issue_id,
-        maxIfOrNull(fh.event_at, st.status_category = 'done')                AS final_close_at
+        fh.event_at                                                          AS event_at,
+        toUInt8(ifNull(st.status_category, '') = 'done')                     AS is_done,
+        lagInFrame(toUInt8(ifNull(st.status_category, '') = 'done'), 1, toUInt8(0)) OVER (
+            PARTITION BY fh.insight_source_id, fh.issue_id
+            ORDER BY fh.event_order
+            ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
+        )                                                                    AS was_done,
+        toUInt8(
+            fh.event_kind = 'snapshot_diff'
+            AND lagInFrame(toString(fh.event_kind), 1, '') OVER (
+                PARTITION BY fh.insight_source_id, fh.issue_id
+                ORDER BY fh.event_order
+                ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
+            ) = 'synthetic_initial'
+        )                                                                    AS dates_seeded_value
     FROM history AS fh
     LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
         ON st.insight_source_id = fh.insight_source_id
         AND st.status_id = fh.value_ids[1]
     WHERE fh.role = 'status' AND fh.delta_action = 'set'
-    GROUP BY fh.insight_source_id, fh.issue_id
+),
+-- Close time: the last ENTRY into a done-category status from a non-done one
+-- (or from nothing, for an issue created done). A move between two done
+-- statuses is not a close. A `snapshot_diff` right after the creation seed is
+-- the date the source gives for a value no event ever recorded, so it is the
+-- entry. OrNull so a never-closed issue is NULL, not the epoch default —
+-- `final_close_at IS NOT NULL` gates the closed-issue measures.
+issue_close AS (
+    SELECT
+        insight_source_id                                                    AS insight_source_id,
+        issue_id                                                             AS issue_id,
+        maxIfOrNull(event_at, is_done = 1 AND (was_done = 0 OR dates_seeded_value = 1)) AS final_close_at
+    FROM status_steps
+    GROUP BY insight_source_id, issue_id
 )
 SELECT
     t.tenant_id                                                              AS tenant_id,
@@ -341,4 +367,3 @@ LEFT JOIN resolution_default AS rd
 -- unobserved issues stay in — the entity still exists, its data is merely
 -- stale. Issues with no availability events default to present ('').
 WHERE p.availability NOT IN ('deleted', 'trashed')
-  AND p.assignee_account_id != ''

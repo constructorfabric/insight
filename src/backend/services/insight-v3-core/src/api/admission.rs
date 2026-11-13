@@ -8,10 +8,9 @@ use axum::http::{HeaderMap, HeaderValue};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use secrecy::{ExposeSecret as _, SecretString};
-use sha2::{Digest as _, Sha256};
-use subtle::ConstantTimeEq as _;
 use toolkit::api::ParamSpec;
 use toolkit_canonical_errors::{CanonicalError, resource_error};
+use toolkit_security::crypto::{constant_time_eq, hash::Sha256};
 
 use crate::config::{MAX_INGEST_TOKEN_BYTES, MIN_INGEST_TOKEN_BYTES};
 
@@ -42,7 +41,7 @@ pub(crate) struct TokenVerifier([u8; 32]);
 
 impl TokenVerifier {
     pub(crate) fn new(token: &SecretString) -> Self {
-        Self(Sha256::digest(token.expose_secret().as_bytes()).into())
+        Self(Sha256::digest(token.expose_secret().as_bytes()))
     }
 
     pub(crate) fn authorizes(&self, headers: &HeaderMap) -> bool {
@@ -62,8 +61,8 @@ impl TokenVerifier {
             return false;
         }
 
-        let actual: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-        bool::from(actual.ct_eq(&self.0))
+        let actual = Sha256::digest(token.as_bytes());
+        constant_time_eq(&actual, &self.0)
     }
 }
 

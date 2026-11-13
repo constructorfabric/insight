@@ -35,7 +35,13 @@ pub struct EvidencePresentation {
     #[serde(default)]
     pub detail_columns: Vec<EvidenceDetailColumn>,
     pub show_value: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_parts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_label: Option<String>,
 }
+
+pub(crate) const RECORD_REF_KEY: &str = "ref";
 
 impl EvidencePresentation {
     /// What a measure presents when it declares nothing: no detail columns, and
@@ -44,16 +50,27 @@ impl EvidencePresentation {
         Self {
             detail_columns: Vec::new(),
             show_value: granularity != EvidenceGranularity::Event,
+            record_parts: None,
+            value_label: None,
         }
+    }
+
+    pub fn names_a_record(&self) -> bool {
+        self.detail_keys().any(|key| key == RECORD_REF_KEY)
     }
 
     fn parse(json: &str) -> Option<Self> {
         let presentation: Self = serde_json::from_str(json).ok()?;
-        presentation
-            .detail_columns
-            .iter()
-            .all(|column| is_column_key(&column.key))
-            .then_some(presentation)
+        let parts_fold_a_record = presentation
+            .record_parts
+            .as_deref()
+            .is_none_or(|dimension| is_column_key(dimension) && presentation.names_a_record());
+        (parts_fold_a_record
+            && presentation
+                .detail_columns
+                .iter()
+                .all(|column| is_column_key(&column.key)))
+        .then_some(presentation)
     }
 
     pub fn detail_keys(&self) -> impl Iterator<Item = &str> {
@@ -162,6 +179,8 @@ mod tests {
                 },
             ],
             show_value: false,
+            record_parts: Some("file_extension".to_owned()),
+            value_label: Some("Lines".to_owned()),
         };
         let stored = serde_json::to_string(&declared)
             .unwrap_or_else(|error| panic!("declaration must serialize: {error}"));
@@ -218,5 +237,35 @@ mod tests {
             .unwrap_or_else(|| panic!("a readable declaration must resolve"));
         assert!(presentation.show_value);
         assert_eq!(presentation.detail_keys().collect::<Vec<_>>(), ["ref"]);
+    }
+
+    #[test]
+    fn a_declaration_without_parts_stores_no_parts_field() {
+        let StoredPresentation::Declared(parsed) = StoredPresentation::read(Some(
+            r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":true}"#,
+        )) else {
+            panic!("declaration must parse");
+        };
+
+        assert!(parsed.names_a_record());
+        assert!(!EvidencePresentation::undeclared(EvidenceGranularity::Event).names_a_record());
+        assert_eq!(
+            serde_json::to_string(&parsed).unwrap_or_default(),
+            r#"{"detail_columns":[{"key":"ref","label":"Ref","type":"string"}],"show_value":true}"#
+        );
+    }
+
+    #[test]
+    fn parts_fold_only_a_record_and_only_by_a_key_shaped_dimension() {
+        for stored in [
+            r#"{"detail_columns":[{"key":"title","label":"Title"}],"show_value":true,"record_parts":"file_extension"}"#,
+            r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":true,"record_parts":"file?extension"}"#,
+        ] {
+            assert_eq!(
+                StoredPresentation::read(Some(stored)),
+                StoredPresentation::Unreadable,
+                "should reject: {stored}"
+            );
+        }
     }
 }

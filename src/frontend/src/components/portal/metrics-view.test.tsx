@@ -8,11 +8,13 @@ import { portalRouter } from "@/test/portal-router";
 
 import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Workbook } from "exceljs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { PeopleListItem } from "@/api/identity-client";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
+import i18n from "@/i18n";
 import {
   setMetricsViewPaneShown,
   useMetricsViewPaneShown,
@@ -31,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   requestedIds: [] as readonly string[],
   definitionsError: false,
   refetchDefinitions: vi.fn(),
+  downloadBlob: vi.fn<(blob: Blob, filename: string) => void>(),
   policy: null as InstanceNavPolicy | null,
   data: {
     byKey: new Map<string, NormalizedMetricResult>(),
@@ -40,6 +43,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/lib/download", () => ({ downloadBlob: mocks.downloadBlob }));
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "boss@x", personId: mocks.personId }),
 }));
@@ -140,6 +144,21 @@ async function compare(user: ReturnType<typeof userEvent.setup>, names: readonly
   await user.click(screen.getByRole("button", { name: `Compare (${names.length})` }));
 }
 
+const PERIOD = "2026-07-01 – 2026-07-31";
+
+async function download(user: ReturnType<typeof userEvent.setup>, format: string) {
+  await user.click(screen.getByRole("button", { name: "Download" }));
+  await user.click(await screen.findByRole("menuitem", { name: format }));
+  await waitFor(() => expect(mocks.downloadBlob).toHaveBeenCalled());
+  return mocks.downloadBlob.mock.calls.at(-1)!;
+}
+
+async function downloadCsv(user: ReturnType<typeof userEvent.setup>) {
+  const [blob, filename] = await download(user, "CSV (.csv)");
+  const text = (await blob.text()).replace(/^\uFEFF/, "").trimEnd();
+  return { filename, lines: text.split("\r\n").map((line) => line.split(",")) };
+}
+
 const rowHeaders = () =>
   within(screen.getByRole("table"))
     .getAllByRole("rowheader")
@@ -154,6 +173,7 @@ beforeEach(() => {
   mocks.layout = "wide";
   mocks.definitionsError = false;
   mocks.refetchDefinitions.mockReset();
+  mocks.downloadBlob.mockReset();
   mocks.policy = null;
   mocks.roster = peopleFromIdentityTree(tree);
   mocks.definitions = [
@@ -633,6 +653,145 @@ describe("MetricsView", () => {
     await user.click(screen.getByRole("button", { name: "Exit compare" }));
 
     expect(rowHeaders()).toEqual(["boss", "a", "b"]);
+  });
+
+  it("downloads the people and metrics on screen as a CSV named after the period", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    const { filename, lines } = await downloadCsv(user);
+
+    expect(filename).toBe("metrics-view_2026-07-01_2026-07-31.csv");
+    expect(lines).toEqual([
+      ["Person", "Period", "Default branch commits", "Messages"],
+      ["boss", PERIOD, "50", ""],
+      ["a", PERIOD, "10", "4"],
+      ["b", PERIOD, "20", "6"],
+    ]);
+  });
+
+  it("downloads everyone in the order the sort puts them", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Sort by Default branch commits" }));
+    const { lines } = await downloadCsv(user);
+
+    expect(lines.slice(1).map((line) => line[0])).toEqual(["boss", "c", "b", "a"]);
+  });
+
+  it("downloads only the people compared", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await compare(user, ["a", "b"]);
+    const { lines } = await downloadCsv(user);
+
+    expect(lines).toEqual([
+      ["Person", "Period", "Default branch commits", "Messages"],
+      ["a", PERIOD, "10", "4"],
+      ["b", PERIOD, "20", "6"],
+    ]);
+  });
+
+  it("leaves out of the download anyone a link compares who is outside the viewer's tree", async () => {
+    act(() => portalRouter.set({ compare: `${pid("a")},${pid("stranger")}` }));
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    const { lines } = await downloadCsv(user);
+
+    expect(lines.slice(1).map((line) => line[0])).toEqual(["a"]);
+  });
+
+  it("adds each person's role to the download when the page shows one", async () => {
+    mocks.roster = peopleFromIdentityTree(
+      identityPerson("boss", {}, [
+        identityPerson("a", {}, [identityPerson("c")]),
+        identityPerson("b", { job_title: "Software Engineer" }),
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    const { lines } = await downloadCsv(user);
+
+    expect(lines.map((line) => line.slice(0, 2))).toEqual([
+      ["Person", "Role"],
+      ["boss", ""],
+      ["a", ""],
+      ["b", "Software Engineer"],
+    ]);
+  });
+
+  it("downloads the same table as an Excel workbook", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    const [blob, filename] = await download(user, "Excel (.xlsx)");
+    const workbook = new Workbook();
+    await workbook.xlsx.load(await blob.arrayBuffer());
+    const sheet = workbook.worksheets[0]!;
+    const cells = Array.from({ length: sheet.rowCount }, (_, row) =>
+      Array.from({ length: 4 }, (_, column) => sheet.getRow(row + 1).getCell(column + 1).value),
+    );
+
+    expect(filename).toBe("metrics-view_2026-07-01_2026-07-31.xlsx");
+    expect(cells).toEqual([
+      ["Person", "Period", "Default branch commits", "Messages"],
+      ["boss", PERIOD, 50, null],
+      ["a", PERIOD, 10, 4],
+      ["b", PERIOD, 20, 6],
+    ]);
+  });
+
+  it("labels the download menu from the translations", async () => {
+    const original = {
+      download: i18n.t("common.actions.download"),
+      csv: i18n.t("metrics_view.download.csv"),
+    };
+    i18n.addResourceBundle(
+      "en",
+      "translation",
+      { common: { actions: { download: "Herunterladen" } }, metrics_view: { download: { csv: "CSV-Datei" } } },
+      true,
+      true,
+    );
+
+    try {
+      const user = userEvent.setup();
+      render(<MetricsView />);
+
+      await user.click(screen.getByRole("button", { name: "Herunterladen" }));
+
+      expect(await screen.findByRole("menuitem", { name: "CSV-Datei" })).toBeInTheDocument();
+    } finally {
+      i18n.addResourceBundle(
+        "en",
+        "translation",
+        { common: { actions: { download: original.download } }, metrics_view: { download: { csv: original.csv } } },
+        true,
+        true,
+      );
+    }
+  });
+
+  it("offers no download while no metric is picked", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Metrics: 3 of 3" }));
+    await user.click(screen.getByRole("button", { name: "Clear all metrics" }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
+  });
+
+  it("offers no download while the numbers load", () => {
+    mocks.data.isPending = true;
+    render(<MetricsView />);
+
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
   });
 
   it.each(["narrow", "phone"] as const)(

@@ -55,7 +55,9 @@ class LensRail:
         self.rail = page.locator(RAIL)
 
     def zones(self) -> Locator:
-        return self.rail.locator(MENU_BUTTON)
+        # Feedback and Settings are menu buttons too, in the footer. Zones live
+        # in the content slot.
+        return self.rail.locator('[data-slot="sidebar-content"]').locator(MENU_BUTTON)
 
 
 class PortalShell:

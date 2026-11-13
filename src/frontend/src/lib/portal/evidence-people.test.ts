@@ -135,6 +135,22 @@ describe("peopleEvidenceView", () => {
     expect(share.valueLabel).toBe("Coverage");
   });
 
+  it("shows hours as hours and minutes", () => {
+    const view = peopleEvidenceView(
+      metric([["e-ada", 2.75]], {
+        ...DRILLABLE,
+        format: "decimal",
+        unit: "h",
+        label: "Meeting hours",
+      } as Partial<NormalizedMetricResult>),
+      ["e-ada"],
+      "Meeting hours · 0–5 h per person",
+      ROSTER
+    );
+
+    expect(view.rows[0]?.valueText).toBe("2 h 45 min");
+  });
+
   it("covers exactly the listed people with its all-records selection", () => {
     const view = peopleEvidenceView(
       metric(

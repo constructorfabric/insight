@@ -6,8 +6,8 @@ use crate::domain::metric_definitions::definition::{
     ObservationRelation, ObservationSource,
 };
 use crate::domain::metric_definitions::{
-    ComputationSpec, EvidenceColumnType, EvidenceDetailColumn, EvidencePresentation,
-    EvidenceRelation, MetricDefinition,
+    ComputationSpec, EvidenceColumnType, EvidenceDetailColumn, EvidenceGranularity,
+    EvidencePresentation, EvidenceRelation, MetricDefinition, RatioDenominatorAggregation,
 };
 
 use super::cursor::selection_fingerprint;
@@ -51,6 +51,8 @@ pub(crate) fn commit_presentation() -> EvidencePresentation {
             detail_column("lines_removed", "Lines removed", EvidenceColumnType::Number),
         ],
         show_value: false,
+        record_parts: None,
+        value_label: None,
     }
 }
 
@@ -69,6 +71,35 @@ pub(crate) fn collapsing_commit_input(
         alias_collapse,
         presentation: commit_presentation(),
     }
+}
+
+pub(crate) fn summary_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
+    EvidenceInput {
+        role,
+        measure_key: measure_key.to_owned(),
+        alias_collapse: AliasCollapse::Sum,
+        presentation: EvidencePresentation::undeclared(EvidenceGranularity::SourceSummary),
+    }
+}
+
+pub(crate) fn ratio_over(
+    inputs: fn(MetricInputRole, &str) -> EvidenceInput,
+    denominator_aggregation: RatioDenominatorAggregation,
+) -> EvidencePlan {
+    let numerator = input(MetricInputRole::Numerator, "focus_hours");
+    let denominator = input(MetricInputRole::Denominator, "work_hours");
+    plan(
+        ComputationSpec::Ratio {
+            numerator: numerator.clone(),
+            denominator: denominator.clone(),
+            scale: 100.0,
+            denominator_aggregation,
+        },
+        vec![
+            inputs(MetricInputRole::Numerator, &numerator.measure_key),
+            inputs(MetricInputRole::Denominator, &denominator.measure_key),
+        ],
+    )
 }
 
 pub(crate) fn definition(spec: ComputationSpec, dimensions: &[&str]) -> MetricDefinition {

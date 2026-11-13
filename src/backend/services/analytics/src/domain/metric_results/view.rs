@@ -39,6 +39,7 @@ pub enum MetricResultViewKind {
     Breakdown,
     Rollup,
     Histogram,
+    Unattributed,
 }
 
 #[cfg(test)]

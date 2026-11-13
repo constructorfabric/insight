@@ -440,7 +440,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "put_widget",
-        description = "Creates a widget, or replaces one: pass `name` and `body`, and the `id` of a stored widget to replace it; without `id` a new widget is created and its `id` answered. A widget draws one metric, named by the metric's id, by the `as_name` that metric gives its columns: {\"type\": \"table\", \"metric\": \"<metric id>\", \"columns\": [\"actor\", \"total\"]} or {\"type\": \"line\", \"metric\": \"<metric id>\", \"x\": \"actor\", \"y\": \"total\"}. A widget naming a column its metric does not produce is refused, so run_metric first if unsure what it yields."
+        description = "Creates a widget, or replaces one: pass `name` and `body`, and the `id` of a stored widget to replace it; without `id` a new widget is created and its `id` answered. A widget draws one metric, named by the metric's id, by the `as_name` that metric gives its columns: {\"type\": \"table\", \"metric\": \"<metric id>\", \"columns\": [\"actor\", \"total\"]} or {\"type\": \"line\", \"metric\": \"<metric id>\", \"x\": \"actor\", \"y\": \"total\"}. A bar stacks by an optional `series` column, one segment and colour per value, stacked in name order, and `labels: true` prints each bar's total on top: {\"type\": \"bar\", \"metric\": \"<metric id>\", \"x\": \"bucket\", \"y\": \"runs\", \"series\": \"outcome\", \"labels\": true}. A widget naming a column its metric does not produce is refused, so run_metric first if unsure what it yields."
     )]
     async fn put_widget(
         &self,

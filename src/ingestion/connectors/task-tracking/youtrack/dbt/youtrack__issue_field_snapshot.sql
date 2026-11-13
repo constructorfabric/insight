@@ -1,8 +1,14 @@
 {{ config(materialized='table', schema='staging', engine=insight_engine('MergeTree'), order_by=['insight_source_id', 'issue_id', 'field_id', 'observed_at'], tags=['youtrack', 'staging']) }}
 
-WITH custom AS (
-    SELECT i.*, arrayJoin(JSONExtractArrayRaw(custom_fields)) AS f
-    FROM {{ ref('youtrack__issue_observations') }} AS i FINAL
+WITH observations AS (
+    -- INVARIANT: deduplicated by key, not FINAL; FINAL merges whole payloads in memory.
+    SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at, custom_fields, payload
+    FROM {{ ref('youtrack__issue_observations') }}
+    LIMIT 1 BY unique_key
+), custom AS (
+    SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
+        arrayJoin(JSONExtractArrayRaw(custom_fields)) AS f
+    FROM observations
 ), field_types AS (
     SELECT insight_source_id, field_id, observed_at, field_type
     FROM {{ ref('youtrack__field_observations') }} FINAL
@@ -20,6 +26,17 @@ WITH custom AS (
     ASOF LEFT JOIN field_types AS t
         ON t.insight_source_id = c.insight_source_id AND t.field_id = c.custom_field_id AND c.observed_at >= t.observed_at
     LEFT JOIN first_field_types AS ff ON ff.insight_source_id = c.insight_source_id AND ff.field_id = c.custom_field_id
+), builtin_fields AS (
+    SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
+        builtin.1 AS field_id, builtin.2 AS field_name, builtin.3 AS field_cardinality,
+        builtin.4 AS raw_value, builtin.5 AS value_types
+    FROM observations
+    ARRAY JOIN [
+        ('summary', 'Summary', 'single', JSONExtractRaw(payload, 'summary'), ['string_literal']),
+        ('description', 'Description', 'single', JSONExtractRaw(payload, 'description'), ['string_literal']),
+        ('tags', 'Tags', 'multi', JSONExtractRaw(payload, 'tags'), ['opaque_id']),
+        ('project', 'Project', 'single', JSONExtractRaw(payload, 'project'), ['opaque_id'])
+    ] AS builtin
 ), fields AS (
     SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
         JSONExtractString(f, 'projectCustomField', 'field', 'id') AS field_id,
@@ -36,19 +53,7 @@ WITH custom AS (
     FROM custom_fields
     UNION ALL
     SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'summary', 'Summary', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'summary')") }}, ['string_literal'], toUInt8(0)
-    FROM {{ ref('youtrack__issue_observations') }} FINAL
-    UNION ALL
-    SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'description', 'Description', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'description')") }}, ['string_literal'], toUInt8(0)
-    FROM {{ ref('youtrack__issue_observations') }} FINAL
-    UNION ALL
-    SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'tags', 'Tags', 'multi', {{ youtrack_values("JSONExtractRaw(payload, 'tags')") }}, ['opaque_id'], toUInt8(0)
-    FROM {{ ref('youtrack__issue_observations') }} FINAL
-    UNION ALL
-    SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'project', 'Project', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'project')") }}, ['opaque_id'], toUInt8(0)
-    FROM {{ ref('youtrack__issue_observations') }} FINAL
+        field_id, field_name, field_cardinality, {{ youtrack_values('raw_value') }}, value_types, toUInt8(0)
+    FROM builtin_fields
 )
 SELECT * FROM fields WHERE field_id != ''

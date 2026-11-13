@@ -33,7 +33,12 @@ vi.mock("@/lib/portal/use-rail-nav", () => ({
   useRailNav: () => ({
     items: [
       { id: "home", label: "Home", icon: () => null, zones: ["overview"] },
-      { id: "people", label: "People", icon: () => null, zones: ["person", "people"] },
+      {
+        id: "people",
+        label: "People",
+        icon: () => null,
+        zones: ["person", "people"],
+      },
     ],
     activeItem: mocks.activeItem,
     selectItem: (item: { id: string }) => mocks.selected.push(item.id),
@@ -51,13 +56,16 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { LensRail } from "./lens-rail";
 
 /** The rail opens on a timer, so a hover only counts once the wait is over. */
-const settle = () => act(() => { vi.advanceTimersByTime(400); });
+const settle = () =>
+  act(() => {
+    vi.advanceTimersByTime(400);
+  });
 
 const rail = () =>
   render(
     <SidebarProvider>
       <LensRail />
-    </SidebarProvider>,
+    </SidebarProvider>
   );
 
 /** The label is present either way; what changes is whether it can be seen. */
@@ -146,8 +154,12 @@ describe("LensRail", () => {
   it("marks the item that owns the open zone", () => {
     mocks.activeItem = "people";
     rail();
-    expect(screen.getByRole("button", { name: "People" })).toHaveAttribute("data-active");
-    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute("data-active");
+    expect(screen.getByRole("button", { name: "People" })).toHaveAttribute(
+      "data-active"
+    );
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute(
+      "data-active"
+    );
   });
 
   it("renders nothing on a phone", () => {
@@ -160,7 +172,9 @@ describe("LensRail", () => {
 
   it("uncaps the brand mark so WebKit does not shrink the product name to an ellipsis", () => {
     rail();
-    expect(screen.getByRole("img", { name: "Constructor Fabric" })).toHaveClass("max-w-none");
+    expect(screen.getByRole("img", { name: "Constructor Fabric" })).toHaveClass(
+      "max-w-none"
+    );
   });
 });
 
@@ -207,9 +221,17 @@ describe("LensRail state that only breaks in a particular order", () => {
     expect(labelOf("Home")).toHaveClass("opacity-100");
 
     mocks.layout = "phone";
-    rerender(<SidebarProvider><LensRail /></SidebarProvider>);
+    rerender(
+      <SidebarProvider>
+        <LensRail />
+      </SidebarProvider>
+    );
     mocks.layout = "wide";
-    rerender(<SidebarProvider><LensRail /></SidebarProvider>);
+    rerender(
+      <SidebarProvider>
+        <LensRail />
+      </SidebarProvider>
+    );
     expect(labelOf("Home")).toHaveClass("opacity-0");
   });
 
@@ -253,8 +275,37 @@ describe("LensRail state that only breaks in a particular order", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     rail();
 
-    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+    await user.click(screen.getByRole("button", { name: "Feedback" }));
 
     expect(mocks.openFeedback).toHaveBeenCalled();
+  });
+
+  it("treats Feedback and Settings like a zone item, shut and open", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    rail();
+    const home = screen.getByRole("button", { name: "Home" });
+
+    for (const name of ["Feedback", "Settings"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.className, name).toBe(home.className);
+      expect(button, name).toHaveAttribute("title", name);
+      expect(labelOf(name)?.className, name).toBe(labelOf("Home")?.className);
+      expect(button.querySelector("svg"), name).toHaveClass("shrink-0");
+      expect(button.querySelector("svg"), name).not.toHaveClass("size-[19px]");
+    }
+
+    const anchor = screen
+      .getByRole("button", { name: "Settings" })
+      .parentElement?.querySelector("[data-popover-anchor]");
+    expect(anchor).toHaveClass("w-10");
+    expect(anchor).toHaveClass("absolute");
+
+    await user.hover(screen.getByTestId("lens-rail"));
+    settle();
+    expect(labelOf("Feedback")).toHaveClass("opacity-100");
+    expect(labelOf("Settings")).toHaveClass("opacity-100");
+    expect(screen.getByRole("button", { name: "Feedback" }).className).toBe(
+      home.className
+    );
   });
 });

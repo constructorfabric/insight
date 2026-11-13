@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 7, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 108, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 109, "builtin metric count");
     }
 
     #[test]
@@ -334,8 +334,14 @@ mod tests {
 
     /// Column keys the drilldown fills from the evidence row rather than from
     /// its details map; a declaration claiming one would be overwritten.
-    const STRUCTURAL_COLUMN_KEYS: &[&str] =
-        &["person", "date", "value", "numerator", "denominator"];
+    const STRUCTURAL_COLUMN_KEYS: &[&str] = &[
+        "person",
+        "date",
+        "value",
+        "numerator",
+        "denominator",
+        "parts",
+    ];
 
     #[test]
     fn every_event_measure_declares_the_columns_its_rows_carry() {
@@ -677,6 +683,136 @@ mod tests {
                     input.measure_key
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_measure_split_into_parts_names_the_record_they_fold_into() {
+        for builtin_source in builtin_sources() {
+            for measure in &builtin_source.measures {
+                let Some(presentation) = measure.evidence_presentation.as_ref() else {
+                    continue;
+                };
+                assert!(
+                    presentation.record_parts.is_none() || presentation.names_a_record(),
+                    "{}/{} splits rows into parts of no record",
+                    builtin_source.source.key,
+                    measure.key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_distribution_drilldown_shows_the_number_each_record_contributes() {
+        let shows_value: HashMap<(&str, &str), bool> = builtin_sources()
+            .iter()
+            .flat_map(|builtin_source| {
+                builtin_source.measures.iter().map(|measure| {
+                    let presentation = measure.evidence_presentation.clone().unwrap_or_else(|| {
+                        EvidencePresentation::undeclared(measure.evidence_granularity)
+                    });
+                    (
+                        (builtin_source.source.key.as_str(), measure.key.as_str()),
+                        presentation.show_value,
+                    )
+                })
+            })
+            .collect();
+
+        for metric in builtin_metrics() {
+            let spreads_record_numbers = match metric.computation {
+                SeedComputation::Median
+                | SeedComputation::Percentile { .. }
+                | SeedComputation::Stddev => true,
+                SeedComputation::Sum
+                | SeedComputation::Ratio { .. }
+                | SeedComputation::DistinctCount => false,
+            };
+            for input in metric.inputs.iter().filter(|_| spreads_record_numbers) {
+                assert_eq!(
+                    shows_value.get(&(metric.source_key.as_str(), input.measure_key.as_str())),
+                    Some(&true),
+                    "{}: its drilldown hides the {} each record contributes",
+                    metric.metric_key,
+                    input.measure_key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_bug_share_row_names_the_type_of_its_issue() {
+        let task = builtin_sources()
+            .iter()
+            .find(|builtin_source| builtin_source.source.key == "task")
+            .unwrap_or_else(|| panic!("the task source must be declared"));
+
+        for measure_key in ["bugs_fixed", "tasks_closed"] {
+            let keys: Vec<&str> = task
+                .measures
+                .iter()
+                .find(|measure| measure.key == measure_key)
+                .and_then(|measure| measure.evidence_presentation.as_ref())
+                .map(|presentation| presentation.detail_keys().collect())
+                .unwrap_or_default();
+            assert!(
+                keys.contains(&"type"),
+                "{measure_key} rows should say which kind of issue they are: {keys:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_issues_of_every_type_read_as_issues_not_tasks() {
+        let label = builtin_sources()
+            .iter()
+            .filter(|builtin_source| builtin_source.source.key == "task")
+            .flat_map(|builtin_source| &builtin_source.measures)
+            .find(|measure| measure.key == "tasks_closed")
+            .and_then(|measure| measure.evidence_presentation.as_ref())
+            .and_then(|presentation| presentation.value_label.as_deref());
+
+        assert_eq!(label, Some("Issues closed"));
+    }
+
+    #[test]
+    fn every_git_and_task_metric_drills_down_to_its_source_records() {
+        const NOT_YET_LINKED: &[&str] = &["tasks.logged_hours"];
+        let presentations: HashMap<(&str, &str), Option<&EvidencePresentation>> = builtin_sources()
+            .iter()
+            .flat_map(|builtin_source| {
+                builtin_source.measures.iter().map(|measure| {
+                    (
+                        (builtin_source.source.key.as_str(), measure.key.as_str()),
+                        measure.evidence_presentation.as_ref(),
+                    )
+                })
+            })
+            .collect();
+
+        for metric in builtin_metrics()
+            .iter()
+            .filter(|metric| ["git", "task"].contains(&metric.source_key.as_str()))
+        {
+            let every_input_is_a_record = metric.inputs.iter().all(|input| {
+                presentations
+                    .get(&(metric.source_key.as_str(), input.measure_key.as_str()))
+                    .copied()
+                    .flatten()
+                    .is_some_and(EvidencePresentation::names_a_record)
+            });
+            assert_eq!(
+                every_input_is_a_record,
+                !NOT_YET_LINKED.contains(&metric.metric_key.as_str()),
+                "{}: its drilldown {} reach the records it counts",
+                metric.metric_key,
+                if every_input_is_a_record {
+                    "does"
+                } else {
+                    "does not"
+                }
+            );
         }
     }
 

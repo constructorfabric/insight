@@ -31,6 +31,11 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #     (type = nocode|cdk; cdk_image is the full Docker reference sourced from
 #      `descriptor.images.cdk.image` per ADR-0016, empty for nocode or absent;
 #      dbt_select is the dbt selector passed to the ingestion-pipeline.)
+# cdk_image goes through RECONCILE_IMAGE_MIRRORS (JSON {"<registry>": "<mirror>"},
+# chart value ingestion.reconcile.imageMirrors) before it is emitted, so an
+# install that may only pull from its own registry registers the mirrored
+# reference in Airbyte (python/mirror_image_ref.py). Airbyte's own JOB_KUBE_CONNECTOR_IMAGE_REGISTRY leaves
+# a reference that already names a registry untouched, so it cannot do this.
 # This is the single bash-side reader of descriptor.yaml — every other lib /
 # python helper consumes values via this TSV rather than re-reading the file.
 # Skips files missing `name` or `version`; logs a WARN to stderr per skip.
@@ -41,9 +46,11 @@ disc_load_descriptors() {
   while IFS= read -r -d '' desc; do
     local connector_dir
     connector_dir="$(dirname "${desc}")"
-    python3 - "${desc}" "${connector_dir}" <<'PY'
+    python3 - "${desc}" "${connector_dir}" "${_DISC_LIB_DIR}/../python" <<'PY'
 import sys, yaml
 path, connector_dir = sys.argv[1], sys.argv[2]
+sys.path.insert(0, sys.argv[3])
+from mirror_image_ref import mirror, mirrors_from_env
 try:
     with open(path) as f:
         d = yaml.safe_load(f) or {}
@@ -57,6 +64,7 @@ ctype = d.get("type", "nocode")
 images = d.get("images") or {}
 cdk_entry = images.get("cdk") or {}
 cdk_image = (cdk_entry.get("image") or "") if isinstance(cdk_entry, dict) else ""
+cdk_image = mirror(cdk_image, mirrors_from_env())
 dbt_select = d.get("dbt_select", "") or ""
 # The connector's ClickHouse namespace, read here because the file is already
 # open. No `bronze_<slug>` fallback: a hyphenated slug would name a database

@@ -235,6 +235,13 @@ COMPONENTS = [
         "cov_package": "source_claude_team_invoices",
         "paths": ["src/ingestion/connectors/ai/claude-team-invoices"],
     },
+    {
+        "name": "slack",
+        "lang": "python",
+        "root": "src/ingestion/connectors/collaboration/slack",
+        "cov_package": "source_slack",
+        "paths": ["src/ingestion/connectors/collaboration/slack"],
+    },
     # Deploy-time ClickHouse schema tooling (the migration Job's Python half).
     # Owning the whole scripts/ tree means a change anywhere in it re-runs these
     # tests. Shell scripts in the same tree have no measured lines.

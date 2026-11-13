@@ -1176,6 +1176,18 @@
     "computation": "ratio"
   },
   {
+    "metric_key": "tasks.logged_hours",
+    "label": "Logged time",
+    "short_label": "Logged hrs",
+    "description": "Hours logged against issues",
+    "explanation": "All work time logged in the tracker during the period, whatever the issue's status on the day it was logged.",
+    "unit": "h",
+    "format": "decimal",
+    "direction": "higher_is_better",
+    "entity_type": "person",
+    "computation": "sum"
+  },
+  {
     "metric_key": "tasks.worklog_accuracy",
     "label": "Worklog accuracy",
     "short_label": "Worklog %",

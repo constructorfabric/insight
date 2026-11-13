@@ -276,5 +276,5 @@ WHERE greatest(
     COALESCE(activity._airbyte_extracted_at, pr._airbyte_extracted_at),
     COALESCE(seen._airbyte_extracted_at, pr._airbyte_extracted_at),
     COALESCE(merge_commit._airbyte_extracted_at, pr._airbyte_extracted_at)
-) > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+) > {{ instance_incremental_watermark('_airbyte_extracted_at', ['pr.tenant_id', 'pr.source_id']) }}
 {% endif %}

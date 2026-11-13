@@ -5,7 +5,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use rustix::process::{Pid, Signal, kill_process_group};
-use sha2::{Digest, Sha256};
+use toolkit_security::crypto::hash::Sha256;
 
 /// Git credentials for one invocation. They exist only in the child process
 /// environment — never in argv, never on disk, never in the stored remote URL

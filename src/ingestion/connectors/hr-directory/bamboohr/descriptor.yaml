@@ -5,7 +5,7 @@ type: cdk
 #   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
 #   reconcile must republish this connector so the connection catalog is
 #   refreshed; nothing already stored changes meaning.
-version: "2.16.0"
+version: "2.17.0"
 schedule: 0 * * * *
 dbt_select: tag:bamboohr+
 workflow: sync
@@ -17,7 +17,7 @@ images:
     name: source-bamboohr-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.11.02.11.55-82d45ab"
+    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.11.10.18.59-dc9ba03"
 connection:
   namespace: bronze_bamboohr
 secret:

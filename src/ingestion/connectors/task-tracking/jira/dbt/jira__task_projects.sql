@@ -9,6 +9,11 @@
 -- so the current state of bronze is the current state of staging — no incremental
 -- accumulation needed. Silver `class_task_projects` is RMT(_version), reads via FINAL.
 
+-- INVARIANT: the destination adds `lead_account_id` to bronze on the connector's
+-- next sync; a build before that must still succeed, so the lead waits for it.
+{%- set project_columns = adapter.get_columns_in_relation(source('bronze_jira', 'jira_projects')) if execute else [] %}
+{%- set projects_have_lead = 'lead_account_id' in (project_columns | map(attribute='name') | list) %}
+
 SELECT
     p.unique_key                                AS unique_key,
     p.source_id                                 AS insight_source_id,
@@ -16,9 +21,11 @@ SELECT
     toString(p.project_id)                      AS project_id,
     p.project_key                               AS project_key,
     p.name                                      AS name,
-    -- `lead_account_id` column absent in bronze (Airbyte auto-detect skipped the AddFields
-    -- column because values were all null in sampled data). Stub until schema is fixed.
+{%- if projects_have_lead %}
+    nullIf(toString(p.lead_account_id), '')     AS lead_id,
+{%- else %}
     CAST(NULL AS Nullable(String))              AS lead_id,
+{%- endif %}
     p.project_type                              AS project_type,
     p.style                                     AS project_style,
     -- `p.archived` is `Nullable(Bool)` in bronze. `toString(true) = 'true'`, which

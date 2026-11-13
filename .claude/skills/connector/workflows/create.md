@@ -901,6 +901,7 @@ Then read **each stream in isolation** — not just one combined read. `validate
 | `record.get('X', {}).get('Y')` when `record['X']` is present but `null` | `jinja2.exceptions.UndefinedError: 'None' has no attribute 'get'` — defaults on `.get()` only apply to **missing** keys, not `None` values | Replace with `(record.get('X') or {}).get('Y')`. Use the same pattern for every chain that may hit a nullable parent object. |
 | Source API query syntax (e.g. YouTrack `updated:`, Jira JQL, Salesforce SOQL) does not match your template | HTTP 400 `invalid_query` from the source | Never trust documentation alone — run `check` against a live tenant and inspect the generated URL. Each API has its own datetime dialect. See `src/ingestion/tools/declarative-connector/README.md` §"Datetime syntax pitfalls". |
 | Heavy `SubstreamPartitionRouter` parent (multi-MB responses, e.g. `fields=*all`) | `read` stalls **silently**: CPU stays busy, 0 records emitted for minutes/hours, no error. The parent's SQLite requests-cache (`/tmp/tmp*/<parent_stream>.sqlite` inside the runner) grows to hundreds of MB, then freezes | Split roles: lightweight key-enumeration parent (minimal `fields` request param) + full-payload emitter that is not a parent. Diagnose by watching the cache file size and records-emitted count during `read` — healthy parents stay in the KB range. |
+| Some records arrive without a value in the stream's `cursor_field` (system-defined objects, rows never modified) | `read` succeeds; the first real sync then fails on every attempt in the destination: `An attempt to write null into not nullable column '<cursor>'` | Stamp a fallback cursor in the connector (CDK) or an `AddFields` coalesce (nocode); the per-stream script below reports `null_cursor`. |
 | `cursor_field` nested in the API response (e.g. Jira `fields.updated`) and not hoisted to the top level | No crash; first read looks fine, but no `STATE` cursor progress — every sync re-reads the full window (resume read returns the same count as the first read) | Add an `AddFields` hoist for the cursor field; include it in the inline schema (`required` if always present). |
 
 **Per-stream `read` pattern** (for thorough testing — saves the full catalog, swaps in single-stream catalog, resets state, runs `read`, captures the emitted `STATE`, then runs `read` a second time to verify cursor advancement). **Working directory: repo root** — the `INGESTION` variable below makes the script independent of `cd` location:
@@ -943,18 +944,27 @@ if states:
         json.dump([states[-1]], out)
 PY
 
-  # Count records + errors from first read.
-  python3 -c "
-import json
-recs = 0; errs = []
-for line in open('$log'):
+  # Count records, errors and records the destination would reject for a null cursor.
+  python3 - "$log" "$CONN/configured_catalog.json" <<'PY'
+import json, sys
+stream = json.load(open(sys.argv[2]))["streams"][0]
+cursor = stream.get("cursor_field") or stream["stream"].get("default_cursor_field") or []
+recs = 0; errs = []; null_cursor = []
+for line in open(sys.argv[1]):
     try: o = json.loads(line)
-    except: continue
-    if o.get('type') == 'RECORD': recs += 1
-    elif o.get('log',{}).get('level') in ('ERROR','FATAL'): errs.append(o['log']['message'][:300])
-print(f'  first read:  records={recs}, errors={len(errs)}')
-for e in errs[:2]: print(f'    {e}')
-"
+    except json.JSONDecodeError: continue
+    if o.get("type") == "RECORD":
+        recs += 1
+        data = o["record"]["data"]
+        for key in cursor:
+            data = data.get(key) if isinstance(data, dict) else None
+        if cursor and data in (None, ""):
+            null_cursor.append(o["record"]["data"].get("unique_key"))
+    elif o.get("log", {}).get("level") in ("ERROR", "FATAL"): errs.append(o["log"]["message"][:300])
+print(f"  first read:  records={recs}, errors={len(errs)}, null_cursor={len(null_cursor)}")
+for e in errs[:2]: print(f"    {e}")
+for k in null_cursor[:3]: print(f"    null {'.'.join(cursor)}: {k}")
+PY
 
   # Second read: with persisted state — for incremental streams this must produce a strict subset
   # (often zero records). For full-refresh streams the count typically stays the same.
@@ -981,6 +991,7 @@ Acceptance criteria for each stream:
 - [ ] First-read record count > 0 (unless source genuinely has no data — rare).
 - [ ] Error count = 0 in both runs (any `ERROR` / `FATAL` log message is a runtime bug — fix before deploy).
 - [ ] Every emitted record has `tenant_id`, `source_id`, `unique_key`.
+- [ ] `null_cursor=0` for every stream that has a cursor field. The destination creates the cursor column NOT NULL, exactly like `unique_key`, so a single record without a cursor value fails every sync attempt (`An attempt to write null into not nullable column '<cursor>'`). Declaring the field in the schema is not enough — the API may omit it on some records (system-defined objects, never-modified rows). Stamp a fallback in the connector (e.g. `createdAt`, else a fixed sentinel that staging maps back to NULL) or pick a cursor every record carries.
 - [ ] For substreams, parent records are enumerated first and child records reference valid parent ids (use the parent's stable internal id field — e.g. `youtrack_id` from `record['id']` — for routing, NOT a nullable `record.get('idReadable')`-style field, since YouTrack/Jira can return `null` for human-readable IDs in some payloads).
 - [ ] Every `SubstreamPartitionRouter` parent requests a minimal field set; during a substream's `read`, the parent's SQLite requests-cache stays in the KB range (a cache growing to tens/hundreds of MB means a heavy parent — restructure before deploy, see MUST NOT list above).
 - [ ] For incremental streams, the **resume read** (second run, with the captured STATE persisted in `state.json`) returns a strict subset of the first-read records — usually zero. If the resume read returns the same count as the first read, the cursor is not advancing and the manifest is broken.

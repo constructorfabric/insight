@@ -46,6 +46,7 @@ import statistics
 import uuid
 import warnings
 import zipfile
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import assert_never
@@ -576,12 +577,20 @@ def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None
             assert "value" not in keys, (
                 f"{expectation.metric_key}: unexpected value column in {keys}"
             )
+        case Tier.EXACT_RECORDS_PER_DATE:
+            assert "records_that_day" in keys, (
+                f"{expectation.metric_key}: no records_that_day column in {keys}"
+            )
+            assert not {"value", "numerator", "denominator"} & set(keys), (
+                f"{expectation.metric_key}: a record per date projects no number of its own, got {keys}"
+            )
+        case Tier.EXACT_DISTINCT_DATES:
+            pass
         case (
             Tier.EXACT_SUM
             | Tier.EXACT_MEDIAN
             | Tier.EXACT_PERCENTILE
             | Tier.EXACT_STDDEV
-            | Tier.EXACT_DISTINCT_DATES
             | Tier.COLLAPSE_BOUNDED_SUM
             | Tier.STRUCTURAL_ONLY
         ):
@@ -621,6 +630,26 @@ def _assert_percentile(
     assert period in candidates, (
         f"{metric_key}: period {period} is not the p{quantile:.0%} element of "
         f"{len(ordered)} evidence rows, nor its neighbour {sorted(candidates)}"
+    )
+
+
+def _assert_records_per_date(period: float | None, walk: _Walk, expectation: Expectation) -> None:
+    metric_key = expectation.metric_key
+    per_date = Counter(row["date"] for row in walk.rows)
+    for row in walk.rows:
+        assert _numbers([row], "records_that_day", metric_key) == [per_date[row["date"]]], (
+            f"{metric_key}: {row['date']} has {per_date[row['date']]} records, "
+            f"but a row there says {row['records_that_day']}"
+        )
+
+    assert expectation.scale is not None, f"{metric_key}: a ratio without a scale"
+    if not per_date:
+        assert period is None, f"{metric_key}: no records but the metric answered {period}"
+        return
+    evidence = expectation.scale * len(walk.rows) / len(per_date)
+    assert period is not None and _close(evidence, period), (
+        f"{metric_key}: {len(walk.rows)} records over {len(per_date)} dates is {evidence}, "
+        f"against a metric value of {period}"
     )
 
 
@@ -724,6 +753,8 @@ def _reconcile(period: float | None, walk: _Walk, expectation: Expectation) -> N
             _assert_ratio(period, walk, expectation, bounded=False)
         case Tier.COLLAPSE_BOUNDED_RATIO:
             _assert_ratio(period, walk, expectation, bounded=True)
+        case Tier.EXACT_RECORDS_PER_DATE:
+            _assert_records_per_date(period, walk, expectation)
         case Tier.EXACT_DISTINCT_DATES:
             dates = {row["date"] for row in walk.rows}
             assert len(dates) == period, (

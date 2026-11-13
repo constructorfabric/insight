@@ -193,14 +193,13 @@ SELECT
 FROM {{ source('bronze_claude_team', 'claude_team_code_metrics') }}
 WHERE email IS NOT NULL
   AND trim(email) != ''
-  -- Guard against NULL metric_date: toDate(NULL) → 1970-01-01 silently
-  -- corrupts the incremental boundary (same guard as cursor__ai_dev_usage).
+  -- Guard against NULL metric_date: toDate(NULL) → a phantom 1970-01-01 day.
   AND metric_date IS NOT NULL
-  -- Activity gate over the same counters assert_ai_dev_usage_rows_active
-  -- checks, so a roster row with no work on `day` never reaches the class.
+  -- INVARIANT: the gate reads cost as the cents `cost_cents` emits, so a
+  -- sub-cent cost cannot admit a row that stores no activity.
   AND (coalesce(total_sessions, 0) > 0
        OR coalesce(total_lines_accepted, 0) > 0
-       OR coalesce(toFloat64OrNull(toString(total_cost)), 0) > 0
+       OR coalesce(round(toFloat64OrNull(toString(total_cost)) * 100), 0) > 0
        OR coalesce(prs_with_cc, 0) > 0
        OR coalesce(total_prs, 0) > 0)
   -- The read this row came from has to have brought the whole day. Rejected
@@ -213,16 +212,8 @@ WHERE email IS NOT NULL
           SELECT insight_tenant_id, source_id, day, read_id FROM admitted_reads
       )
 {% if is_incremental() %}
-  -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
-  -- tests) `max(day)` is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`
-  -- underflows the Date range, wrapping to ~2149-06-04 — which filters out every
-  -- row and leaves the model empty. Short-circuit when empty so the full set is
-  -- (re)loaded. Mirrors the cursor__ai_dev_usage / m365__collab_* guard.
-  AND (
-    (SELECT count() FROM {{ this }}) = 0
-    OR toDate(metric_date) > (
-        SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-        FROM {{ this }}
-    )
-  )
+  -- INVARIANT: the boundary is the extraction time, not `day`. A read that
+  -- backfills old days, or whose transform failed, carries days older than
+  -- anything a later read stored; a business-date boundary strands them.
+  AND _airbyte_extracted_at > {{ instance_incremental_watermark('collected_at', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
 {% endif %}

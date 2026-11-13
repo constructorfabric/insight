@@ -14,10 +14,11 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{Algorithm, Header};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use toolkit_canonical_errors::CanonicalError;
+use toolkit_security::crypto::signature::EcdsaP256KeyPair;
 use uuid::Uuid;
 
 /// Default lifetime of a minted client assertion (seconds). Well within the
@@ -82,7 +83,7 @@ pub struct ServiceTokenClient {
     service: String,
     /// Token endpoint URL; also the `aud` the assertion is minted for.
     endpoint: String,
-    encoding: EncodingKey,
+    signing: EcdsaP256KeyPair,
     assertion_ttl_seconds: u64,
     http: reqwest::Client,
     /// Cache keyed by the (sorted) requested tenant scope. Service tokens are
@@ -106,7 +107,7 @@ impl ServiceTokenClient {
         private_key_pem: &str,
         endpoint: impl Into<String>,
     ) -> Result<Self, CanonicalError> {
-        let encoding = EncodingKey::from_ec_pem(private_key_pem.as_bytes()).map_err(|e| {
+        let signing = EcdsaP256KeyPair::from_pkcs8_pem(private_key_pem).map_err(|e| {
             CanonicalError::internal(format!("invalid service private key PEM: {e}")).create()
         })?;
         let http = reqwest::Client::builder()
@@ -119,7 +120,7 @@ impl ServiceTokenClient {
         Ok(Self {
             service: service.into(),
             endpoint: endpoint.into(),
-            encoding,
+            signing,
             assertion_ttl_seconds: DEFAULT_ASSERTION_TTL_SECONDS,
             http,
             cache: RwLock::new(HashMap::new()),
@@ -167,7 +168,7 @@ impl ServiceTokenClient {
             iat: now,
             exp: now + self.assertion_ttl_seconds,
         };
-        encode(&Header::new(Algorithm::ES256), &claims, &self.encoding)
+        toolkit_security::jwt::encode(&Header::new(Algorithm::ES256), &claims, &self.signing)
             .map_err(|e| CanonicalError::internal(format!("sign client assertion: {e}")).create())
     }
 

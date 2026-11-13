@@ -56,24 +56,55 @@ sources:
             - { key: lines_added, label: Lines added, type: number }
             - { key: lines_removed, label: Lines removed, type: number }
       - key: commit_day
-        evidence_granularity: derived_population
+        evidence_granularity: event
         alias_collapse: max
+        evidence_presentation: *commit_row
       - key: default_commit_day
-        evidence_granularity: derived_population
+        evidence_granularity: event
         alias_collapse: max
+        evidence_presentation: *commit_row
       - key: commit_change_size
         evidence_granularity: event
-        evidence_presentation: *commit_row
+        evidence_presentation:
+          show_value: true
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
+            - { key: lines_added, label: Lines added, type: number }
+            - { key: lines_removed, label: Lines removed, type: number }
       - key: code_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: &commit_lines_row
+          show_value: true
+          record_parts: file_extension
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
       - key: test_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: &commit_line_share_row
+          show_value: true
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
       - key: test_and_code_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_line_share_row
       - key: lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: lines_removed
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: pr_created
         evidence_granularity: event
         evidence_presentation: &pull_request_counted
@@ -154,17 +185,23 @@ sources:
         evidence_granularity: event
         evidence_presentation: *commit_row
       - key: default_code_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: non_default_code_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: default_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: non_default_lines_added
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: default_lines_removed
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: non_default_lines_removed
-        evidence_granularity: source_summary
+        evidence_granularity: event
+        evidence_presentation: *commit_lines_row
       - key: default_pr_created
         evidence_granularity: event
         evidence_presentation: *pull_request_counted
@@ -247,17 +284,25 @@ sources:
     measures:
       - key: tasks_closed
         evidence_granularity: event
+        evidence_presentation:
+          show_value: false
+          value_label: Issues closed
+          detail_columns: &issue_typed_columns
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: type, label: Type }
+      - key: bugs_fixed
+        evidence_granularity: event
+        evidence_presentation:
+          show_value: false
+          detail_columns: *issue_typed_columns
+      - key: closed_task
+        evidence_granularity: event
         evidence_presentation: &issue_counted
           show_value: false
           detail_columns: &issue_columns
             - { key: ref, label: Ref }
             - { key: title, label: Title }
-      - key: bugs_fixed
-        evidence_granularity: event
-        evidence_presentation: *issue_counted
-      - key: closed_task
-        evidence_granularity: event
-        evidence_presentation: *issue_counted
       - key: closed_unknown_type
         evidence_granularity: event
         evidence_presentation: *issue_counted
@@ -285,23 +330,34 @@ sources:
         evidence_granularity: event
         evidence_presentation: *issue_counted
       - key: estimation_error_pct
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: estimation_samples
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: flow_dev_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: flow_lead_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: close_events
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: reopened_within_14d
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: worklog_seconds
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: in_progress_seconds
+        evidence_granularity: event
+        evidence_presentation: *issue_measured
+      - key: logged_hours
         evidence_granularity: derived_population
       - key: stale_in_progress
-        evidence_granularity: derived_population
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: resolution_days
         evidence_granularity: event
         evidence_presentation: *issue_measured
@@ -2668,6 +2724,25 @@ metrics:
         measure_key: estimation_error_pct
       - input_role: denominator
         measure_key: estimation_samples
+    dimensions: []
+  - metric_key: tasks.logged_hours
+    source_key: task
+    subject: predictability
+    tags:
+      - duration
+    label: Logged time
+    short_label: Logged hrs
+    description: Hours logged against issues
+    explanation: All work time logged in the tracker during the period, whatever the issue's status on the day it was logged.
+    unit: h
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: logged_hours
     dimensions: []
   - metric_key: tasks.worklog_accuracy
     source_key: task

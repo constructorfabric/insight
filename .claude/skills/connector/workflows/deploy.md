@@ -103,6 +103,7 @@ If sync fails, get detailed Airbyte logs:
 
 Common sync failures:
 - **NPE getCursor**: cursor field missing from schema → re-run `generate-schema.sh`, update manifest, re-deploy
+- **`An attempt to write null into not nullable column '<cursor>'`** (every attempt, failure origin `destination`): some records carry no cursor value → stamp a fallback cursor in the connector (create.md §5.6 `null_cursor`), release, let reconcile pick up the image
 - **Destination check failed**: ClickHouse database doesn't exist → `airbyte-toolkit/connect.sh` creates it
 - **Source config validation error**: definition mismatch → re-upload manifest, re-run `update-connections.sh`
 - **Breaking schema change** (e.g., renamed primary key): reset and re-deploy:

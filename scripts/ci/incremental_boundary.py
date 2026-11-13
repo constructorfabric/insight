@@ -2,14 +2,17 @@
 """Incremental boundary guard — no dbt model may take a table-wide watermark.
 
 A class table is written by several producers, each stamping `_version` on its
-own clock. `WHERE _version > (SELECT max(_version) FROM {{ this }})` lets one
-producer's newest row raise the boundary past another producer's rows, which
-are then never read again and never reported (#2927). Every incremental model
-uses `silver_incremental_watermark(keys)` instead.
+own clock, and a staging table by several instances of one connector, each
+syncing on its own schedule. A boundary taken as one `max(...)` over the whole
+of `{{ this }}` lets one of them raise it past another's rows, which are then
+never read again and never reported (#2927, #752). Silver models use
+`silver_incremental_watermark(keys)`; any other model compares against
+`instance_incremental_watermark(column)`, which looks up the row's own instance.
 
 Checks
-  1. table-wide — no model under src/ingestion may compare against
-                  `max(_version) FROM {{ this }}`. Comments are ignored.
+  1. table-wide — no model under src/ingestion may close a scalar subquery
+                  `(SELECT max(...) FROM {{ this }})`. A `max` grouped by
+                  instance is allowed. Comments are ignored.
 
 A second check used to read the watermark keys back against the committed DDL
 snapshot, so a misspelt key failed here rather than at the first run. That
@@ -38,7 +41,12 @@ SKIPPED_DIRS = ("dbt/macros", "dbt/tests", "dbt/target", "scripts")
 
 LINE_COMMENT = re.compile(r"--[^\n]*")
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
-TABLE_WIDE = re.compile(r"max\(\s*_version\s*\)\s+FROM\s+\{\{\s*this\s*\}\}", re.IGNORECASE)
+# `max(` and a `FROM {{ this }}` whose subquery closes without a GROUP BY or another SELECT.
+TABLE_WIDE = re.compile(
+    r"\bmax\((?:(?!\bSELECT\b)[\s\S])*?\bFROM\s+\{\{\s*this\s*\}\}"
+    r"(?:(?!\bGROUP\s+BY\b|\bSELECT\b)[^()])*\)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -57,7 +65,7 @@ def has_table_wide_boundary(sql: str) -> bool:
 
 def check_model(path: str, sql: str) -> list[Finding]:
     if has_table_wide_boundary(sql):
-        return [Finding(path, "table-wide `max(_version) FROM {{ this }}` boundary; use silver_incremental_watermark")]
+        return [Finding(path, "table-wide `max(...) FROM {{ this }}` boundary; use an instance-scoped watermark macro")]
     return []
 
 

@@ -28,11 +28,26 @@ class TableWideBoundary(unittest.TestCase):
             TABLE_WIDE,
             "WHERE _version > (select MAX( _version ) from {{this}})",
             "WHERE c._version > (SELECT max(_version)\n FROM {{ this }})",
+            "WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})",
+            "AND toDate(d) > (\n SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY\n FROM {{ this }}\n)",
+            "AND x > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY",
+            "AND d > (SELECT max(day) FROM {{ this }} WHERE day IS NOT NULL)",
         ]
         for sql in cases:
             with self.subTest(sql=sql):
                 errors = ib.check_model("m.sql", sql)
                 self.assertEqual(len(errors), 1, f"should reject: {sql!r}")
+
+    def test_a_boundary_grouped_by_instance_is_allowed(self) -> None:
+        cases = [
+            "LEFT JOIN (SELECT tenant_id, source_id, max(day) AS d FROM {{ this }} GROUP BY tenant_id, source_id) AS w",
+            "WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at') }}",
+            "WHERE x > (SELECT max(y) FROM {{ source('bronze_x', 't') }}) - INTERVAL 3 DAY",
+        ]
+        for sql in cases:
+            with self.subTest(sql=sql):
+                errors = ib.check_model("m.sql", sql)
+                self.assertEqual(errors, [], f"should accept: {sql!r}")
 
     def test_a_boundary_named_only_in_a_comment_is_allowed(self) -> None:
         cases = [

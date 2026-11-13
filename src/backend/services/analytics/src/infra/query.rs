@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
-use sha2::{Digest as _, Sha256};
+use toolkit_security::crypto::hash::Sha256;
 
 use super::metrics::{self, ErrorClass, QueryKind, QueryOutcome};
 use super::not_ready;

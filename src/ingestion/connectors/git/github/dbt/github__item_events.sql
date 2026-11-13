@@ -41,7 +41,7 @@ WITH pull_request_events AS (
         _airbyte_extracted_at
     FROM {{ source('bronze_github', 'pull_request_timeline_events') }} FINAL
     {% if is_incremental() %}
-    WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+    WHERE _airbyte_extracted_at > {{ instance_incremental_watermark('_airbyte_extracted_at') }}
     {% endif %}
 ),
 events AS (

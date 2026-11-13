@@ -1,8 +1,8 @@
 use base64::Engine;
 use insight_clickhouse::MissingRelation;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use toolkit_canonical_errors::CanonicalError;
+use toolkit_security::crypto::hash::Sha256;
 use uuid::Uuid;
 
 use crate::api::error::MetricError;

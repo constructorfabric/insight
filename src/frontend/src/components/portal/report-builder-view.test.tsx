@@ -58,7 +58,7 @@ const preview = {
   columns: [
     { key: "person", label: "Person", data_type: "text" as const },
     {
-      key: "git.commits",
+      key: "git.default_branch_commits",
       label: "Commits",
       data_type: "number" as const,
       format: "decimal" as const,
@@ -70,7 +70,7 @@ const preview = {
 
 function metric(overrides: Record<string, unknown>) {
   return {
-    metric_key: "git.commits",
+    metric_key: "git.default_branch_commits",
     entity_type: "person",
     label: "Commits",
     short_label: null,
@@ -226,6 +226,26 @@ describe("ReportBuilderView", () => {
     expect(screen.queryByText("Development · Delivery")).toBeNull();
   });
 
+  it("omits a person metric no person section shows", () => {
+    mocks.definitions.push(
+      metric({ metric_key: "git.prs_created", label: "PRs opened, any branch" })
+    );
+    render(<ReportBuilderView />);
+
+    expect(
+      screen.queryByRole("checkbox", { name: "PRs opened, any branch" })
+    ).toBeNull();
+  });
+
+  it("offers a custom person metric no person section shows", () => {
+    mocks.definitions.push(
+      metric({ metric_key: "custom.velocity", label: "Velocity", origin: "custom" })
+    );
+    render(<ReportBuilderView />);
+
+    expect(checkbox("Velocity")).toBeInTheDocument();
+  });
+
   it("sends visible people IDs in a people recipe", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
@@ -239,7 +259,7 @@ describe("ReportBuilderView", () => {
           subject: { type: "people", ids: [personId] },
           period: mocks.dateRange,
           granularity: "month",
-          metric_keys: ["git.commits"],
+          metric_keys: ["git.default_branch_commits"],
         },
         signal: expect.any(AbortSignal),
       })
@@ -382,7 +402,7 @@ describe("ReportBuilderView", () => {
       expect(mocks.export).toHaveBeenCalledWith(
         expect.objectContaining({
           format: "csv",
-          recipe: expect.objectContaining({ metric_keys: ["git.commits"] }),
+          recipe: expect.objectContaining({ metric_keys: ["git.default_branch_commits"] }),
           signal: expect.any(AbortSignal),
         })
       )

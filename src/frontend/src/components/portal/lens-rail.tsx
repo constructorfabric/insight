@@ -1,17 +1,18 @@
 import { MessageSquare, Settings, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+} from "react";
 import { useTranslation } from "react-i18next";
 import brandSymbol from "@/assets/brand-symbol.svg";
 import { TEXT_NAME } from "@/lib/type-scale";
 
-
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@gears-frontx/ui-kit";
+import { Popover, PopoverContent, PopoverTrigger } from "@gears-frontx/ui-kit";
 import {
   Sidebar,
   SidebarContent,
@@ -22,8 +23,8 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { resolveText, type DisplayText } from "@/i18n/localized-text";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
-import type { RailEntry, RailItem } from "@/lib/portal/rail-model";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { cn } from "@/lib/utils";
 
@@ -105,6 +106,7 @@ export function LensRail() {
   // sets it — see the note where it is set.
   const [dismissed, setDismissed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsAnchor = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => {
@@ -190,28 +192,28 @@ export function LensRail() {
             mid-letter. Dimming it uniformly was tried first and did nothing:
             the cut, not the contrast, was the problem. */}
         {paneIsBeside ? (
-        <div
-          aria-hidden
-          className={cn(
-            // Absolute, like everything else in the rail: `fixed` worked only
-            // because the rail happens to sit at the viewport's edge and no
-            // ancestor establishes a containing block, neither of which is
-            // enforced anywhere.
-            "pointer-events-none absolute inset-y-0 transition-opacity duration-150",
-            // From the panel's own colour, not the page background — the two
-            // tokens differ, most visibly in dark theme, and starting from the
-            // wrong one puts a step exactly at the seam. Mirrored for RTL:
-            // `insetInlineStart` is logical while a gradient direction is not,
-            // so the opaque end landed away from the panel and reinstated the
-            // hard cut this exists to remove.
-            "bg-gradient-to-r from-sidebar to-transparent rtl:bg-gradient-to-l",
-            open ? "opacity-100" : "opacity-0"
-          )}
-          style={{
-            insetInlineStart: OPEN_WIDTH,
-            width: `calc(${PANE_EDGE} - ${OPEN_WIDTH})`,
-          }}
-        />
+          <div
+            aria-hidden
+            className={cn(
+              // Absolute, like everything else in the rail: `fixed` worked only
+              // because the rail happens to sit at the viewport's edge and no
+              // ancestor establishes a containing block, neither of which is
+              // enforced anywhere.
+              "pointer-events-none absolute inset-y-0 transition-opacity duration-150",
+              // From the panel's own colour, not the page background — the two
+              // tokens differ, most visibly in dark theme, and starting from the
+              // wrong one puts a step exactly at the seam. Mirrored for RTL:
+              // `insetInlineStart` is logical while a gradient direction is not,
+              // so the opaque end landed away from the panel and reinstated the
+              // hard cut this exists to remove.
+              "bg-gradient-to-r from-sidebar to-transparent rtl:bg-gradient-to-l",
+              open ? "opacity-100" : "opacity-0"
+            )}
+            style={{
+              insetInlineStart: OPEN_WIDTH,
+              width: `calc(${PANE_EDGE} - ${OPEN_WIDTH})`,
+            }}
+          />
         ) : null}
         {/* The panel the labels sit on.
             It takes pointer events WHILE OPEN, and that is not a detail: with
@@ -267,140 +269,132 @@ export function LensRail() {
         <SidebarContent className={open ? "overflow-visible" : undefined}>
           <SidebarMenu className="items-start gap-1 ps-2">
             {items.map((item) => (
-              <RailItemButton
-                key={item.id}
-                item={item}
-                active={activeItem === item.id}
-                open={open}
-                onSelect={(picked, viaPointer) => {
-                  if (viaPointer) {
-                    setDismissed(true);
-                    close();
-                  }
-                  selectItem(picked);
-                }}
-              />
+              <SidebarMenuItem key={item.id} className="relative z-10">
+                <RailItemButton
+                  icon={item.icon}
+                  label={item.label}
+                  open={open}
+                  active={activeItem === item.id}
+                  className={item.planned ? "text-muted-foreground" : undefined}
+                  data-planned={item.planned || undefined}
+                  // `detail` counts pointer clicks: keyboard activation reports 0.
+                  onClick={(event) => {
+                    if (event.detail > 0) {
+                      setDismissed(true);
+                      close();
+                    }
+                    selectItem(item);
+                  }}
+                />
+              </SidebarMenuItem>
             ))}
           </SidebarMenu>
         </SidebarContent>
-        <SidebarFooter className="relative z-10 items-start gap-1 ps-2">
-          <FeedbackButton />
-          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <PopoverTrigger
-              render={
-                <RailButton icon={Settings} label="Settings" />
-              }
-            />
-            <PopoverContent
-              side="right"
-              align="end"
-              className="w-64 gap-0 p-1"
-              // Handing focus back to the trigger reopens the rail through
-              // `onFocusCapture`, over the surface just asked for.
-              finalFocus={false}
-            >
-              <AppSidebarFooter
-                showFeedback={false}
-                onNavigate={() => {
-                  setSettingsOpen(false);
-                  // Note 4 above, reached from the footer rather than a zone.
-                  setDismissed(true);
-                  close();
-                }}
-              />
-            </PopoverContent>
-          </Popover>
+        <SidebarFooter className="relative z-10 px-0 py-2">
+          <SidebarMenu className="items-start gap-1 ps-2">
+            <FeedbackButton open={open} />
+            <SidebarMenuItem className="relative z-10">
+              <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+                {/* INVARIANT: the menu anchors to the shut width. The button widens over the pane, and a popover that follows that edge slides out from under the pointer. */}
+                <span
+                  ref={settingsAnchor}
+                  aria-hidden
+                  data-popover-anchor=""
+                  className="pointer-events-none absolute inset-y-0 start-0 w-10"
+                />
+                <PopoverTrigger
+                  render={
+                    <RailItemButton
+                      icon={Settings}
+                      label={{ key: "settings.nav_label" }}
+                      open={open}
+                    />
+                  }
+                />
+                <PopoverContent
+                  anchor={settingsAnchor}
+                  side="right"
+                  align="end"
+                  className="w-64 gap-0 p-1"
+                  // Handing focus back to the trigger reopens the rail through
+                  // `onFocusCapture`, over the surface just asked for.
+                  finalFocus={false}
+                >
+                  <AppSidebarFooter
+                    showFeedback={false}
+                    onNavigate={() => {
+                      setSettingsOpen(false);
+                      // Note 4 above, reached from the footer rather than a zone.
+                      setDismissed(true);
+                      close();
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
     </div>
   );
 }
 
-/** Its own rail slot: inside the settings menu nobody found it. */
-function FeedbackButton() {
-  const { t } = useTranslation();
+function FeedbackButton({ open }: { open: boolean }) {
   const feedback = useFeedbackDialog();
 
   if (!feedback) return null;
 
   return (
-    <RailButton
-      icon={MessageSquare}
-      label={t("feedback.nav_label")}
-      onClick={feedback.openFeedback}
-    />
+    <SidebarMenuItem className="relative z-10">
+      <RailItemButton
+        icon={MessageSquare}
+        label={{ key: "feedback.nav_label" }}
+        open={open}
+        onClick={feedback.openFeedback}
+      />
+    </SidebarMenuItem>
   );
 }
-
-/** The rail's own control shape: an icon, and its name for everyone else. */
-function RailButton({
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  icon: LucideIcon;
-  label: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      onClick={onClick}
-      className={RAIL_BUTTON}
-    >
-      <Icon className="size-[19px]" aria-hidden />
-      <span className="sr-only">{label}</span>
-    </button>
-  );
-}
-
-const RAIL_BUTTON =
-  "flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
 function RailItemButton({
-  item,
-  active,
+  icon: Icon,
+  label,
   open,
-  onSelect,
-}: {
-  item: RailEntry;
-  active: boolean;
+  active = false,
+  className,
+  style,
+  ...props
+}: Omit<ComponentProps<typeof SidebarMenuButton>, "children"> & {
+  icon: LucideIcon;
+  label: DisplayText;
   open: boolean;
-  onSelect: (item: RailItem, viaPointer: boolean) => void;
+  active?: boolean;
 }) {
-  const Icon = item.icon;
+  const { t } = useTranslation();
+  const name = resolveText(t, label);
 
   return (
-    <SidebarMenuItem className="relative z-10">
-      <SidebarMenuButton
-        data-planned={item.planned || undefined}
-        isActive={active}
-        title={item.label}
-        // 40px shut, the full open width while open — see note 2 above. The
-        // icon does not move between the two: the button starts its content at
-        // the same offset either way.
+    <SidebarMenuButton
+      {...props}
+      title={name}
+      isActive={active}
+      className={cn(
+        "h-10 justify-start gap-2 overflow-hidden p-0 ps-3 transition-[width] duration-150",
+        open || "w-10",
+        className
+      )}
+      style={open ? { width: `calc(${OPEN_WIDTH} - 1rem)`, ...style } : style}
+    >
+      <Icon className="shrink-0" />
+      {/* INVARIANT: the span is not its own hit target. The button widens, so the word is the hit area. */}
+      <span
         className={cn(
-          "h-10 justify-start gap-2 overflow-hidden p-0 ps-3 transition-[width] duration-150",
-          open || "w-10",
-          item.planned && "text-muted-foreground"
+          "truncate transition-opacity duration-150",
+          open ? "opacity-100" : "opacity-0"
         )}
-        style={open ? { width: `calc(${OPEN_WIDTH} - 1rem)` } : undefined}
-        // `detail` counts pointer clicks: keyboard activation reports 0.
-        onClick={(e) => onSelect(item, e.detail > 0)}
       >
-        <Icon className="shrink-0" />
-        {/* Visible only while open, and never a pointer target of its own —
-            the button under it is what widens, so the word IS the hit area. */}
-        <span
-          className={cn(
-            "truncate transition-opacity duration-150",
-            open ? "opacity-100" : "opacity-0"
-          )}
-        >
-          {item.label}
-        </span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
+        {name}
+      </span>
+    </SidebarMenuButton>
   );
 }

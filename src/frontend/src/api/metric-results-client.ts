@@ -15,7 +15,8 @@ export type MetricResultViewKind =
   | "peer"
   | "breakdown"
   | "rollup"
-  | "histogram";
+  | "histogram"
+  | "unattributed";
 export type MetricBucket = "day" | "week" | "month";
 export type MetricComputation =
   | "sum"
@@ -87,7 +88,8 @@ export type MetricViewRequest =
       dimensions: string[];
       group_limit?: MetricGroupLimit;
     }
-  | { view: "histogram" };
+  | { view: "histogram" }
+  | { view: "unattributed" };
 
 export interface MetricDimension {
   key: string;
@@ -153,6 +155,7 @@ export type MetricResultView =
   | BreakdownView
   | RollupView
   | HistogramView
+  | UnattributedView
   | MetricErrorView
   | MetricNotReadyView;
 
@@ -235,6 +238,12 @@ export interface RollupView {
     remainder?: boolean;
     label?: string;
   }>;
+}
+
+/** The tenant-wide sum of the work that reaches no person. */
+export interface UnattributedView {
+  view: "unattributed";
+  value: number | null;
 }
 
 interface HistogramBin {

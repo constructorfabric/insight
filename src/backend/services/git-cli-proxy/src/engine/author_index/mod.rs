@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OnceCell};
+use toolkit_security::crypto::hash::Sha256;
 
 use crate::engine::metrics::{self, AuthorIndexFailure};
 use crate::engine::read::authors::AuthorRow;

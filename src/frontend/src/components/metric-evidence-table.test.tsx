@@ -8,6 +8,17 @@ import { AppTooltips, openTooltip } from "@/test/tooltip";
 const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   measureElement: vi.fn(),
+  definitions: new Map<string, { format: string; unit: string | null }>([
+    ["t.hours", { format: "decimal", unit: "h" }],
+    ["t.minutes", { format: "decimal", unit: "min" }],
+    ["t.span_days", { format: "decimal", unit: "d" }],
+    ["t.active_days", { format: "integer", unit: "days" }],
+  ]),
+}));
+
+vi.mock("@/queries/metric-definitions", () => ({
+  useMetricDefinition: (metricKey: string | null) =>
+    (metricKey && mocks.definitions.get(metricKey)) ?? null,
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -212,6 +223,88 @@ describe("MetricEvidenceTable", () => {
 
     expect(screen.queryByRole("button", { name: "Who" })).toBeNull();
     expect(screen.getByRole("columnheader", { name: "Who" })).toBeDefined();
+  });
+
+  describe("a metric measured in time", () => {
+    const timeColumns = [
+      { key: "value", label: "Duration", type: "number" as const },
+      { key: "date", label: "Date", type: "date" as const },
+    ];
+
+    function timeRows(values: number[]) {
+      return values.map((value) => ({ values: { value, date: "2026-07-06" } }));
+    }
+
+    function valueCells(): string[] {
+      return screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => within(row).getAllByRole("cell")[1]!.textContent ?? "");
+    }
+
+    it.each([
+      [
+        "t.hours",
+        [1.5, 0.2, 0, 130.5],
+        ["1 h 30 min", "12 min", "0 min", "131 h"],
+      ],
+      ["t.minutes", [3.25, 12.3456, 75.5], ["3.3 min", "12.3 min", "75.5 min"]],
+      ["t.span_days", [0.5, 2.25, 7.125], ["0.5 d", "2.3 d", "7.1 d"]],
+    ])(
+      "shows a value of %s the way its metric reads",
+      (metricKey, values, shown) => {
+        renderTable({
+          metricKey,
+          columns: timeColumns,
+          rows: timeRows(values),
+        });
+
+        expect(valueCells()).toEqual(shown);
+      }
+    );
+
+    it("leaves a count of days as the server sent it", () => {
+      renderTable({
+        metricKey: "t.active_days",
+        columns: timeColumns,
+        rows: timeRows([1, 0]),
+      });
+
+      expect(valueCells()).toEqual(["1", "0"]);
+    });
+
+    it("keeps hours and minutes in the full record", async () => {
+      const user = userEvent.setup();
+      renderTable({
+        metricKey: "t.hours",
+        columns: timeColumns,
+        rows: timeRows([2.25]),
+      });
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[0]!
+      );
+
+      const record = screen
+        .getAllByRole("cell")
+        .find((cell) => cell.hasAttribute("aria-colspan"))!;
+      expect(within(record).getByText("2 h 15 min")).toBeInTheDocument();
+      expect(within(record).queryByText("2.25")).toBeNull();
+    });
+
+    it("leaves a number column that is not the metric value alone", () => {
+      renderTable({
+        metricKey: "t.hours",
+        columns: [
+          ...timeColumns,
+          { key: "attendees", label: "Attendees", type: "number" as const },
+        ],
+        rows: [{ values: { value: 1.5, date: "2026-07-06", attendees: 4 } }],
+      });
+
+      expect(screen.getByText("1 h 30 min")).toBeInTheDocument();
+      expect(screen.getByText("4")).toBeInTheDocument();
+    });
   });
 
   describe("the full record", () => {

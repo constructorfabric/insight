@@ -90,7 +90,7 @@ pub async fn take(
     if spec.burst == 0 {
         return Ok(true);
     }
-    let digest = <sha2::Sha256 as sha2::Digest>::digest(key.as_bytes());
+    let digest = toolkit_security::crypto::hash::Sha256::digest(key.as_bytes());
     let key_hex = base16(&digest);
     let mut conn = conn.clone();
     let script = redis::Script::new(TOKEN_BUCKET_LUA);

@@ -112,11 +112,17 @@ export function CustomWidget({
       );
     case "bar":
       return (
-        drawable(widget.metric, [widget.x, widget.y], result) ?? (
+        drawable(
+          widget.metric,
+          [widget.x, widget.y, ...(widget.series ? [widget.series] : [])],
+          result
+        ) ?? (
           <CustomBarChart
             result={result}
             x={widget.x}
             y={widget.y}
+            series={widget.series}
+            labels={widget.labels}
             fillHeight={fillHeight}
             onPointClick={onPointClick}
           />

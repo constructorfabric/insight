@@ -176,14 +176,14 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P1D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ (today_utc() - duration('P27D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       datetime_format: "%Y-%m-%d"
-      lookback_window: P0D
+      lookback_window: P4D
       cursor_granularity: P1D
   - type: DeclarativeStream
     name: teams_activity
@@ -383,14 +383,14 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P1D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ (today_utc() - duration('P27D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       datetime_format: "%Y-%m-%d"
-      lookback_window: P0D
+      lookback_window: P4D
       cursor_granularity: P1D
   - type: DeclarativeStream
     name: onedrive_activity
@@ -510,14 +510,14 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P1D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ (today_utc() - duration('P27D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       datetime_format: "%Y-%m-%d"
-      lookback_window: P0D
+      lookback_window: P4D
       cursor_granularity: P1D
   - type: DeclarativeStream
     name: sharepoint_activity
@@ -641,14 +641,14 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P1D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ (today_utc() - duration('P27D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       datetime_format: "%Y-%m-%d"
-      lookback_window: P0D
+      lookback_window: P4D
       cursor_granularity: P1D
 
 spec:

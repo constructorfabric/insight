@@ -9,6 +9,7 @@ use axum::extract::Request;
 use axum::http::header;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use toolkit_security::crypto::constant_time_eq;
 
 use super::error::ApiError;
 
@@ -30,19 +31,6 @@ impl ProxyAuth {
     fn matches(&self, presented: &str) -> bool {
         constant_time_eq(self.token.as_bytes(), presented.as_bytes())
     }
-}
-
-/// Byte-wise constant-time comparison. Length difference short-circuits —
-/// acceptable, since token length is not a secret.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 /// Axum middleware: require `Authorization: Bearer <proxy_token>` on every
@@ -109,25 +97,11 @@ mod tests {
             ("empty bearer", Some("Bearer ")),
             ("prefix of the token", Some("Bearer s3cre")),
             ("token with suffix", Some("Bearer s3cret2")),
+            ("same length, one byte off", Some("Bearer s3creT")),
         ];
         for (name, header_value) in cases {
             let status = status_for(app("s3cret"), header_value).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "case: {name}");
-        }
-    }
-
-    #[test]
-    fn constant_time_eq_agrees_with_plain_equality() {
-        let cases: Vec<(&[u8], &[u8], bool)> = vec![
-            (b"", b"", true),
-            (b"a", b"a", true),
-            (b"a", b"b", false),
-            (b"abc", b"ab", false),
-            (b"ab", b"abc", false),
-            (b"same-token", b"same-token", true),
-        ];
-        for (a, b, expected) in cases {
-            assert_eq!(constant_time_eq(a, b), expected, "a={a:?} b={b:?}");
         }
     }
 }
