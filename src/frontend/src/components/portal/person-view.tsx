@@ -4,9 +4,8 @@ import { SingleGroupView } from "@/components/portal/single-group-view";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { visibleGroups } from "@/lib/insight/groups";
 import { usePageTitle } from "@/lib/portal/document-title-frame";
-import { usePortalNavActions } from "@/lib/portal/portal-nav";
+import { useGo } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useSelectedPersonSection } from "@/lib/portal/use-person-sections";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
@@ -21,11 +20,12 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * The per-section status cards this page used to carry are gone — they said
  * again, in the middle of the page, what the navigation says on its left edge.
  */
-export function PersonView({ person }: { person: string }) {
-  const { setItem } = usePortalNavActions();
+export function PersonView({ person, section }: { person: string; section: string | null }) {
+  const go = useGo();
   const showPlanned = usePortalShowPlanned();
-  const groupIds = visibleGroups(showPlanned).map((group) => group.id);
-  const selectedSection = useSelectedPersonSection();
+  const groups = visibleGroups(showPlanned);
+  const groupIds = groups.map((group) => group.id);
+  const selectedSection = groups.find((group) => group.id === section)?.id ?? null;
   const record = useIcPerson(person);
   const name = record.data ? personDisplayName(record.data) : null;
   usePageTitle(name);
@@ -51,7 +51,7 @@ export function PersonView({ person }: { person: string }) {
           personId={person}
           groupIds={groupIds}
           content="glance"
-          onSelectGroup={(id) => setItem(id)}
+          onSelectGroup={(id) => go({ zone: "person", person, section: id })}
         />
       )}
     </>

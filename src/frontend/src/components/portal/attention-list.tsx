@@ -16,7 +16,6 @@ import {
   groupFlagsByTheme,
   type AttentionFlag,
 } from "@/lib/insight/attention-flags";
-import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { cn } from "@/lib/utils";
 
 const FLAG_ICON = {
@@ -36,15 +35,11 @@ function people(n: number): string {
 }
 
 function PersonRow({ flag }: { flag: AttentionFlag }) {
-  const { setZone } = usePortalNavActions();
   const Icon = FLAG_ICON[iconKey(flag)];
   return (
     <Link
-      to="/ic/$person/personal"
+      to="/people/$person"
       params={{ person: flag.personId }}
-      // A pinned theme zone (Overview, Manage) wins over the route in
-      // `useActiveZone` — clear it so the navigation lands on the Person zone.
-      onClick={() => setZone(null)}
       className="flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-muted"
     >
       <Icon

@@ -36,8 +36,8 @@ vi.mock("@/queries/metric-definitions", () => ({
     isPending: mocks.definitionsPending,
   }),
 }));
-vi.mock("@/lib/portal/portal-nav", () => ({
-  usePortalItem: () => mocks.item,
+vi.mock("@/lib/portal/use-nav-location", () => ({
+  useNavLocation: () => ({ zone: "person", item: mocks.item, person: "", dir: "", lens: "" }),
 }));
 vi.mock("@/queries/metric-results", () => ({
   useMetricCollectionSet: (

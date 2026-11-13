@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@gears-frontx/ui-kit";
 import { useIcPerson } from "@/queries/ic-dashboard";
-import { usePortalNavActions } from "@/lib/portal/portal-nav";
+import { recordUsageEvent, scopeLabel } from "@/telemetry";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { personDisplayName, personName } from "@/lib/identities/person-display";
 import { useVisibleRoster } from "@/queries/visible-roster";
@@ -26,11 +26,9 @@ import { cn } from "@/lib/utils";
  * to People — scoped to the person's own reports if they're a manager, else to
  * their manager's team — and that jump also sets the global org scope, so it only
  * renders when the target is a node the scope can actually reach. Everything is
- * route-driven (clears the pinned zone) and sourced from canonical people;
- * absent fields render nothing.
+ * sourced from canonical people; absent fields render nothing.
  */
 export function PersonHeader({ person }: { person: string }) {
-  const { setScope, setZone } = usePortalNavActions();
   const navigate = useNavigate();
   const { data } = useIcPerson(person);
   const { roster } = useVisibleRoster(true);
@@ -91,15 +89,17 @@ export function PersonHeader({ person }: { person: string }) {
   const hasPeers = peers.length > 1;
 
   function goPerson(personId: string) {
-    setZone(null);
-    void navigate({ to: "/ic/$person/personal", params: { person: personId } });
+    void navigate({ to: "/people/$person", params: { person: personId } });
   }
   function goTeam(personId: string) {
-    setZone(null);
     // Jumping to a team makes that node the visible org scope (design §6), so
     // the topbar badge and every org zone agree with where you just landed.
-    setScope({ root: personId });
-    void navigate({ to: "/ic/$person/team", params: { person: personId } });
+    recordUsageEvent("scope", scopeLabel({ root: personId, directOnly: false }));
+    void navigate({
+      to: "/people/$person/team",
+      params: { person: personId },
+      search: (prev) => ({ ...prev, scope: personId, direct: undefined }),
+    });
   }
 
   const title = (

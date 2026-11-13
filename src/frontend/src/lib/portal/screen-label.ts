@@ -10,6 +10,14 @@ import {
   zoneById,
   zoneItems,
 } from "@/lib/portal/nav-model";
+import {
+  aiItem,
+  homeItem,
+  manageItem,
+  reportItem,
+  sectionOf,
+  teamItem,
+} from "@/lib/portal/portal-routes";
 
 const SEPARATOR = " › ";
 
@@ -74,6 +82,49 @@ function detailLabel(zone: string, detail: string[]): string {
 }
 
 export function screenLabel(path: string): string {
+  const [, first, ...rest] = path.split("/");
+  const [second, third, fourth] = rest;
+  const zone = (id: string) => zoneById(id)!.label;
+  const under = (label: string, detail: string | undefined) =>
+    detail ? `${label}${SEPARATOR}${detail}` : label;
+
+  switch (first) {
+    case "":
+    case undefined:
+      return "Home";
+    case "home":
+      return under(zone("overview"), second && itemLabel("overview", homeItem(second) ?? second));
+    case "explore": {
+      if (second === "ai") return under(zone("aicost"), third && itemLabel("aicost", aiItem(third) ?? third));
+      const direction = DIRECTIONS.find((candidate) => candidate.id === second);
+      if (!direction) return zone("directions");
+      return under(direction.name, third && (lensBySlug(direction, third) ?? third));
+    }
+    case "people":
+      if (third === "team") {
+        return under(zone("people"), fourth && itemLabel("people", teamItem(fourth) ?? fourth));
+      }
+      return under("Person", third && sectionLabel(sectionOf(third)));
+    case "reports":
+      return under(zone("reports"), second && itemLabel("reports", reportItem(second) ?? second));
+    case "manage": {
+      const item = second && itemLabel("manage", manageItem(second) ?? second);
+      if (second === "identities") return under(under(zone("manage"), item), third && (MODE_LABELS[third] ?? third));
+      if (second === "ingestion") return under(under(zone("manage"), item), third);
+      return under(zone("manage"), item);
+    }
+    case "dashboards":
+      return under(zone("custom"), customLabel(rest) || undefined);
+    case "portal":
+    case "ic":
+      // INVARIANT: usage rows recorded before pages had paths of their own still name screens this way.
+      return legacyScreenLabel(path);
+    default:
+      return path;
+  }
+}
+
+function legacyScreenLabel(path: string): string {
   const [, first, second, ...detail] = path.split("/");
   const [third, fourth] = detail;
 
@@ -88,7 +139,6 @@ export function screenLabel(path: string): string {
   }
 
   if (first === "ic" && second) {
-    // `usePortalZone` reads the team route as the People zone.
     if (third === "team") {
       const people = zoneById("people")!.label;
       if (!fourth) return people;

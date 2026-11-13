@@ -34,7 +34,7 @@ function neverLands<T>(): Promise<T> {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  portalRouter.reset("/portal/custom/alerts/a1");
+  portalRouter.reset("/dashboards/alerts/a1");
   vi.mocked(customClient.fetchMetric).mockRejectedValue(
     new CustomApiError(404, null)
   );
@@ -53,7 +53,7 @@ describe("AlertPage", () => {
 
     expect(
       await screen.findByRole("link", { name: "Open pull requests" })
-    ).toHaveAttribute("href", `/portal/custom/metrics/${ALERT.metric}`);
+    ).toHaveAttribute("href", `/dashboards/metrics/${ALERT.metric}`);
     expect(customClient.fetchMetric).toHaveBeenCalledWith(ALERT.metric);
   });
 
@@ -115,7 +115,7 @@ describe("AlertPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit" })).toHaveAttribute(
       "href",
-      "/portal/custom/alerts/a1/edit"
+      "/dashboards/alerts/a1/edit"
     );
   });
 
@@ -343,7 +343,7 @@ describe("AlertPage", () => {
 
     await waitFor(() =>
       expect(portalRouter.navigations).toContainEqual({
-        to: "/portal/custom/alerts",
+        to: "/dashboards/alerts",
       })
     );
     expect(alertsClient.deleteAlert).toHaveBeenCalledWith("a1");
@@ -495,6 +495,6 @@ describe("AlertPage", () => {
     );
     expect(
       screen.getByRole("link", { name: "Back to alerts" })
-    ).toHaveAttribute("href", "/portal/custom/alerts");
+    ).toHaveAttribute("href", "/dashboards/alerts");
   });
 });

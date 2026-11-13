@@ -319,13 +319,13 @@ The portal reaches the same routes from four pages under the Custom zone's catal
 
 | Page | Route | Reads | Writes |
 |------|-------|-------|--------|
-| List | `/portal/custom/alerts` | `GET /v1/alerts`, searched and paged | enable and disable, after reading the rule for its revision |
-| New | `/portal/custom/alerts/new` | metrics catalogue, the picked metric's definition for its columns and their kinds, `GET /v1/alert-destinations`, `POST /v1/alerts/preview` for the current draft | `POST /v1/alerts` |
-| Alert | `/portal/custom/alerts/{id}` | `GET /v1/alerts/{id}`, `GET /v1/alerts/{id}/notifications` | enable, disable, delete |
-| Edit | `/portal/custom/alerts/{id}/edit` | the rule, read after the page mounts, then what New reads | `PUT /v1/alerts/{id}` with `expected_revision` |
-| Destinations | `/portal/custom/destinations` | `GET /v1/alert-destinations` | test, delete |
-| New destination | `/portal/custom/destinations/new` | — | `POST /v1/alert-destinations` |
-| Edit destination | `/portal/custom/destinations/{name}/edit` | the destination, for its non-secret fields and hint | `PUT /v1/alert-destinations/{name}` with every field entered again |
+| List | `/dashboards/alerts` | `GET /v1/alerts`, searched and paged | enable and disable, after reading the rule for its revision |
+| New | `/dashboards/alerts/new` | metrics catalogue, the picked metric's definition for its columns and their kinds, `GET /v1/alert-destinations`, `POST /v1/alerts/preview` for the current draft | `POST /v1/alerts` |
+| Alert | `/dashboards/alerts/{id}` | `GET /v1/alerts/{id}`, `GET /v1/alerts/{id}/notifications` | enable, disable, delete |
+| Edit | `/dashboards/alerts/{id}/edit` | the rule, read after the page mounts, then what New reads | `PUT /v1/alerts/{id}` with `expected_revision` |
+| Destinations | `/dashboards/destinations` | `GET /v1/alert-destinations` | test, delete |
+| New destination | `/dashboards/destinations/new` | — | `POST /v1/alert-destinations` |
+| Edit destination | `/dashboards/destinations/{name}/edit` | the destination, for its non-secret fields and hint | `PUT /v1/alert-destinations/{name}` with every field entered again |
 
 New and Edit draw the condition as a tree: a quantifier, shown only when the metric answers many rows, and groups with their own `all`, `any` or `not` switch, nested by indentation to the depth the API allows. Below it, the metric's columns other than its group-by ones are offered as the context columns to show in a notification, at most five; a column the rule names that the metric no longer answers stays offered, and picking another metric clears the picks. An Editor / JSON switch shows the whole rule draft as text, the body the API and MCP take; both views edit one document, and a draft that does not parse leaves the rule as it stood. A save or toggle that lost a race keeps the input and offers the latest version instead of overwriting it. The list carries no check status because the list route carries none; the latest check is on the alert's page.
 

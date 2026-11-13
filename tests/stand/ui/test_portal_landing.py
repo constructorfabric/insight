@@ -38,5 +38,5 @@ def test_signing_in_lands_in_the_portal(
     # Matched on the path, not the whole URL: a stand may serve the SPA from
     # its own origin rather than the gateway's, and the journey is about where
     # the app puts the reader, not about which host answered.
-    expect(page).to_have_url(re.compile(r"/portal(\?|$)"))
+    expect(page).to_have_url(re.compile(r"/home(\?|$)"))
     expect(portal.rail.zones().first).to_be_visible()

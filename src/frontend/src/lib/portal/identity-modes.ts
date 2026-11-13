@@ -7,15 +7,9 @@ export const MODES = ["queue", "person", "accounts"] as const;
 
 export const DEFAULT_MODE = MODES[0];
 
-/** What earlier releases put in the URL. A link somebody already sent must open
- *  the screen it was sent from, not fall through to the default. */
-const RETIRED_MODES: Readonly<Record<string, (typeof MODES)[number]>> = {
-  people: "person",
-};
-
 export function resolveMode(mode: string | undefined): string {
   if (mode === undefined) return DEFAULT_MODE;
-  return MODES.find((m) => m === mode) ?? RETIRED_MODES[mode] ?? DEFAULT_MODE;
+  return MODES.find((m) => m === mode) ?? DEFAULT_MODE;
 }
 
 export const MODE_LABELS: Readonly<Record<string, string>> = {

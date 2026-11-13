@@ -10,7 +10,7 @@ import {
 import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { cn } from "@/lib/utils";
@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
  * org (attributes are org-wide, not per-view), keeping the control universal.
  */
 export function PortalTopBar() {
-  const { activeZone } = useActiveZone();
+  const { zone: activeZone } = useNavLocation();
   // Nothing under Manage or Custom reads scope, cohort or period.
   const filtered = activeZone !== "manage" && activeZone !== "custom";
 

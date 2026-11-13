@@ -179,7 +179,7 @@ function CatalogueMenu({
           <DropdownMenuItem
             onClick={() =>
               void navigate({
-                to: "/portal/custom/edit/$kind/$name",
+                to: "/dashboards/edit/$kind/$name",
                 params: { kind, name: id },
               })
             }

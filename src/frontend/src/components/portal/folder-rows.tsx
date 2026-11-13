@@ -48,7 +48,7 @@ import {
   useRenameFolder,
 } from "@/queries/custom";
 
-const LIST_PATH = /^\/portal\/custom\/?$/;
+const LIST_PATH = /^\/dashboards\/?$/;
 
 /** Folder counts keep clear of the row's `···`, so the count reads before it. */
 const FOLDER_COUNT = "end-8";
@@ -93,7 +93,7 @@ export function FoldersGroup() {
                   className="pe-16"
                   render={
                     <Link
-                      to="/portal/custom"
+                      to="/dashboards"
                       search={{ folder: folder.id, tag }}
                     />
                   }
@@ -124,7 +124,7 @@ export function FoldersGroup() {
                 isActive={isShown("unfiled")}
                 render={
                   <Link
-                    to="/portal/custom"
+                    to="/dashboards"
                     search={{ folder: "unfiled", tag }}
                   />
                 }

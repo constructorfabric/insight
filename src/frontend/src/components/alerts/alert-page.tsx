@@ -32,7 +32,7 @@ const OFF_HINT = "Turning it off withdraws notifications not yet sent.";
 function BackToAlerts() {
   return (
     <Link
-      to="/portal/custom/alerts"
+      to="/dashboards/alerts"
       className={cn(
         TEXT_BODY,
         "self-start underline decoration-dotted underline-offset-4"
@@ -107,7 +107,7 @@ function Header({ alert }: { alert: Alert }) {
             nativeButton={false}
             render={
               <Link
-                to="/portal/custom/alerts/$id/edit"
+                to="/dashboards/alerts/$id/edit"
                 params={{ id: alert.id }}
               />
             }
@@ -125,7 +125,7 @@ function Header({ alert }: { alert: Alert }) {
             error={remove.error}
             onRemove={() =>
               remove.mutate(alert.id, {
-                onSuccess: () => void navigate({ to: "/portal/custom/alerts" }),
+                onSuccess: () => void navigate({ to: "/dashboards/alerts" }),
               })
             }
             onKeep={() => remove.reset()}
@@ -171,7 +171,7 @@ function Rule({ alert }: { alert: Alert }) {
         <dl className="grid gap-3 sm:grid-cols-2">
           <Fact term="Metric">
             <Link
-              to="/portal/custom/metrics/$name"
+              to="/dashboards/metrics/$name"
               params={{ name: alert.metric }}
               className="underline-offset-4 hover:underline"
             >

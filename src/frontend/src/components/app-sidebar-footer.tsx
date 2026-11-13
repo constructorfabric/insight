@@ -15,8 +15,8 @@ import {
 } from "@/components/ui/sidebar";
 import { getInitials } from "@/lib/insight/get-initials";
 import { resolveZoneItem } from "@/lib/portal/nav-model";
-import { usePortalItem } from "@/lib/portal/portal-nav";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { linkTo } from "@/lib/portal/portal-routes";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
@@ -100,11 +100,7 @@ export function AppSidebarFooter({
   );
 }
 
-/**
- * Active state resolves through `resolveZoneItem`, the resolver the context
- * pane and the zone content use: a private comparison disagrees with them on a
- * bare `?zone=manage` and on a `?zone=` stranded by a person route.
- */
+/** Active state resolves through `resolveZoneItem`, as the context pane's does. */
 function MenuEntry({
   surface,
   icon: Icon,
@@ -116,21 +112,15 @@ function MenuEntry({
   label: string;
   onNavigate?: () => void;
 }) {
-  const { activeZone } = useActiveZone();
-  const item = resolveZoneItem(activeZone, usePortalItem());
+  const { zone, item: picked } = useNavLocation();
+  const item = resolveZoneItem(zone, picked);
 
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        isActive={activeZone === "manage" && item === surface}
+        isActive={zone === "manage" && item === surface}
         render={
-          // `acct` is cleared, not omitted: `retainSearchParams` restores
-          // any portal key ABSENT from the target search.
-          <Link
-            to="/portal"
-            search={{ zone: "manage", item: surface, acct: undefined }}
-            onClick={onNavigate}
-          />
+          <Link {...linkTo({ zone: "manage", item: surface })} onClick={onNavigate} />
         }
       >
         <Icon />

@@ -97,7 +97,7 @@ const createButton = () => screen.getByRole("button", { name: /Create/ });
 beforeEach(() => {
   vi.clearAllMocks();
   assistant.available = false;
-  portalRouter.reset("/portal/custom");
+  portalRouter.reset("/dashboards");
   vi.mocked(customClient.createDefinition).mockResolvedValue(NEW_ID);
   vi.mocked(customClient.putGrant).mockResolvedValue(undefined);
 });
@@ -126,7 +126,7 @@ describe("<CreateDashboardDialog>", () => {
     await user.click(createButton());
 
     await waitFor(() =>
-      expect(portalRouter.pathname).toBe(`/portal/custom/${NEW_ID}`)
+      expect(portalRouter.pathname).toBe(`/dashboards/${NEW_ID}`)
     );
     expect(customClient.createDefinition).toHaveBeenCalledWith(
       "dashboards",
@@ -166,7 +166,7 @@ describe("<CreateDashboardDialog>", () => {
     await user.click(createButton());
 
     await waitFor(() =>
-      expect(portalRouter.pathname).toBe(`/portal/custom/${NEW_ID}`)
+      expect(portalRouter.pathname).toBe(`/dashboards/${NEW_ID}`)
     );
     expect(customClient.putGrant).toHaveBeenCalledWith(
       NEW_TARGET,
@@ -192,7 +192,7 @@ describe("<CreateDashboardDialog>", () => {
     await user.click(createButton());
 
     await waitFor(() =>
-      expect(portalRouter.pathname).toBe(`/portal/custom/${NEW_ID}`)
+      expect(portalRouter.pathname).toBe(`/dashboards/${NEW_ID}`)
     );
     expect(customClient.putGrant).toHaveBeenCalledTimes(1);
     expect(customClient.putGrant).toHaveBeenCalledWith(
@@ -272,7 +272,7 @@ describe("<CreateDashboardDialog>", () => {
     await user.click(createButton());
 
     await waitFor(() =>
-      expect(portalRouter.pathname).toBe(`/portal/custom/${NEW_ID}`)
+      expect(portalRouter.pathname).toBe(`/dashboards/${NEW_ID}`)
     );
     expect(toastsOf(vi.mocked(toast.add), "error")).toContainEqual(expect.objectContaining({ title: "Only an administrator can do this." }));
   });
@@ -287,8 +287,8 @@ describe("<CreateDashboardDialog>", () => {
   });
 
   it.each([
-    ["from Dashboards, staying there", "/portal/custom", 0],
-    ["from Home, moving to Dashboards", "/portal", 1],
+    ["from Dashboards, staying there", "/dashboards", 0],
+    ["from Home, moving to Dashboards", "/home", 1],
   ])(
     "hands the name to the Assistant %s, creating nothing",
     async (_where, pathname, navigations) => {
@@ -311,7 +311,7 @@ describe("<CreateDashboardDialog>", () => {
       expect(customClient.createDefinition).not.toHaveBeenCalled();
       expect(onClose).toHaveBeenCalled();
       expect(portalRouter.navigations).toHaveLength(navigations);
-      expect(portalRouter.pathname).toBe("/portal/custom");
+      expect(portalRouter.pathname).toBe("/dashboards");
     }
   );
 });

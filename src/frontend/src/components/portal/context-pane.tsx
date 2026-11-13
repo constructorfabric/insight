@@ -30,7 +30,7 @@ import {
   zoneSections,
 } from "@/lib/portal/nav-model";
 import { useMetricsViewPaneShown } from "@/lib/portal/metrics-view-pane";
-import { usePortalItem } from "@/lib/portal/portal-nav";
+import { useNavLocation } from "@/lib/portal/use-nav-location";
 import { railItemFor, type RailId } from "@/lib/portal/rail-model";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
@@ -66,7 +66,7 @@ export function ContextPane() {
   const rail = railItemFor(nav.activeZone);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dismissDrawer = useDismissDrawer();
-  const item = usePortalItem();
+  const { item } = useNavLocation();
   const metricsPaneShown = useMetricsViewPaneShown();
 
   const metricsViewOpen =
@@ -219,7 +219,7 @@ function MobileRailNav() {
 }
 
 function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
-  const active = resolveZoneItem(nav.activeZone, usePortalItem());
+  const active = resolveZoneItem(nav.activeZone, useNavLocation().item);
   const visibleZones = new Set(nav.zones.map((zone) => zone.id));
   const { subject, isPending: reachPending } = useHomeSubject();
 

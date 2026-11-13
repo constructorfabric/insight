@@ -1,6 +1,4 @@
-import { defaultZoneItem } from "@/lib/portal/nav-model";
 import { screenLabel } from "@/lib/portal/screen-label";
-import { screenOf } from "@/usage-collection";
 
 export const DOCUMENT_TITLE_APP = "Insight";
 
@@ -28,40 +26,11 @@ export function documentTitle(
   return finish(parts);
 }
 
-export function titleScreenPath(input: {
-  pathname: string;
-  search: string;
-  zone: string;
-  item: string | null;
-}): string {
-  const path = strip(input.pathname);
-  if (path.startsWith("/portal/custom")) return path;
-
-  if (input.zone === "person") {
-    const id = path.match(/^\/ic\/([^/]+)/)?.[1] ?? "viewer";
-    const base = `/ic/${id}/personal`;
-    return input.item ? `${base}/${input.item}` : base;
-  }
-
-  if (input.zone === "people") {
-    const id = path.match(/^\/ic\/([^/]+)/)?.[1] ?? "viewer";
-    const base = `/ic/${id}/team`;
-    return input.item ? `${base}/${input.item}` : base;
-  }
-
-  // INVARIANT: the overview page titles its default item Home, and that is
-  // `screenLabel("/")`. Any other resolved zone, including Person when an
-  // install hides Home, keeps its own screen name.
-  if (input.zone === "overview" && input.item === defaultZoneItem("overview")) {
-    return "/";
-  }
-
-  const params = new URLSearchParams(input.search);
-  params.set("zone", input.zone);
-  if (input.item) params.set("item", input.item);
-  else params.delete("item");
-  const rest = params.toString();
-  return screenOf({ pathname: "/portal", search: rest ? `?${rest}` : "" });
+/** The screen a path names, for the title. */
+export function titleScreenPath(pathname: string): string {
+  const path = strip(pathname);
+  // INVARIANT: Home's default view titles as Home, which is `screenLabel("/")`.
+  return path === "/home" ? "/" : path;
 }
 
 export function dashboardSubject(

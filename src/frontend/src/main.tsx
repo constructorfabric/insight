@@ -78,7 +78,7 @@ function bootstrap(): void {
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
-  recordScreens(router.history);
+  recordScreens(router);
   void startUsageTelemetry(session);
 }
 

@@ -11,15 +11,7 @@ import {
 
 import { useRouterState } from "@tanstack/react-router";
 
-import {
-  DOCUMENT_TITLE_APP,
-  documentTitle,
-  titleScreenPath,
-} from "@/lib/portal/document-title";
-import { resolveZoneItem } from "@/lib/portal/nav-model";
-import { usePortalItem } from "@/lib/portal/portal-nav";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
-import { useSelectedPersonSection } from "@/lib/portal/use-person-sections";
+import { DOCUMENT_TITLE_APP, documentTitle, titleScreenPath } from "@/lib/portal/document-title";
 
 interface TitleSubject {
   pathname: string;
@@ -34,25 +26,9 @@ export function PortalDocumentTitle({ children }: { children: ReactNode }) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const search = useRouterState({
-    select: (state) => state.location.searchStr,
-  });
-  const { activeZone } = useActiveZone();
-  const rawItem = usePortalItem();
-  const section = useSelectedPersonSection();
-  const item =
-    activeZone === "person" ? section : resolveZoneItem(activeZone, rawItem);
 
   return (
-    <DocumentTitleFrame
-      pathname={pathname}
-      screenPath={titleScreenPath({
-        pathname,
-        search: search ?? "",
-        zone: activeZone,
-        item,
-      })}
-    >
+    <DocumentTitleFrame pathname={pathname} screenPath={titleScreenPath(pathname)}>
       {children}
     </DocumentTitleFrame>
   );

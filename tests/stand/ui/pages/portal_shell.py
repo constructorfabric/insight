@@ -61,7 +61,7 @@ class LensRail:
 
 
 class PortalShell:
-    PATH = "/portal"
+    PATH = "/"
 
     def __init__(self, page: Page) -> None:
         self.page = page

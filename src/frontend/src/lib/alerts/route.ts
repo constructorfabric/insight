@@ -5,7 +5,7 @@
  * again would throw on one it left as it came.
  */
 export function alertIdFromPath(pathname: string): string {
-  const match = pathname.match(/^\/portal\/custom\/alerts\/([^/]+)/);
+  const match = pathname.match(/^\/dashboards\/alerts\/([^/]+)/);
   if (!match || match[1] === "new") return "";
 
   return match[1];

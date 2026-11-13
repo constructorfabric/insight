@@ -23,7 +23,7 @@ export function EditLink({
       nativeButton={false}
       render={
         <Link
-          to="/portal/custom/edit/$kind/$name"
+          to="/dashboards/edit/$kind/$name"
           params={{ kind, name: id }}
         />
       }
@@ -41,7 +41,7 @@ export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
       size="sm"
       icon={<Plus />}
       nativeButton={false}
-      render={<Link to="/portal/custom/new/$kind" params={{ kind }} />}
+      render={<Link to="/dashboards/new/$kind" params={{ kind }} />}
     >
       New {noun}
     </Button>

@@ -36,7 +36,7 @@ export function DashboardPageActions({
           nativeButton={false}
           render={
             <Link
-              to="/portal/custom/edit/$kind/$name"
+              to="/dashboards/edit/$kind/$name"
               params={{ kind: "dashboards", name: id }}
             />
           }
@@ -52,9 +52,9 @@ export function DashboardPageActions({
         share={allows.share && carries ? { ownerPersonId } : undefined}
         planned={showPlanned}
         onDuplicated={(copy) =>
-          void navigate({ to: "/portal/custom/$name", params: { name: copy } })
+          void navigate({ to: "/dashboards/$name", params: { name: copy } })
         }
-        onDeleted={() => void navigate({ to: "/portal/custom" })}
+        onDeleted={() => void navigate({ to: "/dashboards" })}
       />
     </span>
   );

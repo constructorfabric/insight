@@ -18,8 +18,8 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mocks.navigate,
 }));
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "me-1" }) }));
-vi.mock("@/lib/portal/use-active-zone", () => ({
-  useActiveZone: () => ({ activeZone: "person", activePerson: "p-1" }),
+vi.mock("@/lib/portal/use-nav-location", () => ({
+  useNavLocation: () => ({ zone: "person", item: null, person: "p-1", dir: "", lens: "" }),
 }));
 vi.mock("@/lib/portal/use-viewer-reach", () => ({
   useViewerReach: () => ({
@@ -107,7 +107,7 @@ describe("useZoneNav", () => {
 
     expect(mocks.navigate).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "/ic/$person/personal",
+        to: "/people/$person",
         params: { person: "me-1" },
       })
     );

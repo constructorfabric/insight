@@ -8,7 +8,7 @@
  * and the strip sizes the tenant in four figures, colouring only the one that
  * is the operator's own work.
  */
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -146,8 +146,7 @@ beforeEach(() => {
   attention.q.isFetching = false;
   attention.q.isPlaceholderData = false;
   attention.q.refetch.mockClear();
-  portalRouter.reset();
-  portalRouter.set({ zone: "manage", item: "identities" });
+  portalRouter.reset("/manage/identities");
 });
 
 describe("IdentitiesView", () => {
@@ -203,8 +202,6 @@ describe("IdentitiesView", () => {
   it("answers a shared ?acct= link even after the backlog is worked to zero", () => {
     attention.q.data = { items: [], rates: RATES };
     portalRouter.set({
-      zone: "manage",
-      item: "identities",
       acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
     });
     render(<IdentitiesView />);
@@ -729,8 +726,6 @@ describe("IdentitiesView", () => {
   it("answers a shared ?acct= link by opening its case", () => {
     attention.q.data = { items: [item({})], rates: RATES };
     portalRouter.set({
-      zone: "manage",
-      item: "identities",
       acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
     });
     render(<IdentitiesView />);
@@ -797,50 +792,27 @@ describe("IdentitiesView", () => {
     expect(within(dialog).queryByText(/link may be stale/i)).not.toBeInTheDocument();
   });
 
-  // Modes are ways IN to the same decisions; the mode rides in the URL so a
+  // Modes are ways IN to the same decisions; the mode rides in the path so a
   // link opens the one it was sent from.
-  it("switches modes through the URL, dropping what was open in the old one", async () => {
+  it("switches modes by path, leaving behind what was open in the old one", async () => {
     attention.q.data = { items: [item({})], rates: RATES };
-    // Selections the window cannot open (mistyped links) leave the values in
-    // the URL with no modal over the tabs — the state the switch must clear.
-    // A person is carried the same way an account is: leaving it behind would
-    // reopen a window over a list that does not contain them.
-    portalRouter.set({
-      zone: "manage",
-      item: "identities",
-      acct: "malformed",
-      person: "not-a-person",
-    });
+    act(() => portalRouter.set({ acct: "malformed", person: "not-a-person", find: "ann", src: "github" }));
     render(<IdentitiesView />);
+    portalRouter.navigations.length = 0;
 
     await userEvent.click(screen.getByRole("tab", { name: /a person and their accounts/i }));
 
-    expect(portalRouter.search.mode).toBe("person");
-    // A case picked in the queue means nothing in a list it is not part of.
-    expect(portalRouter.search.acct).toBeUndefined();
-    expect(portalRouter.search.person).toBeUndefined();
-    // The mode it switched TO is on screen, so the cleared selection is not
-    // just an empty URL over the old surface.
-    expect(
-      screen.getByRole("searchbox", { name: /search people/i }),
-    ).toBeInTheDocument();
+    expect(portalRouter.navigations).toEqual([
+      expect.objectContaining({ to: "/manage/identities/$mode", params: { mode: "person" } }),
+    ]);
+    // A case picked in the queue means nothing in a list it is not part of;
+    // what the operator typed and filtered by is kept.
+    expect(portalRouter.search).toEqual({ find: "ann", src: "github" });
   });
 
-  it("falls back to the queue when the URL names a mode that does not exist", () => {
+  it("opens the mode its path names", () => {
     attention.q.data = { items: [item({})], rates: RATES };
-    portalRouter.set({ zone: "manage", item: "identities", mode: "not-a-mode" });
-    render(<IdentitiesView />);
-
-    expect(screen.getByRole("button", { name: /dev42@example\.com/i })).toBeInTheDocument();
-  });
-
-  // A mode value this console used to publish. Anyone holding such a link would
-  // otherwise land on the queue while the address bar still claimed the person
-  // view — the URL and the screen disagreeing is worse than either alone.
-  it("opens the person view for the mode value an earlier release published", () => {
-    attention.q.data = { items: [item({})], rates: RATES };
-    portalRouter.set({ zone: "manage", item: "identities", mode: "people" });
-    render(<IdentitiesView />);
+    render(<IdentitiesView mode="person" />);
 
     expect(
       screen.getByRole("searchbox", { name: /search people/i }),

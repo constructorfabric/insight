@@ -124,11 +124,11 @@ const CANCEL = cn(
 /** Leaves the form for the list, or for the alert it was editing. */
 function Cancel({ id }: { id?: string }) {
   return id ? (
-    <Link to="/portal/custom/alerts/$id" params={{ id }} className={CANCEL}>
+    <Link to="/dashboards/alerts/$id" params={{ id }} className={CANCEL}>
       Cancel
     </Link>
   ) : (
-    <Link to="/portal/custom/alerts" className={CANCEL}>
+    <Link to="/dashboards/alerts" className={CANCEL}>
       Cancel
     </Link>
   );
@@ -294,7 +294,7 @@ function AlertEditor({
 
     const saved = (alert: Alert) =>
       void navigate({
-        to: "/portal/custom/alerts/$id",
+        to: "/dashboards/alerts/$id",
         params: { id: alert.id },
       });
     const refused = (error: unknown) => refuse(savingRefusal(error).fields);

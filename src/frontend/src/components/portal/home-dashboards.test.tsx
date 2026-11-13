@@ -103,9 +103,9 @@ describe("Home dashboards", () => {
           .getAttribute("href")
       );
     expect(shown).toEqual([
-      "/portal/custom/two",
-      "/portal/custom/three",
-      "/portal/custom/four",
+      "/dashboards/two",
+      "/dashboards/three",
+      "/dashboards/four",
     ]);
     expect(
       asked.map((params) => [

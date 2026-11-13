@@ -154,8 +154,7 @@ beforeEach(() => {
     verb.isError = false;
     verb.error = null;
   }
-  portalRouter.reset();
-  portalRouter.set({ zone: "manage", item: "identities", mode: "person" });
+  portalRouter.reset("/manage/identities/person");
 });
 
 describe("PersonAccountsView", () => {

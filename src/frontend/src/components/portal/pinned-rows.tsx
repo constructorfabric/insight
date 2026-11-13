@@ -43,7 +43,7 @@ function PinnedRow({ pin, active }: { pin: Listed; active: boolean }) {
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={active}
-        render={<Link to="/portal/custom/$name" params={{ name: pin.id }} />}
+        render={<Link to="/dashboards/$name" params={{ name: pin.id }} />}
       >
         <Pin />
         <span>{data?.title || pin.name}</span>

@@ -66,9 +66,9 @@ export function screenPath(path: string): string {
   const segments = path.split("/");
   return segments
     .map((segment, i) =>
-      // The segment after `/ic` is a person key whatever shape it arrives in;
-      // matching on shape alone lets an email through.
-      segments[i - 1] === "ic" ||
+      // The segment after `/people` is a person key whatever shape it arrives
+      // in; matching on shape alone lets an email through.
+      segments[i - 1] === "people" ||
       isDashboardId(segments, i) ||
       isIdentifier(segment)
         ? ":id"
@@ -81,9 +81,9 @@ function isDashboardId(segments: readonly string[], i: number): boolean {
   const segment = segments[i] ?? "";
   if (segment === "") return false;
 
-  const page = segments[i - 2] === "portal" && segments[i - 1] === "custom";
+  const page = segments[i - 1] === "dashboards";
   const editor =
-    segments[i - 3] === "custom" &&
+    segments[i - 3] === "dashboards" &&
     segments[i - 2] === "edit" &&
     segments[i - 1] === "dashboards";
 

@@ -79,8 +79,8 @@ vi.mock("@/lib/portal/use-person-cohort", () => ({
 }));
 // This view only mounts on "At a glance", so no section is ever open under it;
 // `use-person-sections.test.tsx` covers the window scope on both routes.
-vi.mock("@/lib/portal/portal-nav", () => ({
-  usePortalItem: () => null,
+vi.mock("@/lib/portal/use-nav-location", () => ({
+  useNavLocation: () => ({ zone: "person", item: null, person: "", dir: "", lens: "" }),
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({

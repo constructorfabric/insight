@@ -168,7 +168,7 @@ export function MetricsTable({
                     </span>
                   ) : null}
                   <Link
-                    to="/ic/$person/personal"
+                    to="/people/$person"
                     params={{ person: row.entityId }}
                     aria-label={`Open ${row.displayName}`}
                     className="ms-auto shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"

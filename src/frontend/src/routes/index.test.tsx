@@ -10,9 +10,24 @@ vi.mock("@tanstack/react-router", async () => {
   };
 });
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 
 import { Route } from "./index";
+
+const viewer = vi.hoisted(() => ({ personId: "aaaaaaaa-1111-4111-8111-111111111111" }));
+vi.mock("@/auth", () => ({ getViewerPersonId: () => viewer.personId }));
+vi.mock("@/lib/portal/nav-policy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/portal/nav-policy")>();
+  return { ...actual, zoneHidden: (zone: string) => policy.hidden.has(zone) };
+});
+const policy = vi.hoisted(() => ({ hidden: new Set<string>() }));
+
+afterEach(() => {
+  policy.hidden.clear();
+  setPortalShowPlanned(false);
+});
 
 const route = Route as unknown as {
   beforeLoad: () => void;
@@ -29,8 +44,16 @@ function thrownByBeforeLoad(): unknown {
 }
 
 describe("/", () => {
-  it("sends every reader into the portal", () => {
-    expect(thrownByBeforeLoad()).toEqual({ redirect: { to: "/portal" } });
+  it("sends the reader Home", () => {
+    expect(thrownByBeforeLoad()).toEqual({ redirect: { to: "/home", params: {} } });
+  });
+
+  it("sends the reader to their own page where the install leaves Home out", () => {
+    policy.hidden.add("overview");
+
+    expect(thrownByBeforeLoad()).toEqual({
+      redirect: { to: "/people/$person", params: { person: viewer.personId } },
+    });
   });
 
   it("carries no page of its own to land on", () => {

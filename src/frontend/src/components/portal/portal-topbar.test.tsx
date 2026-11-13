@@ -164,7 +164,7 @@ const filters = () => screen.queryByRole("group", { name: "View filters" });
 
 describe("PortalTopBar · zones that filter nothing", () => {
   it("drops the whole filter group on Manage", async () => {
-    portalRouter.set({ zone: "manage" });
+    portalRouter.go("/manage/assistant");
     bar();
 
     // Awaited: the catalog resolves after the first paint.
@@ -173,7 +173,7 @@ describe("PortalTopBar · zones that filter nothing", () => {
   });
 
   it("keeps it on a zone whose numbers the filters move", async () => {
-    portalRouter.set({ zone: "overview" });
+    portalRouter.go("/home");
     bar();
 
     await waitFor(() => expect(filters()).toBeInTheDocument());

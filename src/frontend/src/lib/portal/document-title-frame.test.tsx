@@ -24,7 +24,7 @@ describe("DocumentTitleFrame", () => {
   });
 
   it("sets the screen title and restores Insight when the shell unmounts", () => {
-    const { unmount } = render(shown("/portal", "/", null));
+    const { unmount } = render(shown("/home", "/", null));
     expect(document.title).toBe("Home · Insight");
 
     unmount();
@@ -34,8 +34,8 @@ describe("DocumentTitleFrame", () => {
   it("puts the page subject ahead of the screen name", () => {
     render(
       shown(
-        "/portal/custom/delivery-overview",
-        "/portal/custom/delivery-overview",
+        "/dashboards/delivery-overview",
+        "/dashboards/delivery-overview",
         "Delivery overview"
       )
     );
@@ -45,16 +45,16 @@ describe("DocumentTitleFrame", () => {
   it("follows a rename of the subject on screen", () => {
     const { rerender } = render(
       shown(
-        "/portal/custom/delivery-overview",
-        "/portal/custom/delivery-overview",
+        "/dashboards/delivery-overview",
+        "/dashboards/delivery-overview",
         "Delivery overview"
       )
     );
 
     rerender(
       shown(
-        "/portal/custom/delivery-overview",
-        "/portal/custom/delivery-overview",
+        "/dashboards/delivery-overview",
+        "/dashboards/delivery-overview",
         "Release health"
       )
     );
@@ -64,13 +64,13 @@ describe("DocumentTitleFrame", () => {
   it("drops a subject when the path changes", () => {
     const { rerender } = render(
       shown(
-        "/portal/custom/delivery-overview",
-        "/portal/custom/delivery-overview",
+        "/dashboards/delivery-overview",
+        "/dashboards/delivery-overview",
         "Delivery overview"
       )
     );
 
-    rerender(shown("/portal", "/", null));
+    rerender(shown("/home", "/", null));
     expect(document.title).toBe("Home · Insight");
   });
 });

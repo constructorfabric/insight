@@ -370,14 +370,14 @@ A proposal replaces a definition by naming its id and creates one by carrying no
 
 | Page | Route | Change |
 |------|-------|--------|
-| Custom zone | `/portal/custom` | Open to every signed-in person; the library, editors, chat, alerts, datasets, sharing and orphaned entries shown to administrators only |
-| Dashboards | `/portal/custom` | Owner per row; `Owned by me` and `Shared with me` filters; a folder pane of the caller-visible folders, own, shared and, for an administrator, ownerless, each with its visible count, plus unfiled; creating a folder for everyone; a member sees their visible dashboards, pins and folders |
-| Dashboard | `/portal/custom/$name`, the segment holding the id | Widgets drawn through the dashboard-scoped routes; actions as the matrix allows; the folders holding it, with add and remove where the caller can edit the folder; owner named where the caller can resolve the person; drilldown for administrators |
+| Custom zone | `/dashboards` | Open to every signed-in person; the library, editors, chat, alerts, datasets, sharing and orphaned entries shown to administrators only |
+| Dashboards | `/dashboards` | Owner per row; `Owned by me` and `Shared with me` filters; a folder pane of the caller-visible folders, own, shared and, for an administrator, ownerless, each with its visible count, plus unfiled; creating a folder for everyone; a member sees their visible dashboards, pins and folders |
+| Dashboard | `/dashboards/$name`, the segment holding the id | Widgets drawn through the dashboard-scoped routes; actions as the matrix allows; the folders holding it, with add and remove where the caller can edit the folder; owner named where the caller can resolve the person; drilldown for administrators |
 | Folder | folder pane | Its visible dashboards; rename and remove entries for its owner and editors; delete for its owner; share for administrators who own or edit it |
 | Share | dialog on a dashboard or folder | Grants with level and remove; a picker over every person identity knows except the owner, with a level; a separate `Everyone` choice, off until picked |
 | Who gains access | notice before an entry goes into a folder with grants while the dashboard's `carries` is true, or before a grant is added to a folder holding carrying entries | The folder's people who will see the dashboard, or the dashboards they will see; confirm or cancel |
 | Orphaned | the unfiltered dashboard list and the folder pane, administrators only | An `Orphaned` group after the dashboards, each with owner and last change; orphaned folders after the folders, marked `Orphaned`; neither opens; transfer with an administrator picker |
-| Editors | `/portal/custom/edit/$kind/$name`, `/portal/custom/new/$kind`, metric and widget pages, the `$name` segment holding the id | Free-text names; body pickers store ids, show names |
+| Editors | `/dashboards/edit/$kind/$name`, `/dashboards/new/$kind`, metric and widget pages, the `$name` segment holding the id | Free-text names; body pickers store ids, show names |
 
 The picker searches `GET /v1/persons?q=` and offers every person it returns except the owner; the server rechecks that the target exists. For an administrator, owner names come from `GET /v1/persons?q=<person id>`, one read per distinct owner on the page, cached. A member reads `GET /v1/people/{person_id}`, which answers only people their org-chart visibility reaches; an owner it refuses is shown as no owner. `POST /v1/profiles/batch` is not used: it is limited to the caller's org-chart visibility.
 
@@ -393,7 +393,7 @@ The picker searches `GET /v1/persons?q=` and offers every person it returns exce
 | [In-use refusal](../../../../../src/backend/services/insight-v3-core/src/domain/surfaces.rs) | `CustomError::InUse` | Holder names filtered to visible ones |
 | [Definition store](../../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/) | Migration ledger and scripts | New columns and tables |
 | [Alerts](../alerts/DESIGN.md) | `alert_rules.metric`, `alert_notifications.metric` and `metric_name` | `metric` holds the metric id; a notification also records the metric's name |
-| [Usage telemetry](../../../../../src/frontend/src/telemetry.ts) | `screenPath` masks the segment after `/portal/custom` | An older dashboard's id is its former name, so masking UUIDs alone would let it reach usage |
+| [Usage telemetry](../../../../../src/frontend/src/telemetry.ts) | `screenPath` masks the segment after `/dashboards` | An older dashboard's id is its former name, so masking UUIDs alone would let it reach usage |
 
 ### 3.5 External Dependencies
 

@@ -5,41 +5,39 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 
-import type { PortalSearch } from "@/lib/portal/portal-search";
-
 let currentPath = "/";
-let currentSearch: PortalSearch = {};
 
-vi.mock("@tanstack/react-router", () => ({
-  Link: ({
-    to,
-    search,
-    children,
-    ...rest
-  }: {
-    to: string;
-    search?: Record<string, unknown>;
-    children?: React.ReactNode;
-  } & Record<string, unknown>) => (
-    <a
-      data-testid="link"
-      data-to={to}
-      // `undefined` is a value here — it CLEARS a key — so JSON would hide it.
-      data-search={Object.entries(search ?? {})
-        .map(([k, v]) => `${k}=${String(v)}`)
-        .join("&")}
-      {...rest}
-    >
-      {children}
-    </a>
-  ),
-  useRouterState: ({
-    select,
-  }: {
-    select: (s: { location: { pathname: string } }) => string;
-  }) => select({ location: { pathname: currentPath } }),
-  useSearch: () => currentSearch,
-}));
+vi.mock("@tanstack/react-router", async () => {
+  const { matchesFor } = await import("@/test/portal-router");
+  return {
+    Link: ({
+      to,
+      params,
+      children,
+      ...rest
+    }: {
+      to: string;
+      params?: Record<string, string>;
+      children?: React.ReactNode;
+    } & Record<string, unknown>) => (
+      <a
+        data-testid="link"
+        data-to={to.replace(/\$(\w+)/g, (_, key: string) => params?.[key] ?? "")}
+        {...rest}
+      >
+        {children}
+      </a>
+    ),
+    useRouterState: ({ select }: { select: (state: unknown) => unknown }) =>
+      select({ location: { pathname: currentPath } }),
+    useRouter: () => ({
+      getMatchedRoutes: (path: string) => {
+        const match = matchesFor(path)[0];
+        return [match ? [{ options: { staticData: match.staticData } }] : [], match?.params ?? {}, undefined];
+      },
+    }),
+  };
+});
 
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "alice@x.io", personId: null }),
@@ -119,7 +117,6 @@ function linkOf(label: string): HTMLElement {
 
 beforeEach(() => {
   currentPath = "/";
-  currentSearch = {};
   mocks.openFeedback.mockClear();
 });
 
@@ -127,31 +124,25 @@ describe("AppSidebarFooter", () => {
   it("names the portal's Manage surfaces", () => {
     render(<AppSidebarFooter />);
 
-    expect(linkOf("What's new")).toHaveAttribute("data-to", "/portal");
-    expect(linkOf("What's new")).toHaveAttribute(
-      "data-search",
-      "zone=manage&item=whats-new&acct=undefined"
-    );
+    expect(linkOf("What's new")).toHaveAttribute("data-to", "/manage/news");
   });
 
   it("marks the Manage surface the portal is showing", () => {
-    currentSearch = { zone: "manage", item: "whats-new" };
+    currentPath = "/manage/news";
     render(<AppSidebarFooter />);
 
     expect(entry("What's new")).toHaveAttribute("data-active", "true");
   });
 
-  it("marks nothing when Manage shows its default", () => {
-    currentSearch = { zone: "manage" };
+  it("marks nothing when Manage shows another surface", () => {
+    currentPath = "/manage/assistant";
     render(<AppSidebarFooter />);
 
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
   it("marks nothing from a zone the portal is not showing", () => {
-    // A person route drives the zone from the PATH, not from `?zone=`.
-    currentPath = "/ic/019e2800-0000-7000-8000-00000000a11c/personal";
-    currentSearch = { zone: "manage", item: "whats-new" };
+    currentPath = "/people/019e2800-0000-7000-8000-00000000a11c";
     render(<AppSidebarFooter />);
 
     expect(entry("What's new")).toHaveAttribute("data-active", "false");

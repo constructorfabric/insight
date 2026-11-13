@@ -22,7 +22,7 @@ Built from scratch in `insight-v3-core`. Nothing from analytics.
 - [x] 2. Create a metric in JSON, at runtime
 - [x] 3. Create two widgets in JSON, at runtime — one table, one graph
 - [x] 4. Create a dashboard in JSON
-- [x] 5. Render it at `/portal/custom/{dashboard-name}`
+- [x] 5. Render it at `/dashboards/{dashboard-name}`
 - [x] 6. AI chat in the UI: answers a one-time question from the data, and does 2, 3 and 4 from a message
 
 ### Decided
@@ -39,5 +39,5 @@ Built from scratch in `insight-v3-core`. Nothing from analytics.
 - The chat prompt carries the table names and the field names sampled from each table, so it stops guessing.
 - A name already in use is replaced, and the reply says which names it replaced.
 - A widget whose metric fails shows the error in place of its content; an empty result says so.
-- `/portal/custom` lists all dashboards and links to each. The chat panel sits there too.
+- `/dashboards` lists all dashboards and links to each. The chat panel sits there too.
 - A dashboard created in the chat appears in that list at once, and the page routes to it.

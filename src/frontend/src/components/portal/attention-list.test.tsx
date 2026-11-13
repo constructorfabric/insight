@@ -4,16 +4,13 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 
-import { portalRouter } from "@/test/portal-router";
-
-import { act, render, renderHook, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 
 import type { AttentionFlag } from "@/lib/insight/attention-flags";
-import { usePortalZone } from "@/lib/portal/portal-nav";
 
 import { pid } from "@/test/identity";
 
@@ -99,17 +96,8 @@ describe("AttentionList", () => {
     await openTheme(/Commits/);
     expect(screen.getByRole("link")).toHaveAttribute(
       "href",
-      `/ic/${pid("who")}/personal`
+      `/people/${pid("who")}`
     );
-  });
-
-  it("clears the pinned zone on click so the route-driven Person zone wins", async () => {
-    act(() => portalRouter.set({ zone: "overview" }));
-    const { result } = renderHook(() => usePortalZone());
-    render(<AttentionList flags={[flag({})]} summary="s" />);
-    await openTheme(/Commits/);
-    await userEvent.click(screen.getByRole("link"));
-    expect(result.current).toBeNull();
   });
 
   it("caps the metrics listed, and expands on request", async () => {

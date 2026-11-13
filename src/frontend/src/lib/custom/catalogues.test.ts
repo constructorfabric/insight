@@ -59,43 +59,43 @@ describe("visibleCatalogues", () => {
 describe("catalogueWithheldAt", () => {
   it.each([
     {
-      path: "/portal/custom/alerts",
+      path: "/dashboards/alerts",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/alerts/",
+      path: "/dashboards/alerts/",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/Alerts",
+      path: "/dashboards/Alerts",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/alerts/new",
+      path: "/dashboards/alerts/new",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/alerts/a1/edit",
+      path: "/dashboards/alerts/a1/edit",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/alerts/a1",
+      path: "/dashboards/alerts/a1",
       showPlanned: true,
       policy: ALERTS_HIDDEN,
     },
-    { path: "/portal/custom/alerts", showPlanned: true, policy: ALERTS_BOTH },
+    { path: "/dashboards/alerts", showPlanned: true, policy: ALERTS_BOTH },
     {
-      path: "/portal/custom/new/metrics",
+      path: "/dashboards/new/metrics",
       showPlanned: false,
       policy: METRICS_PLANNED,
     },
     {
-      path: "/portal/custom/edit/metrics/m1",
+      path: "/dashboards/edit/metrics/m1",
       showPlanned: false,
       policy: METRICS_PLANNED,
     },
@@ -111,33 +111,33 @@ describe("catalogueWithheldAt", () => {
 
   it.each([
     {
-      path: "/portal/custom/alerts",
+      path: "/dashboards/alerts",
       showPlanned: true,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/alerts",
+      path: "/dashboards/alerts",
       showPlanned: false,
       policy: EMPTY_NAV_POLICY,
     },
     {
-      path: "/portal/custom/metrics",
+      path: "/dashboards/metrics",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
     {
-      path: "/portal/custom/alertsboard",
+      path: "/dashboards/alertsboard",
       showPlanned: false,
       policy: ALERTS_PLANNED,
     },
-    { path: "/portal/custom", showPlanned: false, policy: ALERTS_PLANNED },
+    { path: "/dashboards", showPlanned: false, policy: ALERTS_PLANNED },
     {
-      path: "/portal/custom/new/dashboards",
+      path: "/dashboards/new/dashboards",
       showPlanned: false,
       policy: METRICS_PLANNED,
     },
     {
-      path: "/portal/custom/edit/widgets/w1",
+      path: "/dashboards/edit/widgets/w1",
       showPlanned: false,
       policy: METRICS_PLANNED,
     },

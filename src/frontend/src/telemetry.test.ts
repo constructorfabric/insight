@@ -33,37 +33,36 @@ const SESSION = {
 describe("screenPath", () => {
   it("drops the person a page is about", () => {
     expect(
-      screenPath("/ic/cccccccc-0000-0000-0000-000000000001/personal/git_output"),
-    ).toBe("/ic/:id/personal/git_output");
+      screenPath("/people/cccccccc-0000-0000-0000-000000000001/git-output"),
+    ).toBe("/people/:id/git-output");
   });
 
   it("drops a person key whatever shape it arrives in", () => {
-    expect(screenPath("/ic/alice.kim@example.com/personal")).toBe("/ic/:id/personal");
-    expect(screenPath("/ic/alice.kim%40example.com/team")).toBe("/ic/:id/team");
+    expect(screenPath("/people/alice.kim@example.com")).toBe("/people/:id");
+    expect(screenPath("/people/alice.kim%40example.com/team")).toBe("/people/:id/team");
   });
 
   it("leaves a path that names no one alone", () => {
-    expect(screenPath("/portal/manage/platform-usage")).toBe(
-      "/portal/manage/platform-usage",
-    );
+    expect(screenPath("/manage/usage")).toBe("/manage/usage");
   });
 
   it.each([
-    ["/portal/custom", "/portal/custom"],
-    ["/portal/custom/", "/portal/custom/"],
-    ["/portal/custom/q3-hiring-plan", "/portal/custom/:id"],
-    ["/portal/custom/Board%20for%20Jane", "/portal/custom/:id"],
-    ["/portal/custom/metrics", "/portal/custom/metrics"],
-    ["/portal/custom/widgets", "/portal/custom/widgets"],
-    ["/portal/custom/datasets", "/portal/custom/datasets"],
-    ["/portal/custom/alerts", "/portal/custom/alerts"],
-    ["/portal/custom/destinations", "/portal/custom/destinations"],
-    ["/portal/custom/new/dashboards", "/portal/custom/new/dashboards"],
-    ["/portal/custom/edit/metrics/m", "/portal/custom/edit/metrics/m"],
-    ["/portal/custom/edit/dashboards/q3-plan", "/portal/custom/edit/dashboards/:id"],
+    ["/dashboards", "/dashboards"],
+    ["/dashboards/", "/dashboards/"],
+    ["/dashboards/q3-hiring-plan", "/dashboards/:id"],
+    ["/exp/preview/dashboards/q3-hiring-plan", "/exp/preview/dashboards/:id"],
+    ["/dashboards/Board%20for%20Jane", "/dashboards/:id"],
+    ["/dashboards/metrics", "/dashboards/metrics"],
+    ["/dashboards/widgets", "/dashboards/widgets"],
+    ["/dashboards/datasets", "/dashboards/datasets"],
+    ["/dashboards/alerts", "/dashboards/alerts"],
+    ["/dashboards/destinations", "/dashboards/destinations"],
+    ["/dashboards/new/dashboards", "/dashboards/new/dashboards"],
+    ["/dashboards/edit/metrics/m", "/dashboards/edit/metrics/m"],
+    ["/dashboards/edit/dashboards/q3-plan", "/dashboards/edit/dashboards/:id"],
     [
-      "/portal/custom/alerts/cccccccc-0000-0000-0000-000000000001",
-      "/portal/custom/alerts/:id",
+      "/dashboards/alerts/cccccccc-0000-0000-0000-000000000001",
+      "/dashboards/alerts/:id",
     ],
   ])("names a custom page %s as %s", (path, shown) => {
     expect(screenPath(path), `path: ${path}`).toBe(shown);
@@ -76,10 +75,10 @@ describe("startUsageTelemetry", () => {
   });
 
   it("keeps the page views that happen while it is still starting", async () => {
-    recordPageView("/portal/people");
+    recordPageView("/people");
     await startUsageTelemetry(SESSION);
 
-    expect(mocks.logEvent).toHaveBeenCalledWith("page_view", { path: "/portal/people" });
+    expect(mocks.logEvent).toHaveBeenCalledWith("page_view", { path: "/people" });
   });
 });
 
@@ -90,22 +89,22 @@ describe("recordUsageEvent", () => {
   });
 
   it("reports the screen the action happened on", () => {
-    recordPageView("/portal/overview/by-direction");
+    recordPageView("/home/directions");
     recordUsageEvent("drill", "git.commits");
 
     expect(mocks.logEvent).toHaveBeenCalledWith("drill", {
       target: "git.commits",
-      path: "/portal/overview/by-direction",
+      path: "/home/directions",
     });
   });
 
   it("reports the screen without the person it is about", () => {
-    recordPageView("/ic/cccccccc-0000-0000-0000-000000000001/personal/git_output");
+    recordPageView("/people/cccccccc-0000-0000-0000-000000000001/git-output");
     recordUsageEvent("period", "month");
 
     expect(mocks.logEvent).toHaveBeenCalledWith("period", {
       target: "month",
-      path: "/ic/:id/personal/git_output",
+      path: "/people/:id/git-output",
     });
   });
 });
@@ -142,7 +141,7 @@ describe("a session opened on somebody else's behalf", () => {
       personId: "p1",
       impersonatorEmail: "operator@example.com",
     } as unknown as Parameters<typeof startUsageTelemetry>[0]);
-    telemetry.recordPageView("/portal/people");
+    telemetry.recordPageView("/people");
     telemetry.recordUsageEvent("drill", "git.commits");
 
     expect(mocks.createTelemetry).not.toHaveBeenCalled();

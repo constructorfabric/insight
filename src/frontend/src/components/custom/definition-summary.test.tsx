@@ -103,7 +103,7 @@ describe("<WidgetSummary>", () => {
     );
 
     const link = await screen.findByRole("link", { name: "Commits per day" });
-    expect(link).toHaveAttribute("href", "/portal/custom/metrics/m-1");
+    expect(link).toHaveAttribute("href", "/dashboards/metrics/m-1");
     expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
   });
 });

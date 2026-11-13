@@ -76,7 +76,7 @@ describe("<DashboardCard>", () => {
 
     expect(
       await screen.findByRole("link", { name: "Open delivery" })
-    ).toHaveAttribute("href", "/portal/custom/delivery");
+    ).toHaveAttribute("href", "/dashboards/delivery");
   });
 
   it("offers no Edit or View beside the menu", async () => {
@@ -101,7 +101,7 @@ describe("<DashboardCard>", () => {
       await screen.findByRole("link", { name: "Open delivery" })
     ).toHaveAttribute(
       "href",
-      "/portal/custom/0190aaaa-0000-7000-8000-000000000001"
+      "/dashboards/0190aaaa-0000-7000-8000-000000000001"
     );
   });
 
