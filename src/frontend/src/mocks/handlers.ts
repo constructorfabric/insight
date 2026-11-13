@@ -1,12 +1,14 @@
 import { http, HttpResponse } from "msw";
 
 import type { AppliedSchedule } from "@/api/connector-health-client";
+import { CONNECTORS_BASE } from "@/api/connectors-client";
 import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import type { MetricDrilldownRequest } from "@/api/metric-drilldown-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
 import { ADMIN_ASSIGNMENTS } from "./admin-assignments";
+import { connectorScheduleMocks } from "./connector-schedules";
 import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { dashboardHandlers } from "./dashboard-handlers";
 import {
@@ -919,7 +921,7 @@ const BRONZE_SLUG = /^bronze_[a-z0-9_]{1,120}$/;
 
 function ingestionHandlers() {
   return [
-    http.get("/api/connectors/v1/ingestion/intensity", ({ request }) => {
+    http.get(`${CONNECTORS_BASE}/ingestion/intensity`, ({ request }) => {
       const params = new URL(request.url).searchParams;
       const grain = params.get("grain") ?? "15m";
       const series = params.get("series");
@@ -1123,12 +1125,13 @@ function connectorHealthHandlers() {
     tenant_id: "00000000-0000-4000-8000-000000000001",
     source_id: `${connector}-main`,
     configured,
-    schedule,
+    ...connectorScheduleMocks.summary(connector, `${connector}-main`, schedule),
     last_sync: histories[connector]?.[0] ?? null,
   });
 
   return [
-    http.get("/api/connectors/v1/connector-health", () => {
+    ...connectorScheduleMocks.handlers,
+    http.get(`${CONNECTORS_BASE}/connector-health`, () => {
       const now = new Date();
       return HttpResponse.json({
         as_of: now.toISOString(),
@@ -1140,7 +1143,7 @@ function connectorHealthHandlers() {
             suspended: false,
             crons: ["0 22 * * *", "0 10 * * *"],
             timezone: "Europe/Sofia",
-            origin: "annotation",
+            origin: "api",
           }),
           summaryRow("example-directory", true, {
             suspended: false,
@@ -1165,7 +1168,7 @@ function connectorHealthHandlers() {
         ],
       });
     }),
-    http.get("/api/connectors/v1/connector-health/:connector/syncs", ({ params }) => {
+    http.get(`${CONNECTORS_BASE}/connector-health/:connector/syncs`, ({ params }) => {
       const connector = String(params.connector);
       return HttpResponse.json({
         connector,

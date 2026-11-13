@@ -1,8 +1,5 @@
-import { AnalyticsApiError } from "@/api/analytics-client";
+import { CONNECTORS_BASE, ConnectorsApiError } from "@/api/connectors-client";
 import { fetchWithAuth } from "@/api/fetch-with-auth";
-
-const BASE =
-  (import.meta.env.VITE_CONNECTORS_BASE as string | undefined) ?? "/api/connectors/v1";
 
 /**
  * The mover's own word for how a sync ended, carried through unchanged.
@@ -56,7 +53,12 @@ export interface ConnectorInstance {
   source_id?: string | null;
 }
 
-export type ScheduleOrigin = "annotation" | "descriptor" | "default";
+export type ScheduleOrigin = "api" | "annotation" | "descriptor" | "default";
+
+export interface InheritedSchedule {
+  crons: string[];
+  origin: ScheduleOrigin;
+}
 
 export interface AppliedSchedule {
   crons: string[];
@@ -65,12 +67,100 @@ export interface AppliedSchedule {
   origin?: ScheduleOrigin | null;
 }
 
+export interface LiveSchedule extends AppliedSchedule {
+  observed_at: string;
+}
+
 export interface ConnectorHealth extends ConnectorInstance {
   connector: string;
   configured: boolean;
   schedule?: AppliedSchedule | null;
+  schedule_request?: ScheduleRequestState | null;
   last_sync?: SyncFact | null;
 }
+
+export type SchedulePendingReason =
+  "no_cronworkflow" | "awaiting_reconcile" | "different_schedule";
+
+export type ScheduleStatus = "inherited" | "pending" | "applied" | "paused";
+
+export interface RequestedSchedule {
+  crons: string[];
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface ScheduleRequestState {
+  read_error?: string | null;
+  crons: string[];
+  revision: number;
+  last_observation?: {
+    status: ScheduleStatus;
+    observed_at: string;
+  } | null;
+}
+
+export interface ConnectorSchedule {
+  connector: string;
+  source_id: string;
+  revision: number;
+  requested?: RequestedSchedule | null;
+  live?: LiveSchedule | null;
+  inherited?: InheritedSchedule | null;
+  status: ScheduleStatus | null;
+  read_error?: string | null;
+  pending_reason?: SchedulePendingReason | null;
+  next_reconcile_at?: string | null;
+  reconcile_interval_secs?: number | null;
+}
+
+export interface ScheduleRead {
+  schedule: ConnectorSchedule;
+  etag: string;
+}
+
+async function scheduleRequest(
+  instance: ConnectorInstanceRef,
+  method: "GET" | "PUT" | "DELETE",
+  etag?: string,
+  crons?: string[]
+): Promise<ScheduleRead> {
+  const headers: Record<string, string> = {};
+  if (etag !== undefined) headers["If-Match"] = etag;
+  if (method === "PUT") headers["Content-Type"] = "application/json";
+  const res = await fetchWithAuth(
+    `${CONNECTORS_BASE}/connectors/${encodeURIComponent(instance.connector)}/${encodeURIComponent(instance.source_id ?? "")}/schedule`,
+    {
+      method,
+      headers,
+      body: method === "PUT" ? JSON.stringify({ crons }) : undefined,
+    }
+  );
+  if (!res.ok)
+    throw new ConnectorsApiError(
+      res.status,
+      await res.json().catch(() => null)
+    );
+  const schedule = (await res.json()) as ConnectorSchedule;
+  const revision = res.headers.get("ETag");
+  if (revision === null)
+    throw new Error(
+      "The schedule response has no revision. Reload and try again."
+    );
+  return { schedule, etag: revision };
+}
+
+export const getConnectorSchedule = (instance: ConnectorInstanceRef) =>
+  scheduleRequest(instance, "GET");
+export const putConnectorSchedule = (
+  instance: ConnectorInstanceRef,
+  etag: string,
+  crons: string[]
+) => scheduleRequest(instance, "PUT", etag, crons);
+export const deleteConnectorSchedule = (
+  instance: ConnectorInstanceRef,
+  etag: string
+) => scheduleRequest(instance, "DELETE", etag);
 
 /** One installation, as the caller names it when asking for its history. */
 export interface ConnectorInstanceRef extends ConnectorInstance {
@@ -78,6 +168,7 @@ export interface ConnectorInstanceRef extends ConnectorInstance {
 }
 
 export interface ConnectorHealthSummary {
+  schedule_read_error?: string | null;
   /** When the service computed this answer. */
   as_of: string;
   /** When the mover was last read. Absent before the first sweep sealed. */
@@ -101,15 +192,18 @@ export interface ConnectorSyncHistory extends ConnectorInstance {
 }
 
 export async function getConnectorHealth(): Promise<ConnectorHealthSummary> {
-  const res = await fetchWithAuth(`${BASE}/connector-health`);
+  const res = await fetchWithAuth(`${CONNECTORS_BASE}/connector-health`);
   if (!res.ok) {
-    throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
+    throw new ConnectorsApiError(
+      res.status,
+      await res.json().catch(() => null)
+    );
   }
   return (await res.json()) as ConnectorHealthSummary;
 }
 
 export async function getConnectorSyncs(
-  instance: ConnectorInstanceRef,
+  instance: ConnectorInstanceRef
 ): Promise<ConnectorSyncHistory> {
   // Both halves or neither. The service refuses half an identity rather than
   // widening the window back to every installation, and a source id is unique
@@ -122,11 +216,14 @@ export async function getConnectorSyncs(
   }
   const query = scope.toString();
   const res = await fetchWithAuth(
-    `${BASE}/connector-health/${encodeURIComponent(instance.connector)}/syncs` +
-      (query === "" ? "" : `?${query}`),
+    `${CONNECTORS_BASE}/connector-health/${encodeURIComponent(instance.connector)}/syncs` +
+      (query === "" ? "" : `?${query}`)
   );
   if (!res.ok) {
-    throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
+    throw new ConnectorsApiError(
+      res.status,
+      await res.json().catch(() => null)
+    );
   }
   return (await res.json()) as ConnectorSyncHistory;
 }

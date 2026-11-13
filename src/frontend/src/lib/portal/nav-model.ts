@@ -394,7 +394,7 @@ export const MANAGE_GROUPS: readonly PaneGroup[] = [
     items: [
       {
         id: "connector-health",
-        label: "Sources & connectors",
+        label: "Connectors",
         icon: Plug,
         adminOnly: true,
       },

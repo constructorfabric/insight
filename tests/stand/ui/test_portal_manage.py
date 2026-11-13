@@ -7,9 +7,9 @@ pytestmark = [pytest.mark.reliability, pytest.mark.stand_smoke]
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.requires_ingestion
-def test_sources_and_connectors_loads(admin_operator_portal: PortalPage) -> None:
+def test_connectors_loads(admin_operator_portal: PortalPage) -> None:
     admin_operator_portal.open_zone("Manage")
-    admin_operator_portal.open_pane_entry("Sources & connectors")
+    admin_operator_portal.open_pane_entry("Connectors")
     admin_operator_portal.verify_page_loaded("page-manage-connector-health")
 
 

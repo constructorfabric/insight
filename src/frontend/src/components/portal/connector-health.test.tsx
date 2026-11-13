@@ -6,7 +6,16 @@
  * number renders as absence rather than a zero, and that a stopped recorder
  * reaches a screen reader as an alert rather than as ordinary prose.
  */
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render as renderWithoutTooltips,
+  screen,
+  waitFor,
+  within,
+  type RenderOptions,
+} from "@testing-library/react";
+import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -48,18 +57,101 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/queries/connector-schedule-author", () => ({
+  useConnectorScheduleAuthor: (personId: string | undefined) =>
+    personId === "00000000-0000-4000-8000-000000000001"
+      ? "you"
+      : "another admin",
+}));
 vi.mock("@/queries/connector-health", () => ({
   useConnectorHealth: () => mocks.summary,
   useConnectorSyncs: () => mocks.syncs,
+  useConnectorSchedule: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+  }),
+  useWriteConnectorSchedule: () => ({ mutateAsync: vi.fn() }),
 }));
 
 import { AppTooltips, openTooltip } from "@/test/tooltip";
+
+vi.mock("@/queries/identity-me", () => ({
+  useMe: () => ({ data: undefined }),
+}));
 
 import { ConnectorHealthPane } from "./connector-health";
 
 const NOW = "2026-01-15T12:00:00.000Z";
 
-function summary(over: Partial<ConnectorHealthSummary> = {}): ConnectorHealthSummary {
+it.each(["pending", "paused"] as const)(
+  "shows only sync history for an unconfigured row with a stale %s request",
+  async (status) => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          source_id: "main",
+          configured: false,
+          schedule: null,
+          schedule_request: {
+            revision: 0,
+            crons: [],
+            last_observation: { status, observed_at: NOW },
+          },
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("example-tracker");
+    const nextSync = within(row).getAllByRole("cell")[2];
+    expect(nextSync).toHaveTextContent(/^—$/);
+    expect(within(nextSync).queryByRole("img")).not.toBeInTheDocument();
+    expect(
+      nextSync.querySelector('[data-slot="schedule-request-status"]')
+    ).toBeNull();
+
+    await userEvent.click(row);
+    expect(
+      screen.getByRole("heading", { name: "Recent syncs" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Schedule" })
+    ).not.toBeInTheDocument();
+  }
+);
+
+it.each(["applied", "pending", "pending"] as const)(
+  "uses request crons for Next sync only for applied requests (%s)",
+  (status) => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          source_id: "main",
+          schedule: { crons: ["0 3 * * *"], timezone: "UTC", suspended: false },
+          schedule_request: {
+            revision: 2,
+            crons: ["*/5 * * * *"],
+            last_observation: { status, observed_at: NOW },
+          },
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+    expect(rowFor("example-tracker")).toHaveTextContent(
+      status === "applied" ? "in ~5 min" : "in ~15 h"
+    );
+  }
+);
+const render = (ui: ReactNode, options?: RenderOptions) =>
+  renderWithoutTooltips(ui, { wrapper: AppTooltips, ...options });
+
+function summary(
+  over: Partial<ConnectorHealthSummary> = {}
+): ConnectorHealthSummary {
   return {
     as_of: NOW,
     checked_at: "2026-01-15T11:59:00.000Z",
@@ -90,15 +182,25 @@ afterEach(() => {
 describe("the next sync is captured when the row renders", () => {
   beforeEach(() => {
     vi.useRealTimers();
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    vi.useFakeTimers({
+      toFake: [
+        "Date",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+      ],
+    });
     vi.setSystemTime(NOW);
     mocks.summary.data = summary({
-      connectors: [{
-        connector: "example-tracker",
-        configured: true,
-        schedule: { crons: ["0 * * * *"], timezone: "UTC", suspended: false },
-        last_sync: null,
-      }],
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: { crons: ["0 * * * *"], timezone: "UTC", suspended: false },
+          last_sync: null,
+        },
+      ],
     });
   });
 
@@ -114,7 +216,9 @@ describe("the next sync is captured when the row renders", () => {
     expect(trigger).toHaveTextContent(/^in ~40 min$/);
 
     vi.setSystemTime(new Date("2026-01-15T14:00:00.000Z"));
-    await act(async () => { trigger.focus(); });
+    await act(async () => {
+      trigger.focus();
+    });
 
     expect(trigger).toHaveFocus();
     expect(trigger).toHaveTextContent(/^in ~40 min$/);
@@ -127,14 +231,20 @@ describe("the next sync is captured when the row renders", () => {
     mocks.summary.data!.as_of = openingTime;
     const trigger = forecast();
 
-    await act(async () => { trigger.focus(); });
+    await act(async () => {
+      trigger.focus();
+    });
     expect(trigger).toHaveTextContent(/^in < 1 min$/);
     expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
 
-    await act(async () => { vi.advanceTimersByTime(29_999); });
+    await act(async () => {
+      vi.advanceTimersByTime(29_999);
+    });
     expect(trigger).toHaveTextContent(/^in < 1 min$/);
 
-    await act(async () => { vi.advanceTimersByTime(1); });
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
     expect(trigger).toHaveTextContent(/^in < 1 min$/);
     expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
     expect(mocks.summary.refetch).not.toHaveBeenCalled();
@@ -144,15 +254,23 @@ describe("the next sync is captured when the row renders", () => {
     vi.setSystemTime(new Date("2026-01-15T12:20:00.000Z"));
     const trigger = forecast();
 
-    await act(async () => { trigger.focus(); });
+    await act(async () => {
+      trigger.focus();
+    });
     expect(trigger).toHaveTextContent(/^in ~40 min$/);
     expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
 
-    await act(async () => { trigger.blur(); });
-    await act(async () => { vi.advanceTimersByTime((2 * 60 + 10) * 60_000); });
+    await act(async () => {
+      trigger.blur();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime((2 * 60 + 10) * 60_000);
+    });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
-    await act(async () => { trigger.focus(); });
+    await act(async () => {
+      trigger.focus();
+    });
     expect(trigger).toHaveTextContent(/^in ~40 min$/);
     expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
   });
@@ -172,14 +290,134 @@ describe("the next sync is captured when the row renders", () => {
 });
 
 describe("the pane prints what it was served", () => {
+  it.each([
+    ["pending", false],
+    ["pending", true],
+    ["pending", false],
+    ["pending", true],
+  ] as const)(
+    "shows the %s request chip without expanding or a row request with schedule known: %s",
+    (status, known) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            configured: true,
+            source_id: "main",
+            schedule: known
+              ? {
+                  crons: ["0 13 * * *"],
+                  timezone: "UTC",
+                  suspended: false,
+                }
+              : null,
+            schedule_request: {
+              crons: [],
+              revision: 2,
+              last_observation: { status, observed_at: NOW },
+            },
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+      const mark = within(rowFor("example-tracker")).getByRole("img", {
+        name:
+          status === "pending"
+            ? "Waiting for reconcile"
+            : "Waiting for reconcile",
+      });
+      expect(mark).toBeInTheDocument();
+      const scheduleCell = mark.closest("td")!;
+      if (known) {
+        expect(within(scheduleCell).getByRole("button")).toHaveTextContent(
+          "in ~1 h"
+        );
+      } else {
+        expect(
+          within(scheduleCell).queryByRole("button")
+        ).not.toBeInTheDocument();
+        expect(scheduleCell).toHaveTextContent("—");
+      }
+      expect(rowFor("example-tracker")).toHaveAttribute(
+        "aria-expanded",
+        "false"
+      );
+      const line = scheduleCell.querySelector('[data-slot="schedule-next"]');
+      expect(line).toHaveClass(
+        "flex",
+        "items-center",
+        "leading-5",
+        "whitespace-nowrap"
+      );
+      expect(line).toContainElement(mark);
+      expect(scheduleCell).toHaveClass("align-middle");
+      expect(scheduleCell.querySelector(".mt-1, .h-6, .invisible")).toBeNull();
+    }
+  );
+  it.each([undefined, "applied", "inherited"] as const)(
+    "keeps one line without a reserved mark slot for %s",
+    (status) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            configured: true,
+            source_id: "main",
+            schedule: {
+              crons: ["0 3 * * *"],
+              timezone: "UTC",
+              suspended: false,
+            },
+            schedule_request: status
+              ? {
+                  crons: status === "applied" ? ["0 3 * * *"] : [],
+                  revision: 2,
+                  last_observation: { status, observed_at: NOW },
+                }
+              : undefined,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+      const line = rowFor("example-tracker").querySelector(
+        '[data-slot="schedule-next"]'
+      );
+      expect(line).toHaveClass(
+        "flex",
+        "items-center",
+        "leading-5",
+        "whitespace-nowrap"
+      );
+      expect(line?.children).toHaveLength(1);
+      expect(line?.closest("td")).toHaveClass("align-middle");
+      expect(
+        rowFor("example-tracker").querySelector(
+          '[data-slot="schedule-request-status"]'
+        )
+      ).toBeNull();
+      expect(
+        rowFor("example-tracker").querySelector(".mt-1, .h-6, .invisible")
+      ).toBeNull();
+      expect(
+        within(rowFor("example-tracker")).queryByRole("img")
+      ).not.toBeInTheDocument();
+    }
+  );
   it("shows suspension and exposes its schedule on keyboard focus", async () => {
     mocks.summary.data = summary({
-      connectors: [{
-        connector: "example-tracker",
-        configured: true,
-        schedule: { crons: ["0 22 * * *", "0 10 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
-        last_sync: null,
-      }],
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: {
+            crons: ["0 22 * * *", "0 10 * * *"],
+            timezone: "UTC",
+            origin: "annotation",
+            suspended: true,
+          },
+          last_sync: null,
+        },
+      ],
     });
     render(<ConnectorHealthPane />);
 
@@ -198,14 +436,26 @@ describe("the pane prints what it was served", () => {
       "UTC · suspended",
       "Suspended: no run is scheduled.",
     ]);
-    expect(within(tooltip).getByText("UTC · suspended")).toHaveClass("text-muted-foreground");
+    expect(within(tooltip).getByText("UTC · suspended")).toHaveClass(
+      "text-muted-foreground"
+    );
     expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
   });
 
   it("keeps each sibling's next sync and schedule on its own row", async () => {
     const schedules = [
-      { crons: ["0 5 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
-      { crons: ["0 17 * * *"], timezone: "Europe/Berlin", origin: "descriptor", suspended: false },
+      {
+        crons: ["0 5 * * *"],
+        timezone: "UTC",
+        origin: "annotation",
+        suspended: true,
+      },
+      {
+        crons: ["0 17 * * *"],
+        timezone: "Europe/Berlin",
+        origin: "descriptor",
+        suspended: false,
+      },
     ] as const;
     mocks.summary.data = summary({
       connectors: schedules.map((schedule, index) => ({
@@ -221,77 +471,124 @@ describe("the pane prints what it was served", () => {
 
     const rows = screen.getAllByRole("row", { expanded: false });
     expect(rows).toHaveLength(2);
-    for (const [index, detail] of ["UTC · suspended", "Europe/Berlin"].entries()) {
+    for (const [index, detail] of [
+      "UTC · suspended",
+      "Europe/Berlin",
+    ].entries()) {
       const cell = within(rows[index]).getAllByRole("cell")[2];
       const trigger = within(cell).getByRole("button");
-      expect(trigger).toHaveTextContent(index === 0 ? /^Suspended$/ : /^in ~4 h$/);
-      await act(async () => { trigger.focus(); });
+      expect(trigger).toHaveTextContent(
+        index === 0 ? /^Suspended$/ : /^in ~4 h$/
+      );
+      await act(async () => {
+        trigger.focus();
+      });
       const tooltip = await screen.findByRole("tooltip");
-      expect(within(tooltip).getByText(schedules[index].crons[0])).toHaveClass("font-mono");
-      expect(within(tooltip).getByText(detail)).toHaveClass("text-muted-foreground");
-      expect(within(tooltip).queryByText(schedules[1 - index].crons[0])).not.toBeInTheDocument();
+      expect(within(tooltip).getByText(schedules[index].crons[0])).toHaveClass(
+        "font-mono"
+      );
+      expect(within(tooltip).getByText(detail)).toHaveClass(
+        "text-muted-foreground"
+      );
+      expect(
+        within(tooltip).queryByText(schedules[1 - index].crons[0])
+      ).not.toBeInTheDocument();
       expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
-      await act(async () => { trigger.blur(); });
-      await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+      await act(async () => {
+        trigger.blur();
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument()
+      );
     }
   });
 
-  it.each(["click", "Enter", "Space"])("the schedule button leaves expansion unchanged on %s", async (gesture) => {
-    mocks.summary.data = summary({
-      connectors: [{
-        connector: "example-tracker",
-        configured: true,
-        schedule: { crons: ["0 22 * * *"], timezone: "UTC", suspended: false },
-        last_sync: null,
-      }],
-    });
-    render(<ConnectorHealthPane />);
+  it.each(["click", "Enter", "Space"])(
+    "the schedule button leaves expansion unchanged on %s",
+    async (gesture) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            configured: true,
+            schedule: {
+              crons: ["0 22 * * *"],
+              timezone: "UTC",
+              suspended: false,
+            },
+            last_sync: null,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
 
-    const row = rowFor("example-tracker");
-    const trigger = within(row).getByRole("button");
-    const user = userEvent.setup();
-    for (const expanded of [false, true]) {
-      if (expanded) await user.click(within(row).getByRole("cell", { name: "example-tracker" }));
-      trigger.focus();
-      if (gesture === "click") {
-        await user.click(trigger);
+      const row = rowFor("example-tracker");
+      const trigger = within(row).getByRole("button");
+      const user = userEvent.setup();
+      for (const expanded of [false, true]) {
+        if (expanded)
+          await user.click(
+            within(row).getByRole("cell", { name: "example-tracker" })
+          );
+        trigger.focus();
+        if (gesture === "click") {
+          await user.click(trigger);
+        } else {
+          await user.keyboard(gesture === "Enter" ? "{Enter}" : " ");
+        }
+        expect(row).toHaveAttribute("aria-expanded", String(expanded));
+      }
+    }
+  );
+
+  it.each(["hover", "focus"] as const)(
+    "exposes the recorded schedule on %s",
+    async (gesture) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            configured: true,
+            schedule: {
+              crons: ["0 22 * * *"],
+              timezone: "Europe/Sofia",
+              suspended: false,
+            },
+            last_sync: null,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+
+      const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+      const trigger = within(cell).getByRole("button");
+      const user = userEvent.setup();
+      if (gesture === "hover") {
+        await user.hover(trigger);
       } else {
-        await user.keyboard(gesture === "Enter" ? "{Enter}" : " ");
+        for (
+          let stop = 0;
+          stop < 5 && document.activeElement !== trigger;
+          stop++
+        ) {
+          await user.tab();
+        }
+        expect(trigger).toHaveFocus();
       }
-      expect(row).toHaveAttribute("aria-expanded", String(expanded));
+
+      const tooltip = await screen.findByRole("tooltip");
+      expect(trigger).toHaveTextContent(/^in ~8 h$/);
+      expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
+      expect(within(tooltip).getByText("Europe/Sofia")).toHaveClass(
+        "text-muted-foreground"
+      );
+      expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
+      expect(rowFor("example-tracker")).toHaveAttribute(
+        "aria-expanded",
+        "false"
+      );
     }
-  });
-
-  it.each(["hover", "focus"] as const)("exposes the recorded schedule on %s", async (gesture) => {
-    mocks.summary.data = summary({
-      connectors: [{
-        connector: "example-tracker",
-        configured: true,
-        schedule: { crons: ["0 22 * * *"], timezone: "Europe/Sofia", suspended: false },
-        last_sync: null,
-      }],
-    });
-    render(<ConnectorHealthPane />);
-
-    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
-    const trigger = within(cell).getByRole("button");
-    const user = userEvent.setup();
-    if (gesture === "hover") {
-      await user.hover(trigger);
-    } else {
-      for (let stop = 0; stop < 5 && document.activeElement !== trigger; stop++) {
-        await user.tab();
-      }
-      expect(trigger).toHaveFocus();
-    }
-
-    const tooltip = await screen.findByRole("tooltip");
-    expect(trigger).toHaveTextContent(/^in ~8 h$/);
-    expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
-    expect(within(tooltip).getByText("Europe/Sofia")).toHaveClass("text-muted-foreground");
-    expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
-    expect(rowFor("example-tracker")).toHaveAttribute("aria-expanded", "false");
-  });
+  );
   it("shows the next sync after the instance, with each tooltip cron on its own line", async () => {
     mocks.summary.data = summary({
       connectors: [
@@ -325,7 +622,9 @@ describe("the pane prints what it was served", () => {
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
     const trigger = within(cell).getByRole("button");
     expect(trigger).toHaveTextContent(/^in ~8 h$/);
-    await act(async () => { trigger.focus(); });
+    await act(async () => {
+      trigger.focus();
+    });
     const tooltip = await screen.findByRole("tooltip");
     const first = within(tooltip).getByText("0 22 * * *");
     const second = within(tooltip).getByText("0 10 * * *");
@@ -333,7 +632,7 @@ describe("the pane prints what it was served", () => {
     expect(first).toHaveClass("font-mono");
     expect(second).toHaveClass("font-mono");
     expect(within(tooltip).getByText("Europe/Sofia")).toHaveClass(
-      "text-muted-foreground",
+      "text-muted-foreground"
     );
   });
 
@@ -350,7 +649,12 @@ describe("the pane prints what it was served", () => {
           {
             connector: "example-tracker",
             configured: true,
-            schedule: { crons: ["0 22 * * *"], timezone, origin, suspended: false },
+            schedule: {
+              crons: ["0 22 * * *"],
+              timezone,
+              origin,
+              suspended: false,
+            },
             last_sync: null,
           },
         ],
@@ -359,32 +663,46 @@ describe("the pane prints what it was served", () => {
 
       const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
       const trigger = within(cell).getByRole("button");
-      expect(trigger).toHaveTextContent(timezone == null ? /^Unknown$/ : /^in ~10 h$/);
-      await act(async () => { trigger.focus(); });
+      expect(trigger).toHaveTextContent(
+        timezone == null ? /^Unknown$/ : /^in ~10 h$/
+      );
+      await act(async () => {
+        trigger.focus();
+      });
       const tooltip = await screen.findByRole("tooltip");
       expect(within(tooltip).getByText(detail)).toBeInTheDocument();
       expect(tooltip.textContent).not.toMatch(/ · $/);
       expect(tooltip).not.toHaveTextContent(/descriptor|default/);
       if (timezone == null) {
-        expect(tooltip).toHaveTextContent("Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.");
+        expect(tooltip).toHaveTextContent(
+          "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded."
+        );
       }
-    },
+    }
   );
 
   it("explains an unreadable expression while preserving the recorded schedule", async () => {
     mocks.summary.data = summary({
-      connectors: [{
-        connector: "example-tracker",
-        configured: true,
-        schedule: { crons: ["0 22 * * *", "@every 5m"], timezone: "UTC", suspended: false },
-        last_sync: null,
-      }],
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: {
+            crons: ["0 22 * * *", "@every 5m"],
+            timezone: "UTC",
+            suspended: false,
+          },
+          last_sync: null,
+        },
+      ],
     });
     render(<ConnectorHealthPane />);
 
     const trigger = within(rowFor("example-tracker")).getByRole("button");
     expect(trigger).toHaveTextContent(/^Unknown$/);
-    await act(async () => { trigger.focus(); });
+    await act(async () => {
+      trigger.focus();
+    });
     const tooltip = await screen.findByRole("tooltip");
     expectTooltipLines(tooltip, [
       "0 22 * * *",
@@ -419,7 +737,7 @@ describe("the pane prints what it was served", () => {
     expect(within(cell).queryByRole("button")).not.toBeInTheDocument();
     await userEvent.click(rowFor("example-tracker"));
     expect(
-      screen.getByText(/no sync has been recorded/i).closest("td"),
+      screen.getByText(/no sync has been recorded/i).closest("td")
     ).toHaveAttribute("colspan", "7");
   });
 
@@ -498,7 +816,12 @@ describe("the pane prints what it was served", () => {
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[1];
     const tenantLine = within(cell).getByText(tenant);
     const sourceLine = within(cell).getByText("example-tracker-main");
-    expect(tenantLine).toHaveClass("max-w-40", "truncate", "text-xs", "text-muted-foreground");
+    expect(tenantLine).toHaveClass(
+      "max-w-40",
+      "truncate",
+      "text-xs",
+      "text-muted-foreground"
+    );
     expect(tenantLine).toHaveAttribute("title", tenant);
     expect(sourceLine).toHaveClass("block");
     expect(sourceLine.nextElementSibling).toBe(tenantLine);
@@ -530,12 +853,13 @@ describe("the pane prints what it was served", () => {
       render(<ConnectorHealthPane />);
 
       const cell = within(rowFor("example-tracker")).getAllByRole("cell")[1];
-      const visibleLines = cell.children.length === 0
-        ? [cell.textContent]
-        : Array.from(cell.children, (child) => child.textContent);
+      const visibleLines =
+        cell.children.length === 0
+          ? [cell.textContent]
+          : Array.from(cell.children, (child) => child.textContent);
       expect(cell).toHaveAccessibleName(label);
       expect(visibleLines).toEqual(lines);
-    },
+    }
   );
 
   it("gives two installations of one connector a row each", () => {
@@ -562,7 +886,9 @@ describe("the pane prints what it was served", () => {
     });
     render(<ConnectorHealthPane />);
 
-    expect(screen.getAllByRole("cell", { name: "claude-team" })).toHaveLength(2);
+    expect(screen.getAllByRole("cell", { name: "claude-team" })).toHaveLength(
+      2
+    );
     for (const [source, tenant] of [
       ["claude-team-main", "acme"],
       ["claude-team-second", "example-tenant"],
@@ -730,12 +1056,14 @@ describe("the pane prints what it was served", () => {
     render(<ConnectorHealthPane />);
 
     expect(
-      screen.getByText(/nothing has been read from the connectors yet/i),
+      screen.getByText(/nothing has been read from the connectors yet/i)
     ).toBeInTheDocument();
     // Deliberately blunt: the word must not appear at all, not even negated.
     // "Nothing here says the connectors are healthy" reads, at a glance, as
     // exactly the claim it was written to disclaim.
-    expect(screen.queryByText(/healthy|up to date|fine/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/healthy|up to date|fine/i)
+    ).not.toBeInTheDocument();
   });
 
   it("does not say nothing has been read when something has", () => {
@@ -746,7 +1074,7 @@ describe("the pane prints what it was served", () => {
 
     expect(screen.getByText(/last checked/i)).toBeInTheDocument();
     expect(
-      screen.queryByText(/nothing has been read/i),
+      screen.queryByText(/nothing has been read/i)
     ).not.toBeInTheDocument();
     expect(screen.getByText(/reported no connector/i)).toBeInTheDocument();
   });
@@ -785,7 +1113,9 @@ describe("a read that failed says so", () => {
     render(<ConnectorHealthPane />);
 
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /retry|try again/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /retry|try again/i })
+    );
     expect(mocks.summary.refetch).toHaveBeenCalled();
   });
 
@@ -795,7 +1125,9 @@ describe("a read that failed says so", () => {
     render(<ConnectorHealthPane />);
 
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.queryByText(/nothing has been read/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/nothing has been read/i)
+    ).not.toBeInTheDocument();
   });
 
   it("keeps a failed window inside its own row", async () => {
@@ -811,7 +1143,9 @@ describe("a read that failed says so", () => {
     // The summary above it is still readable — one connector's unreadable
     // history must not take the page down with it.
     expect(screen.getByRole("table")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /retry|try again/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /retry|try again/i })
+    );
     expect(mocks.syncs.refetch).toHaveBeenCalled();
   });
 
@@ -825,12 +1159,88 @@ describe("a read that failed says so", () => {
     await userEvent.click(rowFor("alpha"));
 
     expect(
-      screen.getByText(/no sync has been recorded for this connector/i),
+      screen.getByText(/no sync has been recorded for this connector/i)
     ).toBeInTheDocument();
   });
 });
 
 describe("a row expands to its recent syncs", () => {
+  it("sizes the sticky expanded pane to the table scroll container at every viewport", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        { connector: "example-tracker", source_id: "main", configured: true },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+    await userEvent.click(rowFor("example-tracker"));
+
+    const table = screen.getByRole("table");
+    expect(table.parentElement).toHaveClass("@container");
+    const cell = document.getElementById(
+      rowFor("example-tracker").getAttribute("aria-controls")!
+    );
+    expect(cell).toHaveClass("px-4", "whitespace-normal");
+    const boundary = cell!.firstElementChild!;
+    expect(boundary).toHaveClass("min-w-0", "[contain:inline-size]");
+    const pane = boundary.firstElementChild!;
+    expect(pane).toHaveClass(
+      "sticky",
+      "left-4",
+      "w-[calc(100cqw-2rem)]",
+      "max-w-full",
+      "min-w-0",
+      "grid-cols-1"
+    );
+    for (const className of [
+      "sm:static",
+      "sm:w-auto",
+      "lg:grid-cols-2",
+      "lg:@3xl:grid-cols-2",
+    ]) {
+      expect(pane).not.toHaveClass(className);
+    }
+    expect(pane).toHaveClass("whitespace-normal", "[overflow-wrap:anywhere]");
+    for (const card of pane.children) expect(card).toHaveClass("min-w-0");
+  });
+
+  it("allows the schedule card to shrink within the expanded row", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        { connector: "example-tracker", source_id: "main", configured: true },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+    await userEvent.click(rowFor("example-tracker"));
+
+    const pane = screen.getByRole("heading", { name: "Schedule" })
+      .parentElement!.parentElement!;
+    expect(pane.parentElement).toHaveClass("min-w-0");
+  });
+
+  it("places the full-width schedule strip before recent syncs in the disclosure", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        { connector: "example-tracker", source_id: "main", configured: true },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+    await userEvent.click(rowFor("example-tracker"));
+
+    const schedule = screen.getByRole("heading", { name: "Schedule" });
+    const history = screen.getByRole("heading", { name: "Recent syncs" });
+    expect(
+      schedule.compareDocumentPosition(history) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    const cell = document.getElementById(
+      rowFor("example-tracker").getAttribute("aria-controls")!
+    )!;
+    const strip = cell.firstElementChild!.firstElementChild!;
+    expect(strip).toHaveClass("grid-cols-1");
+    expect(strip.children[0]).toContainElement(schedule);
+    expect(strip.children[1]).toContainElement(history);
+  });
+
   it("is operable from the keyboard and announces its state", async () => {
     mocks.summary.data = summary({
       connectors: [
@@ -870,11 +1280,9 @@ describe("a row expands to its recent syncs", () => {
     expect(screen.getByText(/recent syncs/i)).toBeInTheDocument();
   });
 
-  it("says the list is a window rather than the whole history", async () => {
+  it("counts recorded syncs rather than presenting the window cap as a count", async () => {
     mocks.summary.data = summary({
-      connectors: [
-        { connector: "alpha", configured: true, last_sync: null },
-      ],
+      connectors: [{ connector: "alpha", configured: true, last_sync: null }],
     });
     mocks.syncs.data = {
       connector: "alpha",
@@ -893,16 +1301,12 @@ describe("a row expands to its recent syncs", () => {
 
     await userEvent.click(rowFor("alpha"));
 
-    expect(
-      screen.getByText(/the most recent 50, not the full history/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Latest 1")).toBeInTheDocument();
   });
 
   it("does not take the row out of the table to make it clickable", () => {
     mocks.summary.data = summary({
-      connectors: [
-        { connector: "alpha", configured: true, last_sync: null },
-      ],
+      connectors: [{ connector: "alpha", configured: true, last_sync: null }],
     });
     render(<ConnectorHealthPane />);
 
@@ -934,9 +1338,7 @@ describe("a row expands to its recent syncs", () => {
 
   it("opens the connector from the keyboard", async () => {
     mocks.summary.data = summary({
-      connectors: [
-        { connector: "alpha", configured: true, last_sync: null },
-      ],
+      connectors: [{ connector: "alpha", configured: true, last_sync: null }],
     });
     render(<ConnectorHealthPane />);
 
@@ -954,9 +1356,7 @@ describe("a row expands to its recent syncs", () => {
     // Copying a connector name out of the table must not open it. The rule is
     // shared with every other console listing, which is the point.
     mocks.summary.data = summary({
-      connectors: [
-        { connector: "alpha", configured: true, last_sync: null },
-      ],
+      connectors: [{ connector: "alpha", configured: true, last_sync: null }],
     });
     render(<ConnectorHealthPane />);
 
@@ -970,4 +1370,12 @@ describe("a row expands to its recent syncs", () => {
 
     expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "false");
   });
+});
+
+it("names the page Connectors", () => {
+  mocks.summary.data = summary({ connectors: [] });
+  render(<ConnectorHealthPane />);
+  expect(
+    screen.getByRole("heading", { name: "Connectors", level: 1 })
+  ).toBeInTheDocument();
 });

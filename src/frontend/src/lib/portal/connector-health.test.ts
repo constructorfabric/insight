@@ -32,7 +32,7 @@ import {
 const MINUTE = 60_000;
 
 describe("the recorded schedule", () => {
-  it.each(["annotation", "descriptor", "default"] as const)(
+  it.each(["api", "annotation", "descriptor", "default"] as const)(
     "keeps the muted schedule line independent of %s origin",
     (origin) => {
       const schedule = { crons: ["0 22 * * *"], origin, suspended: false };

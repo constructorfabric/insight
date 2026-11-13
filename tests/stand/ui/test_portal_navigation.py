@@ -67,7 +67,7 @@ def test_navigation_shows_every_expected_zone_and_entry(
             "Collaboration": ("Files & sharing",),
         },
         "Manage": {
-            "Sources & connectors": (),
+            "Connectors": (),
             "Identities · roles & taxonomy": (),
             "Platform usage": (),
         },

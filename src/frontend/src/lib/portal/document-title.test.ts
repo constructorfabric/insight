@@ -149,3 +149,9 @@ describe("dashboardSubject", () => {
     expect(dashboardSubject("", "")).toBeNull();
   });
 });
+
+it("names the Connectors page in the document title", () => {
+  expect(documentTitle("/portal/manage/connector-health")).toBe(
+    "Connectors · Manage · Insight"
+  );
+});

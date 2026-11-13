@@ -538,14 +538,14 @@ describe("Manage pane", () => {
     expect(screen.getByText("Data")).toBeInTheDocument();
     expect(screen.getByText("People & access")).toBeInTheDocument();
     expect(screen.getByText("Platform")).toBeInTheDocument();
-    expect(screen.getByText("Sources & connectors")).toBeInTheDocument();
+    expect(screen.getByText("Connectors")).toBeInTheDocument();
   });
 
   it("keeps admin-only surfaces away from a non-admin", () => {
     inZone("manage");
     pane();
     expect(screen.queryByText(/Platform usage/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("Sources & connectors")).not.toBeInTheDocument();
+    expect(screen.queryByText("Connectors")).not.toBeInTheDocument();
   });
 
   it("shows admin-only surfaces to an admin", () => {
