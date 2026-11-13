@@ -18,7 +18,7 @@ from airbyte_cdk.models import FailureType
 from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 
-from source_slack.client import SlackAnalyticsClient, SlackApiError, SlackResponseError
+from source_slack.client import SlackApiError, SlackClient, SlackResponseError
 
 logger = logging.getLogger("airbyte")
 
@@ -75,7 +75,7 @@ class UsersDetails(Stream, CheckpointMixin):
     source_defined_cursor = True
     state_checkpoint_interval = None
 
-    def __init__(self, config: Mapping[str, Any], client: SlackAnalyticsClient) -> None:
+    def __init__(self, config: Mapping[str, Any], client: SlackClient) -> None:
         self._client = client
         self._tenant_id = config["insight_tenant_id"]
         self._source_id = config["insight_source_id"]
@@ -141,6 +141,20 @@ class UsersDetails(Stream, CheckpointMixin):
                 failure_type=FailureType.transient_error,
             ) from error
         self._cursor = date.fromisoformat(day)
+
+    def probe(self) -> str | None:
+        """Why the latest published day cannot be read, or None when it can."""
+        day = (today() - PUBLICATION_DELAY).isoformat()
+        try:
+            rows = self._client.member_day(day)
+            next(rows, None)
+            rows.close()
+        except SlackApiError as error:
+            # Slack only says a day is not ready after accepting the token and its scope.
+            return None if error.code == NOT_YET_AVAILABLE else str(error)
+        except (SlackResponseError, OSError) as error:
+            return f"admin.analytics.getFile failed: {error}"
+        return None
 
     def _stamp(self, row: Mapping[str, Any], day: str) -> dict[str, Any]:
         user_id = row.get("user_id")

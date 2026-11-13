@@ -1,4 +1,4 @@
-"""admin.analytics.getFile over HTTP.
+"""Slack Web API over HTTP: the workspace plan and admin.analytics.getFile.
 
 Slack answers a served day with a gzip file of JSON Lines and a refused day with
 HTTP 200 and a JSON body `{"ok": false, "error": "<code>"}`. The two share a
@@ -20,6 +20,7 @@ import math
 import time
 import zlib
 from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -29,6 +30,7 @@ import requests
 logger = logging.getLogger("airbyte")
 
 API_URL = "https://slack.com/api/admin.analytics.getFile"
+BILLING_URL = "https://slack.com/api/team.billing.info"
 TIMEOUT = 60
 MAX_RETRIES = 5
 BACKOFF_BASE_SECS = 2.0
@@ -53,10 +55,19 @@ _MAX_GZIP_LAYERS = 2
 class SlackApiError(Exception):
     """Slack refused a request with `ok: false`."""
 
-    def __init__(self, code: str, day: str) -> None:
-        super().__init__(f"Slack refused admin.analytics.getFile for {day}: {code}")
+    def __init__(self, code: str, day: str | None = None, method: str = "admin.analytics.getFile") -> None:
+        super().__init__(f"Slack refused {method}" + (f" for {day}" if day else "") + f": {code}")
         self.code = code
         self.day = day
+        self.method = method
+
+
+@dataclass(frozen=True)
+class Billing:
+    """The workspace plan and the scopes the token was granted."""
+
+    plan: str
+    scopes: frozenset[str]
 
 
 class SlackResponseError(Exception):
@@ -202,33 +213,68 @@ def _rows(response: requests.Response, day: str) -> Iterator[dict[str, Any]]:
         yield dict(row)
 
 
-class SlackAnalyticsClient:
+def _scopes(response: requests.Response) -> frozenset[str]:
+    """The token's scopes, which Slack sends in `x-oauth-scopes` on every Web API answer."""
+    header = response.headers.get("x-oauth-scopes")
+    if header is None:
+        raise SlackResponseError("team.billing.info: no x-oauth-scopes header")
+    return frozenset(filter(None, (scope.strip() for scope in header.split(","))))
+
+
+class SlackClient:
     def __init__(self, token: str, session: requests.Session | None = None) -> None:
         self._session = session or requests.Session()
         self._session.headers["Authorization"] = f"Bearer {token}"
 
-    def _get(self, day: str) -> requests.Response:
-        """The day's response, headers read and body unread, after retrying what Slack calls temporary."""
-        params = {"type": "member", "date": day}
+    def _send(self, method: str, url: str, label: str, params: Mapping[str, str] | None = None) -> requests.Response:
+        """The response, headers read and body unread, after retrying what Slack calls temporary."""
         for attempt in itertools.count():
             try:
-                response = self._session.get(API_URL, params=params, timeout=TIMEOUT, stream=True)
+                response = self._session.request(method, url, params=params, timeout=TIMEOUT, stream=True)
             except requests.RequestException as error:
                 if attempt >= MAX_RETRIES:
                     raise
-                logger.warning("getFile %s failed (%s), retrying", day, type(error).__name__)
+                logger.warning("%s failed (%s), retrying", label, type(error).__name__)
                 time.sleep(_wait(None, attempt))
                 continue
             if response.status_code in _RETRY_STATUSES and attempt < MAX_RETRIES:
                 wait = _wait(response, attempt)
                 response.close()
-                logger.warning("getFile %s answered HTTP %s, retrying in %.0fs", day, response.status_code, wait)
+                logger.warning("%s answered HTTP %s, retrying in %.0fs", label, response.status_code, wait)
                 time.sleep(wait)
                 continue
             if response.status_code != 200:
                 response.close()
-                raise SlackResponseError(f"{day}: HTTP {response.status_code}")
+                raise SlackResponseError(f"{label}: HTTP {response.status_code}")
             return response
+        raise AssertionError("unreachable")
+
+    def _get(self, day: str) -> requests.Response:
+        return self._send("GET", API_URL, day, {"type": "member", "date": day})
+
+    def billing(self) -> Billing:
+        """The plan from team.billing.info and the scopes of the token."""
+        method = "team.billing.info"
+        for attempt in itertools.count():
+            with self._send("POST", BILLING_URL, method) as response:
+                try:
+                    body = response.json()
+                except ValueError as error:
+                    raise SlackResponseError(f"{method}: body is not JSON") from error
+                if not isinstance(body, Mapping):
+                    raise SlackResponseError(f"{method}: body is not a JSON object")
+                if body.get("ok") is not True:
+                    refusal = SlackApiError(str(body.get("error") or "unknown_error"), method=method)
+                    if refusal.code not in RETRY_ERRORS or attempt >= MAX_RETRIES:
+                        raise refusal
+                    wait = _wait(response, attempt)
+                    logger.warning("%s, retrying in %.0fs", refusal, wait)
+                    time.sleep(wait)
+                    continue
+                plan = body.get("plan")
+                if not isinstance(plan, str):
+                    raise SlackResponseError(f"{method}: answer has no plan")
+                return Billing(plan, _scopes(response))
         raise AssertionError("unreachable")
 
     def member_day(self, day: str) -> Iterator[dict[str, Any]]:

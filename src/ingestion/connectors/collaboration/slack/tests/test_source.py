@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 
 import pytest
-import requests_mock as rm
-from conftest import CONFIG, day_url, member_file, refusal
+from conftest import CONFIG, day_url, member_file, refusal, slack
 from source_slack.source import SourceSlack
 
 _LOG = logging.getLogger("test")
+REPORT = "Plan Business+ (plus). Streams to read: users_details. Missing scopes: none."
 
 
 def test_spec_requires_the_insight_identity_and_the_token() -> None:
@@ -20,21 +20,21 @@ def test_spec_requires_the_insight_identity_and_the_token() -> None:
 
 
 def test_check_passes_when_slack_serves_the_latest_day() -> None:
-    with rm.Mocker() as http:
+    with slack() as http:
         http.get(day_url("2026-10-02"), **member_file("2026-10-02"))
 
-        assert SourceSlack().check_connection(_LOG, CONFIG) == (True, None)
+        assert SourceSlack().check_connection(_LOG, CONFIG) == (True, REPORT)
 
 
 def test_check_passes_when_the_latest_day_is_not_published_yet() -> None:
-    with rm.Mocker() as http:
+    with slack() as http:
         http.get(day_url("2026-10-02"), **refusal("file_not_yet_available"))
 
-        assert SourceSlack().check_connection(_LOG, CONFIG) == (True, None)
+        assert SourceSlack().check_connection(_LOG, CONFIG) == (True, REPORT)
 
 
 def test_check_names_slacks_refusal() -> None:
-    with rm.Mocker() as http:
+    with slack() as http:
         http.get(day_url("2026-10-02"), **refusal("not_allowed_token_type"))
 
         ok, message = SourceSlack().check_connection(_LOG, CONFIG)
@@ -46,7 +46,7 @@ def test_check_names_slacks_refusal() -> None:
 def test_check_reports_an_unreachable_api() -> None:
     import requests
 
-    with rm.Mocker() as http:
+    with slack() as http:
         http.get(day_url("2026-10-02"), exc=requests.ConnectionError("no route"))
 
         ok, message = SourceSlack().check_connection(_LOG, CONFIG)
