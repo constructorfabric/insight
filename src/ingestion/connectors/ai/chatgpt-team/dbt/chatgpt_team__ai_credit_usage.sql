@@ -44,7 +44,8 @@ WITH instance_watermark AS (
     SELECT
         insight_tenant_id,
         source_id,
-        max(day)                                        AS latest_day
+        max(day)                                        AS latest_day,
+        max(collected_at)                               AS latest_collected
     FROM {{ this }}
     GROUP BY insight_tenant_id, source_id
 
@@ -114,10 +115,11 @@ WHERE email IS NOT NULL
 {% if is_incremental() %}
   -- An instance this relation has never held reads everything: the LEFT JOIN
   -- leaves latest_day NULL for it, and the whole predicate is skipped. One it
-  -- has read before is filtered by ITS OWN floor, three days back, which is the
-  -- same window as before — only no longer shared with every other instance.
+  -- has read before is filtered by ITS OWN floor, three days back.
+  -- INVARIANT: the read-time arm admits an older day a backfill re-reads (#4243).
   AND (
     w.latest_day IS NULL
     OR toDate(bronze.date) > w.latest_day - INTERVAL 3 DAY
+    OR bronze._airbyte_extracted_at > w.latest_collected
   )
 {% endif %}

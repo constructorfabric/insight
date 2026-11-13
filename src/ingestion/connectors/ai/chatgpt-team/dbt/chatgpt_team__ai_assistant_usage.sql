@@ -122,5 +122,10 @@ WHERE email IS NOT NULL
   -- assert_ai_assistant_usage_rows_active fails on.
   AND coalesce(toUInt32OrNull(toString(messages)), 0) > 0
 {% if is_incremental() %}
-  AND toDate(date) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+  -- INVARIANT: the read-time arm admits an older day a backfill re-reads (#4243);
+  -- the day window keeps re-deriving recent days whose joined streams arrive late.
+  AND (
+      toDate(date) > {{ instance_incremental_watermark('day', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id'], '3 DAY') }}
+      OR _airbyte_extracted_at > {{ instance_incremental_watermark('collected_at', ['tenant_id', 'source_id'], ['insight_tenant_id', 'source_id']) }}
+  )
 {% endif %}
