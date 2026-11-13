@@ -85,8 +85,8 @@ function LabelsToggle() {
   if (state === "collapsed") return null;
 
   const label = labels
-    ? t("common.a11y.hide_navigation_labels")
-    : t("common.a11y.show_navigation_labels");
+    ? t("common.a11y.collapse_navigation")
+    : t("common.a11y.expand_navigation");
   const Icon = labels ? ChevronsLeft : ChevronsRight;
   return (
     <SidebarMenuItem className="flex justify-end">

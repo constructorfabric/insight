@@ -143,18 +143,18 @@ describe("LensRail", () => {
 describe("LensRail names", () => {
   it("starts with icons only", () => {
     rail(true);
-    expect(screen.getByRole("button", { name: "Show navigation labels" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand navigation" })).toBeInTheDocument();
   });
 
   it("keeps the reader's choice across a remount", async () => {
     const user = userEvent.setup();
     const first = rail(true);
 
-    await user.click(screen.getByRole("button", { name: "Show navigation labels" }));
+    await user.click(screen.getByRole("button", { name: "Expand navigation" }));
     first.unmount();
     rail(true);
 
-    expect(screen.getByRole("button", { name: "Hide navigation labels" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse navigation" })).toBeInTheDocument();
     expect(localStorage.getItem("insight.portal.railLabels")).toBe("true");
   });
 
@@ -169,8 +169,8 @@ describe("LensRail names", () => {
   });
 
   it.each([
-    ["icons only", false, "Show navigation labels"],
-    ["names shown", true, "Hide navigation labels"],
+    ["icons only", false, "Expand navigation"],
+    ["names shown", true, "Collapse navigation"],
   ])("labels the toggle by tooltip alone, %s", async (_, labels, name) => {
     const user = userEvent.setup();
     act(() => setPortalRailLabels(labels));
@@ -185,6 +185,6 @@ describe("LensRail names", () => {
 
   it("offers no toggle while the sidebar is collapsed to icons", () => {
     collapsedRail();
-    expect(screen.queryByRole("button", { name: /navigation labels/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /(Expand|Collapse) navigation/ })).not.toBeInTheDocument();
   });
 });

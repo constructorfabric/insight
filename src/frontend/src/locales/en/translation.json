@@ -84,8 +84,8 @@
     "a11y": {
       "notifications": "Notifications",
       "section_navigation": "Section navigation",
-      "show_navigation_labels": "Show navigation labels",
-      "hide_navigation_labels": "Hide navigation labels"
+      "expand_navigation": "Expand navigation",
+      "collapse_navigation": "Collapse navigation"
     }
   },
   "theme": {

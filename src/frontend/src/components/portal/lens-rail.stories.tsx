@@ -76,7 +76,7 @@ export const TestTheToggleStaysIconOnlyWithNamesShown: Story = {
   tags: ["test"],
   play: async ({ canvas }) => {
     const toggle = await canvas.findByRole("button", {
-      name: "Hide navigation labels",
+      name: "Collapse navigation",
     });
 
     expect(toggle.textContent).toBe("");
