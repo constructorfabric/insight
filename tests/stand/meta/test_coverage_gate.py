@@ -468,7 +468,9 @@ def test_each_document_matches_observations_at_its_own_prefix(
     )
 
     assert status == 0
-    assert "(2/2)" in capsys.readouterr().out
+    assert (
+        "OpenAPI contracts: **100.0%** of coverable status codes (2/2)." in capsys.readouterr().out
+    )
 
 
 @pytest.mark.parametrize("value", ["{path}", "={path}", "/api/example=", "api/example={path}", ""])
@@ -497,3 +499,38 @@ def test_repeated_spec_prefixes_are_usage_errors(tmp_path: Path) -> None:
         )
 
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize("observed_prefix", ["/api/first", "/api/second"])
+def test_operation_keys_shared_by_documents_are_usage_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], observed_prefix: str
+) -> None:
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(_spec({"/v1/shared": {"get": [200]}})))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(_spec({"/v1/shared": {"get": [200]}})))
+    args = _gate_arguments(tmp_path, _ledger({("GET", f"{observed_prefix}/v1/shared"): [200]}))
+
+    with pytest.raises(SystemExit) as error:
+        coverage.main([*args, "--spec", f"/api/first={first}", "--spec", f"/api/second={second}"])
+
+    assert error.value.code == 2, f"should reject shared operation observed at {observed_prefix}"
+    diagnostic = capsys.readouterr().err
+    assert "GET /v1/shared" in diagnostic
+    assert "/api/first" in diagnostic
+    assert "/api/second" in diagnostic
+
+
+def test_missing_spec_files_are_usage_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec = tmp_path / "missing.json"
+    args = _gate_arguments(tmp_path, [])
+
+    with pytest.raises(SystemExit) as error:
+        coverage.main([*args, "--spec", f"/api/example={spec}"])
+
+    assert error.value.code == 2
+    diagnostic = capsys.readouterr().err
+    assert str(spec) in diagnostic
+    assert "Traceback" not in diagnostic

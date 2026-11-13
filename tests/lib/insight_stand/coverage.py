@@ -550,7 +550,7 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
     ]
     if spec is not None:
         lines.append(
-            f"Analytics and connectors contracts: **{spec.coverage_pct}%** of coverable status codes "
+            f"OpenAPI contracts: **{spec.coverage_pct}%** of coverable status codes "
             f"({spec.total_covered}/{spec.total_coverable})."
         )
     lines += [
@@ -605,7 +605,10 @@ def _spec_argument(value: str) -> tuple[str, Path]:
         raise argparse.ArgumentTypeError(
             "expected PREFIX=PATH with a prefix starting with / and a nonempty path"
         )
-    return prefix, Path(path)
+    spec_path = Path(path)
+    if not spec_path.is_file():
+        raise argparse.ArgumentTypeError(f"--spec file not found: {spec_path}")
+    return prefix, spec_path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -655,10 +658,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     spec_report: SpecReport | None = None
     spec_ops: dict[str, list[int]] = {}
+    operation_prefixes: dict[str, str] = {}
     validated: dict[str, set[int]] = {}
     unmatched: list[dict[str, Any]] = []
     for prefix, spec_path in args.spec:
         operations = spec_operations(json.loads(Path(spec_path).read_text(encoding="utf-8")))
+        for operation in operations:
+            if operation in operation_prefixes:
+                parser.error(
+                    f"duplicate --spec operation {operation}: prefixes "
+                    f"{operation_prefixes[operation]} and {prefix}"
+                )
+            operation_prefixes[operation] = prefix
+
         matched, missed = match_against_spec(rows, prefix, operations)
         spec_ops.update(operations)
         validated.update(matched)

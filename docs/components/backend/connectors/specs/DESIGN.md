@@ -344,7 +344,8 @@ acknowledgement write:
 
 ### 3.6 Database
 
-Database `connectors` on the install's MariaDB, always created by `mariadb-init-svcdbs-job.yaml`. One migration, `m2026MMDD_000001_connector_schedules`, arriving with the schedule API:
+Database `connectors` on the install's MariaDB, always created by `mariadb-init-svcdbs-job.yaml`. One
+migration, `m2026MMDD_000001_connector_schedules`, arriving with the schedule API:
 
 | Object | Columns | Writer |
 |---|---|---|
@@ -421,7 +422,8 @@ bar's two test files; `GEARS_SERVICES` in the identity-resolution helm test;
 pytest list. The reconcile branch's CI job (MariaDB + PyMySQL live tests) stays.
 
 **Guards.** OpenAPI drift; the rendered chart references no Secret beyond those the umbrella already
-requires plus the hook-created `insight-schedule-db`; one replica with `Recreate`; the service, route and database always render; the service Role has no verb beyond `get`, `list`, `watch`, `patch` on
+requires plus the hook-created `insight-schedule-db`; one replica with `Recreate`; the service, route
+and database always render; the service Role has no verb beyond `get`, `list`, `watch`, `patch` on
 CronWorkflows (A4).
 
 ## 5. Testing Strategy

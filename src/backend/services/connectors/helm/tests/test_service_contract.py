@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -127,16 +128,25 @@ def test_umbrella_uses_existing_password_secrets_for_both_workloads(connectors_u
 
 
 @pytest.mark.parametrize("auto_generate", [True, False])
-def test_connectors_adds_no_secret(connectors_umbrella: Path, auto_generate: bool) -> None:
-    documents = connectors_documents(
+def test_connectors_templates_render_no_secrets(connectors_umbrella: Path, auto_generate: bool) -> None:
+    result = render_connectors(
         connectors_umbrella,
         "-f",
         str(connectors_umbrella / "tests/values.yaml"),
         "--set",
         f"credentials.autoGenerate={str(auto_generate).lower()}",
     )
-    secrets = {doc["metadata"]["name"] for doc in documents if doc["kind"] == "Secret"}
-    assert not any("connectors" in name for name in secrets)
+    assert result.returncode == 0, result.stderr
+    for manifest in re.split(r"^---\s*$", result.stdout, flags=re.MULTILINE):
+        document = yaml.safe_load(manifest)
+        if not document or document["kind"] != "Secret":
+            continue
+
+        source = next(
+            line.removeprefix("# Source: ") for line in manifest.splitlines() if line.startswith("# Source: ")
+        )
+        assert source != "insight/templates/connectors.yaml", (source, document["metadata"]["name"])
+        assert not source.startswith("insight/charts/connectors/"), (source, document["metadata"]["name"])
 
 
 def test_gears_host_verifies_gateway_identity(connectors_umbrella: Path) -> None:
