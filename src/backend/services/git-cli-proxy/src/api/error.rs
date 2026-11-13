@@ -41,6 +41,10 @@ pub enum ApiError {
 /// only the status is overridden.
 const REPO_TOO_LARGE: StatusCode = StatusCode::PAYLOAD_TOO_LARGE;
 
+/// The connectors skip this repository on `422` and read the rest, where a
+/// `500` would be retried until the whole sync failed.
+const REPO_UNREFRESHABLE: StatusCode = StatusCode::UNPROCESSABLE_ENTITY;
+
 /// Admission is refused when the cache is full and nothing can be
 /// reclaimed. That clears as soon as a reader releases an entry, so the
 /// caller is asked back rather than failed.
@@ -146,6 +150,7 @@ impl ApiError {
             Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
                 Some(REPO_TOO_LARGE)
             }
+            Self::Store(StoreError::Unrefreshable) => Some(REPO_UNREFRESHABLE),
             Self::BadRequest(_)
             | Self::Store(_)
             | Self::Git(_)
@@ -263,6 +268,15 @@ impl ApiError {
                     "REPOSITORY_SIZE_CAP",
                     "repository",
                     format!("repository exceeds the per-repository cap of {cap_bytes} bytes"),
+                )
+                .create(),
+            // The failing git output is logged where the refreshes fail and
+            // never reaches the wire.
+            Self::Store(StoreError::Unrefreshable) => RepositoryError::failed_precondition()
+                .with_precondition_violation(
+                    "REPOSITORY_REFRESH_FAILING",
+                    "repository",
+                    "the repository has failed to refresh several times in a row",
                 )
                 .create(),
 
@@ -391,6 +405,11 @@ mod tests {
             (
                 StoreError::Git("boom".to_owned()).into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            // Permanent for this repository only, so the connector skips it.
+            (
+                StoreError::Unrefreshable.into(),
+                StatusCode::UNPROCESSABLE_ENTITY,
             ),
             // A repository the origin refuses to serve: permanent for that
             // repository, so the connector must see the skippable 404.

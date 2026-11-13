@@ -826,6 +826,59 @@ async fn a_deleted_branch_stops_being_enumerated_even_when_a_tag_pins_it() -> R 
 }
 
 #[tokio::test]
+async fn a_branch_replaced_by_one_nested_under_its_name_is_served() -> R {
+    let server = spawn_server("nestedbranch", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = taggable_origin(&server.dir)?;
+    let origin = server.dir.join("taggable");
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let branches = || async {
+        client
+            .get(format!("{base}/v1/branches"))
+            .query(&[("repo", repo.as_str())])
+            .bearer_auth(TOKEN)
+            .header("x-tenant-id", "tenant-1")
+            .header("x-source-id", "source-1")
+            .header("x-git-username", "u")
+            .header("x-git-token", "p")
+            .header("x-max-staleness", "0")
+            .send()
+            .await
+    };
+    let names = |v: &serde_json::Value| -> Vec<String> {
+        v["items"].as_array().map_or_else(Vec::new, |rows| {
+            rows.iter()
+                .filter_map(|r| r["name"].as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+    };
+
+    assert_eq!(branches().await?.status(), 200);
+
+    run_in(&origin, "git branch -qD doomed && git branch doomed/x main")?;
+    let renamed = branches().await?;
+    assert_eq!(
+        renamed.status(),
+        200,
+        "a nested rename must not fail the refresh"
+    );
+    let body: serde_json::Value = renamed.json().await?;
+    assert_eq!(names(&body), ["doomed/x", "main"], "{body}");
+
+    run_in(&origin, "git branch -qD doomed/x && git branch doomed main")?;
+    let reverted = branches().await?;
+    assert_eq!(
+        reverted.status(),
+        200,
+        "the reverse rename must not fail either"
+    );
+    let body: serde_json::Value = reverted.json().await?;
+    assert_eq!(names(&body), ["doomed", "main"], "{body}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_fetch_that_changed_nothing_keeps_live_page_tokens_valid() -> R {
     let server = spawn_server("noopfetch", TOKEN)?;
     wait_healthy(server.port).await?;

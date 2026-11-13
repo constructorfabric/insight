@@ -525,6 +525,16 @@
             },
             "description": "Repository exceeds the configured per-repository size cap"
           },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Repository has failed to refresh several times in a row"
+          },
           "429": {
             "content": {
               "application/problem+json": {
@@ -748,6 +758,16 @@
             },
             "description": "Repository exceeds the configured per-repository size cap"
           },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Repository has failed to refresh several times in a row"
+          },
           "429": {
             "content": {
               "application/problem+json": {
@@ -887,6 +907,16 @@
               }
             },
             "description": "Repository exceeds the configured per-repository size cap"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Repository has failed to refresh several times in a row"
           },
           "429": {
             "content": {
@@ -1045,6 +1075,16 @@
               }
             },
             "description": "Repository exceeds the configured per-repository size cap"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Repository has failed to refresh several times in a row"
           },
           "429": {
             "content": {

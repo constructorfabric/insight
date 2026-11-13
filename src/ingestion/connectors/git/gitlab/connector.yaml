@@ -84,6 +84,14 @@ definitions:
         error_message: >-
           Skipping this repository: gone or refused at origin (404), or
           larger than cache.maxRepoBytes (413). Other repositories continue.
+      # The proxy failed to refresh this repository several times in a row;
+      # retrying would fail the whole stream once the retries run out.
+      - type: HttpResponseFilter
+        http_codes: [422]
+        action: IGNORE
+        error_message: >-
+          Skipping this repository: the git proxy has failed to refresh it
+          several times in a row; see the proxy log. Other repositories continue.
       # The pinned snapshot was superseded mid-walk: a refresh or an eviction
       # bumped the generation, so the page token is dead. RETRY would replay
       # it and 409 again; RESET_PAGINATION restarts the partition's walk from
