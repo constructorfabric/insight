@@ -20,9 +20,11 @@ from insight_datapath.connector_path import ConnectorPath
 from insight_datapath.instance import InstanceConfig
 from insight_datapath.records import employee
 from insight_datapath.subjects import SubjectError, Subjects
-from insight_stand.api import ApiClient, JsonValue, identity_path
+from insight_stand.api import ApiClient, identity_path
 from insight_stand.personas import PersonaSession
 from insight_stand.scratch_identity import scratch_name
+
+from stand.api.schemas import Subchart, SubchartNode, Visibility
 
 #: Exit statuses that mean the seed ran and the run itself failed. A lock (2) or an
 #: input guard (3) refused before it started, and says so in its own words.
@@ -98,28 +100,19 @@ def _open_parent(cfg: InstanceConfig, tenant: str, child: str) -> str | None:
     return identity_journal.open_parent(cfg, tenant=tenant, child=child)
 
 
-def _subchart(lead: ApiClient, root: str, *, depth: int | None = None) -> dict[str, JsonValue]:
+def _subchart(lead: ApiClient, root: str, *, depth: int | None = None) -> SubchartNode:
     params = None if depth is None else {"depth": depth}
     response = lead.get(identity_path(f"/v1/subchart/{root}"), params=params)
     assert response.status_code == 200, (
         f"the lead reading the subchart of {root}: {response.status_code} {response.text[:300]}"
     )
-
-    body = response.json()
-    assert isinstance(body, dict), f"subchart body of {root}: {response.text[:300]}"
-    node = body.get("root")
-    assert isinstance(node, dict), f"subchart root of {root}: {response.text[:300]}"
-    return node
+    return response.parse(Subchart).root
 
 
-def _walk(node: JsonValue, depth: int = 0) -> list[tuple[str, int]]:
+def _walk(node: SubchartNode, depth: int = 0) -> list[tuple[str, int]]:
     """Every node of the subtree as (person_id, depth), the root at depth 0."""
-    assert isinstance(node, dict), f"a subchart node is an object: {node!r}"
-    subordinates = node.get("subordinates", [])
-    assert isinstance(subordinates, list), f"subordinates of {node.get('person_id')}: {node!r}"
-
-    found = [(str(node["person_id"]), depth)]
-    for child in subordinates:
+    found = [(str(node.person_id), depth)]
+    for child in node.subordinates:
         found += _walk(child, depth + 1)
     return found
 
@@ -136,12 +129,7 @@ def _grant_sight(operator: ApiClient, *, viewer: str, viewed: str) -> str:
     assert created.status_code == 201, (
         f"granting sight of {viewed}: {created.status_code} {created.text[:300]}"
     )
-
-    body = created.json()
-    assert isinstance(body, dict) and body.get("visibility_id"), (
-        f"grant body for {viewed}: {created.text[:300]}"
-    )
-    return str(body["visibility_id"])
+    return str(created.parse(Visibility).visibility_id)
 
 
 def _revoke_sight(operator: ApiClient, grant_id: str) -> None:

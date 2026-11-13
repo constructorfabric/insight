@@ -15,6 +15,8 @@ from insight_datapath.instance import InstanceConfig
 from insight_datapath.subjects import Subjects
 from insight_stand.api import ApiClient
 
+from stand.api.schemas import IdentityValue
+
 pytestmark = pytest.mark.fixture
 
 ORG_MEMBERS = "bronze_github_directory.org_members"
@@ -102,9 +104,7 @@ def _resolved_person(service_client: ApiClient, external_id: str) -> str | None:
         f"external_id={external_id!r}: {response.status_code} {response.text[:300]}"
     )
 
-    body = response.json()
-    assert isinstance(body, dict), f"external_id={external_id!r}: {response.text[:300]}"
-    return str(body["insight_source_id"])
+    return str(response.parse(IdentityValue).insight_source_id)
 
 
 @pytest.mark.requires_service_principal

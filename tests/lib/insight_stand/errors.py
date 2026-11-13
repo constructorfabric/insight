@@ -8,6 +8,11 @@ default that silently tests the wrong thing.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from pydantic import ValidationError
+
 
 class StandError(Exception):
     """Base class for every error this library raises."""
@@ -55,3 +60,11 @@ class LoginNotCompletedError(StandError):
     def __init__(self, message: str, *, stopped_at: str | None = None) -> None:
         super().__init__(message)
         self.stopped_at = stopped_at
+
+
+def validation_problems(exc: ValidationError) -> str:
+    """Each failing field as `loc: type`, never the input value, which can be a secret."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['type']}"
+        for error in exc.errors(include_input=False)
+    )

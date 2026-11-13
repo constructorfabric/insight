@@ -16,6 +16,8 @@ from insight_datapath.instance import InstanceConfig
 from insight_datapath.subjects import Subjects
 from insight_stand.api import ApiClient
 
+from stand.api.schemas import IdentityValue
+
 pytestmark = pytest.mark.fixture
 
 EMPLOYEES = "bronze_bamboohr.employees"
@@ -100,14 +102,16 @@ def _account_claims(cfg: InstanceConfig, account: str) -> list[tuple[str, str]]:
 
 def _resolved_person(service_client: ApiClient, external_id: str) -> str | None:
     """The person the account lookup names for `external_id`, or None when it names nobody."""
-    response = service_client.get(BY_EXTERNAL_ID, params={"source_type": SOURCE_TYPE, "external_id": external_id})
+    response = service_client.get(
+        BY_EXTERNAL_ID, params={"source_type": SOURCE_TYPE, "external_id": external_id}
+    )
     if response.status_code == 404:
         return None
-    assert response.status_code == 200, f"external_id={external_id!r}: {response.status_code} {response.text[:300]}"
+    assert response.status_code == 200, (
+        f"external_id={external_id!r}: {response.status_code} {response.text[:300]}"
+    )
 
-    body = response.json()
-    assert isinstance(body, dict), f"external_id={external_id!r}: {response.text[:300]}"
-    return str(body["insight_source_id"])
+    return str(response.parse(IdentityValue).insight_source_id)
 
 
 def test_a_pull_request_author_states_an_id_and_a_commit_only_account_does_not(
@@ -121,8 +125,15 @@ def test_a_pull_request_author_states_an_id_and_a_commit_only_account_does_not(
     connector_path.build(
         {
             COMMIT_AUTHORS: [
-                _commit_author(run_tag, account=author, email=f"author.{run_tag}@example.com", tenant=tenant),
-                _commit_author(run_tag, account=passerby, email=f"passerby.{run_tag}@example.org", tenant=tenant),
+                _commit_author(
+                    run_tag, account=author, email=f"author.{run_tag}@example.com", tenant=tenant
+                ),
+                _commit_author(
+                    run_tag,
+                    account=passerby,
+                    email=f"passerby.{run_tag}@example.org",
+                    tenant=tenant,
+                ),
             ],
             PULL_REQUESTS: [_pull_request(run_tag, pr_id=1, account=author, tenant=tenant)],
         }
@@ -164,7 +175,10 @@ def test_a_pull_request_author_resolves_to_the_person_their_commit_address_names
         {
             EMPLOYEES: [
                 records.employee(
-                    substitutions=substitutions, key=f"bb-{run_tag}", email=email, display_name="Pipeline Dev"
+                    substitutions=substitutions,
+                    key=f"bb-{run_tag}",
+                    email=email,
+                    display_name="Pipeline Dev",
                 )
             ],
             COMMIT_AUTHORS: [_commit_author(run_tag, account=author, email=email, tenant=tenant)],

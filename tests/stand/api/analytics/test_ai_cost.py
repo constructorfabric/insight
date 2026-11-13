@@ -29,7 +29,13 @@ from collections.abc import Callable, Mapping
 import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, analytics_path
 
-from ..schemas import MetricDefinitionListResponse, MetricResultsResponse, PeriodView
+from ..schemas import (
+    BreakdownView,
+    MetricDefinitionListResponse,
+    MetricResultsResponse,
+    PeriodView,
+)
+from ..schemas.analytics import MetricDrilldownResponse
 from . import query_window
 
 METRIC_RESULTS = analytics_path("/v1/metric-results")
@@ -88,7 +94,7 @@ def _evidence(client: ApiClient, person: str, start: str, end: str) -> list[Mapp
         },
     )
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
-    return [row["values"] for row in response.json()["rows"]]
+    return [row.values for row in response.parse(MetricDrilldownResponse).rows]
 
 
 @pytest.mark.requires_seed("support_lead")
@@ -270,14 +276,15 @@ def test_the_seat_tier_breakdown_adds_up_to_the_period_value(
     )
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
 
-    views = response.json()["metrics"][0]["views"]
-    period = next(view for view in views if view["view"] == "period")["values"][0]["value"]
-    breakdown = next(view for view in views if view["view"] == "breakdown")["values"]
+    views = [view.root for view in response.parse(MetricResultsResponse).metrics[0].root.views]
+    period = next(view for view in views if isinstance(view, PeriodView)).values[0].value
+    breakdown = next(view for view in views if isinstance(view, BreakdownView)).values
+    parts = [value.value for value in breakdown if value.value is not None]
 
     assert breakdown, "the seat-tier breakdown carried no rows"
-    assert sum(value["value"] for value in breakdown) == pytest.approx(period), (
-        f"the breakdown sums to {sum(value['value'] for value in breakdown)}, the period says "
-        f"{period}"
+    assert len(parts) == len(breakdown), "a seat-tier group carried no value"
+    assert sum(parts) == pytest.approx(period), (
+        f"the breakdown sums to {sum(parts)}, the period says {period}"
     )
 
 
