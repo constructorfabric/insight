@@ -1,6 +1,6 @@
 
 server:
-  home_dir: "/tmp/connectors"
+  home_dir: "~/.insight"
 
 logging:
   default:

@@ -29,5 +29,5 @@ dependencies:
 - name: insight-connectors
   repository: file://../../src/backend/services/connectors/helm
   version: 0.1.0
-digest: sha256:c0b036815df202229d2f913b8de147b277e08d964049f9ff2d4494ea22efe2ba
-generated: "2026-11-09T23:53:27.874387+02:00"
+digest: sha256:1656c1cbb4cd365de105fd0dce0a19369717625c64fd0ea3907fca2a185a4e67
+generated: "2026-11-13T13:26:22.650284+02:00"

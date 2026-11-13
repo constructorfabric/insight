@@ -34,7 +34,6 @@ The list lives HERE; do not mirror it elsewhere.
 ==============================================================================
 */}}
 {{- $kcdb := .Values.keycloak.deploy }}
-{{- if or .Values.identityResolution.deploy $kcdb (((.Values.global).insightV3Core).deploy) .Values.global.connectors.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -115,13 +114,11 @@ spec:
               mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"
               echo "Provisioned ${CORE_DB} (granted to ${MARIADB_USER}@%)."
               {{- end }}
-              {{- if .Values.global.connectors.enabled }}
               CONNECTORS_DB={{ required "connectors.databaseName is required" .Values.connectors.databaseName | quote }}
               SQL=$(printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON `%s`.* TO `%s`@`%%`; FLUSH PRIVILEGES;' \
                 "$CONNECTORS_DB" "$CONNECTORS_DB" "$MARIADB_USER")
               mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"
               echo "Provisioned ${CONNECTORS_DB} (granted to ${MARIADB_USER}@%)."
-              {{- end }}
               {{- if $kcdb }}
               KC_DB={{ .Values.keycloak.database.name | quote }}
               KC_DB_USER={{ required "keycloak.database.username is required" .Values.keycloak.database.username | quote }}
@@ -131,4 +128,3 @@ spec:
               echo "Provisioned ${KC_DB} (granted to ${KC_DB_USER}@%)."
               {{- end }}
               echo "Done."
-{{- end }}

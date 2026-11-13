@@ -45,19 +45,12 @@ def test_migrate_runs_before_install_without_release_config_resources() -> None:
     assert not any(doc["kind"] == "Secret" for doc in documents)
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_switch_controls_the_service_route_and_database(connectors_umbrella: Path, enabled: bool) -> None:
-    documents = connectors_documents(
-        connectors_umbrella,
-        "-f",
-        str(connectors_umbrella / "tests/values.yaml"),
-        "--set",
-        f"global.connectors.enabled={str(enabled).lower()}",
-    )
+def test_service_route_and_database_always_render(connectors_umbrella: Path) -> None:
+    documents = connectors_documents(connectors_umbrella, "-f", str(connectors_umbrella / "tests/values.yaml"))
     deployments = {doc["metadata"]["name"] for doc in documents if doc["kind"] == "Deployment"}
-    assert ("contract-test-connectors" in deployments) is enabled
+    assert "contract-test-connectors" in deployments
     services = {doc["metadata"]["name"] for doc in documents if doc["kind"] == "Service"}
-    assert ("contract-test-connectors" in services) is enabled
+    assert "contract-test-connectors" in services
     route_config = next(
         doc
         for doc in documents
@@ -65,19 +58,18 @@ def test_switch_controls_the_service_route_and_database(connectors_umbrella: Pat
     )
     routes = yaml.safe_load(route_config["data"]["routes.yaml"])["routes"]
     connector_routes = [route for route in routes if route["prefix"] == "/api/connectors"]
-    assert len(connector_routes) == int(enabled)
-    if enabled:
-        assert connector_routes[0] == {
-            "prefix": "/api/connectors",
-            "upstream": "http://contract-test-connectors:8088",
-            "strip_prefix": True,
-            "timeout_ms": 135000,
-        }
+    assert len(connector_routes) == 1
+    assert connector_routes[0] == {
+        "prefix": "/api/connectors",
+        "upstream": "http://contract-test-connectors:8088",
+        "strip_prefix": True,
+        "timeout_ms": 135000,
+    }
     jobs = [doc for doc in documents if doc["kind"] == "Job"]
-    assert any(doc["metadata"]["name"] == "contract-test-connectors-migrate" for doc in jobs) is enabled
+    assert any(doc["metadata"]["name"] == "contract-test-connectors-migrate" for doc in jobs)
     provisioner = next(doc for doc in jobs if doc["metadata"]["name"].endswith("mariadb-init-svcdbs"))
     script = provisioner["spec"]["template"]["spec"]["containers"][0]["command"][-1]
-    assert ('CONNECTORS_DB="connectors"' in script) is enabled
+    assert 'CONNECTORS_DB="connectors"' in script
 
 
 def test_umbrella_uses_existing_password_secrets_for_both_workloads(connectors_umbrella: Path) -> None:
@@ -135,20 +127,16 @@ def test_umbrella_uses_existing_password_secrets_for_both_workloads(connectors_u
 
 
 @pytest.mark.parametrize("auto_generate", [True, False])
-def test_enabling_connectors_adds_no_secret(connectors_umbrella: Path, auto_generate: bool) -> None:
-    secret_sets = []
-    for enabled in [False, True]:
-        documents = connectors_documents(
-            connectors_umbrella,
-            "-f",
-            str(connectors_umbrella / "tests/values.yaml"),
-            "--set",
-            f"credentials.autoGenerate={str(auto_generate).lower()}",
-            "--set",
-            f"global.connectors.enabled={str(enabled).lower()}",
-        )
-        secret_sets.append({doc["metadata"]["name"] for doc in documents if doc["kind"] == "Secret"})
-    assert secret_sets[0] == secret_sets[1]
+def test_connectors_adds_no_secret(connectors_umbrella: Path, auto_generate: bool) -> None:
+    documents = connectors_documents(
+        connectors_umbrella,
+        "-f",
+        str(connectors_umbrella / "tests/values.yaml"),
+        "--set",
+        f"credentials.autoGenerate={str(auto_generate).lower()}",
+    )
+    secrets = {doc["metadata"]["name"] for doc in documents if doc["kind"] == "Secret"}
+    assert not any("connectors" in name for name in secrets)
 
 
 def test_gears_host_verifies_gateway_identity(connectors_umbrella: Path) -> None:

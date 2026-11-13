@@ -7,7 +7,7 @@ every response, so the ledger is a byproduct of the requests the tests already
 make rather than a list somebody maintains. `tests/stand/conftest.py` writes it
 out at `pytest_sessionfinish`.
 
-**The gate** (`python3 coverage.py --observed … --spec …`, stdlib only, no
+**The gate** (`python3 coverage.py --observed … --spec PREFIX=PATH`, stdlib only, no
 stand) reads that ledger back and answers two questions:
 
   1. Did every operation the CATALOGUE names get exercised by something other
@@ -599,14 +599,34 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _spec_argument(value: str) -> tuple[str, Path]:
+    prefix, separator, path = value.partition("=")
+    if not separator or not prefix.startswith("/") or not path:
+        raise argparse.ArgumentTypeError(
+            "expected PREFIX=PATH with a prefix starting with / and a nonempty path"
+        )
+    return prefix, Path(path)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stand API coverage gate.")
     parser.add_argument("--observed", required=True, help="ledger written at pytest_sessionfinish")
     parser.add_argument("--catalogue", required=True, help="JSON list of catalogued operations")
-    parser.add_argument("--spec", help="committed analytics OpenAPI document")
-    parser.add_argument("--prefix", default="/api/analytics", help="gateway prefix for --spec")
-    parser.add_argument("--connectors-spec", help="committed connectors OpenAPI document")
+    parser.add_argument(
+        "--spec",
+        action="append",
+        type=_spec_argument,
+        default=[],
+        metavar="PREFIX=PATH",
+        help="gateway prefix and committed OpenAPI document (repeatable)",
+    )
     args = parser.parse_args(argv)
+
+    prefixes: set[str] = set()
+    for prefix, _ in args.spec:
+        if prefix in prefixes:
+            parser.error(f"duplicate --spec prefix: {prefix}")
+        prefixes.add(prefix)
 
     ledger_path = Path(args.observed)
     if not ledger_path.is_file():
@@ -637,18 +657,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     spec_ops: dict[str, list[int]] = {}
     validated: dict[str, set[int]] = {}
     unmatched: list[dict[str, Any]] = []
-    for spec_path, prefix in (
-        (args.spec, args.prefix),
-        (args.connectors_spec, "/api/connectors"),
-    ):
-        if spec_path is None:
-            continue
+    for prefix, spec_path in args.spec:
         operations = spec_operations(json.loads(Path(spec_path).read_text(encoding="utf-8")))
         matched, missed = match_against_spec(rows, prefix, operations)
         spec_ops.update(operations)
         validated.update(matched)
         unmatched.extend(missed)
-    if args.spec or args.connectors_spec:
+    if args.spec:
         spec_report = SpecReport(spec_ops=spec_ops, validated=validated, unmatched=unmatched)
 
     sys.stdout.write(render(catalogue, spec_report))

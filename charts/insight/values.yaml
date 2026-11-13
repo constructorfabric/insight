@@ -110,8 +110,6 @@ global:
     allowInsecurePrivateNetwork: false
   insightV3Core:
     deploy: false
-  connectors:
-    enabled: true
   # Global (not `previews.deploy`) so one knob controls both the previews
   # subchart and the gateway's /api/previews route: a route left pointing at a
   # Service the release does not create keeps nginx from loading its config.

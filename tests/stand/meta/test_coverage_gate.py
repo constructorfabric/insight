@@ -432,12 +432,68 @@ def test_each_service_contract_requires_its_own_observations(
             "--catalogue",
             str(catalogue),
             "--spec",
-            str(analytics),
-            "--connectors-spec",
-            str(connectors),
+            f"/api/analytics={analytics}",
+            "--spec",
+            f"/api/connectors={connectors}",
         ]
     )
 
     covered = observed and prefix == "/api/connectors"
     assert status == (0 if covered else 1)
     assert ("MISSING: GET /v1/connector-health" in capsys.readouterr().out) == (not covered)
+
+
+def _gate_arguments(tmp_path: Path, rows: list[dict[str, Any]]) -> list[str]:
+    ledger = tmp_path / "observed.json"
+    ledger.write_text(json.dumps(rows))
+    catalogue = tmp_path / "catalogue.json"
+    catalogue.write_text("[]")
+    return ["--observed", str(ledger), "--catalogue", str(catalogue)]
+
+
+def test_each_document_matches_observations_at_its_own_prefix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(_spec({"/v1/first": {"get": [200]}})))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(_spec({"/v1/second": {"get": [200]}})))
+    args = _gate_arguments(
+        tmp_path,
+        _ledger({("GET", "/api/first/v1/first"): [200], ("GET", "/api/second/v1/second"): [200]}),
+    )
+
+    status = coverage.main(
+        [*args, "--spec", f"/api/first={first}", "--spec", f"/api/second={second}"]
+    )
+
+    assert status == 0
+    assert "(2/2)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", ["{path}", "={path}", "/api/example=", "api/example={path}", ""])
+def test_malformed_spec_values_are_usage_errors(tmp_path: Path, value: str) -> None:
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps(_spec({})))
+    args = _gate_arguments(tmp_path, [])
+    value = value.format(path=spec)
+
+    with pytest.raises(SystemExit) as error:
+        coverage.main([*args, "--spec", value])
+
+    assert error.value.code == 2, f"should reject: {value!r}"
+
+
+def test_repeated_spec_prefixes_are_usage_errors(tmp_path: Path) -> None:
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(_spec({})))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(_spec({})))
+    args = _gate_arguments(tmp_path, [])
+
+    with pytest.raises(SystemExit) as error:
+        coverage.main(
+            [*args, "--spec", f"/api/example={first}", "--spec", f"/api/example={second}"]
+        )
+
+    assert error.value.code == 2

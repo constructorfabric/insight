@@ -104,7 +104,7 @@ reconcile work is Phase 2.
 | Layer | Version 1 adds or changes |
 |---|---|
 | Portal | the two lenses repointed to `/api/connectors/v1`; the schedule pane |
-| Gateway | route `/api/connectors` → `http://<release>-connectors:8088`, rendered only when the service is enabled |
+| Gateway | route `/api/connectors` → `http://<release>-connectors:8088`, always rendered with the service |
 | Service | Gears host: REST API and a 60-second drift loop |
 | Service storage | MariaDB database `connectors`: schedule requests, applications, and the frozen view the legacy loop reads |
 | Warehouse | read-only, unchanged: `ingestion_history.sync_events` and `insight.bronze_insert_events` |
@@ -335,8 +335,8 @@ acknowledgement write:
   Secret `insight-schedule-db` or, when absent, generates a password and creates it; then creates or
   updates user `insight_schedule` with a role holding exactly `SELECT ON connectors.connector_schedule_requests_v1`.
   The reconcile CronWorkflow gets `CONNECTOR_SCHEDULES_DB_*` from that Secret and the chart.
-- **Only when the service exists.** The hook and the env are rendered only with
-  `global.connectors.enabled`; without the env the loop reads no schedules and behaves as today.
+- **Only with the ingestion templates.** The hook and the env are rendered only with
+  `ingestion.templates.enabled`; without the env the loop reads no schedules and behaves as today.
 - **Dropped from the branch.** `acknowledge_connector_schedule.py`, `read_schedule_cronworkflow.py`,
   the acknowledgement grant, `test_schedule_acknowledgements.py`, the `schedule-db-password` key in
   `insight-db-creds` and the `compose-app-secrets.sh` / `insight-init.sh` changes (the hook generates
@@ -344,8 +344,7 @@ acknowledgement write:
 
 ### 3.6 Database
 
-Database `connectors` on the install's MariaDB, created by `mariadb-init-svcdbs-job.yaml` (a new
-gated block). One migration, `m2026MMDD_000001_connector_schedules`, arriving with the schedule API:
+Database `connectors` on the install's MariaDB, always created by `mariadb-init-svcdbs-job.yaml`. One migration, `m2026MMDD_000001_connector_schedules`, arriving with the schedule API:
 
 | Object | Columns | Writer |
 |---|---|---|
@@ -361,8 +360,8 @@ of instances unconfigured for six months are removed by the drift loop once a da
 | Aspect | Value |
 |---|---|
 | Image | `src/backend/Dockerfile` targets `build-connectors` / `connectors`; binary `/app/connectors`; port 8088 |
-| Chart | subchart `src/backend/services/connectors/helm` (`insight-connectors`); umbrella dependency alias `connectors` with `condition: global.connectors.enabled` (default `true`) |
-| Gateway | route `/api/connectors` with `stripPrefix: true`, `timeoutMs: 135000` (as `/api/analytics`, for intensity) and `connectorsOnly: true`, dropped by the gateway's configmap template when the switch is off (routegen emits a static upstream, so a route without its Service would stop nginx); the compose table gets the same route |
+| Chart | subchart `src/backend/services/connectors/helm` (`insight-connectors`); umbrella dependency alias `connectors`, always deployed |
+| Gateway | route `/api/connectors` with `stripPrefix: true`, `timeoutMs: 135000` (as `/api/analytics`, for intensity), always rendered with the service; the compose table has the same route |
 | Replicas | exactly 1 (the render fails otherwise), `strategy: Recreate`; capabilities `[rest, stateful]` |
 | Database and passwords | host, port, user and names from `mariadb.*`, `clickhouse.*`, `connectors.databaseName` into the ConfigMap; passwords by `secretKeyRef` from `mariadb.passwordSecret` and `clickhouse.passwordSecret`; the migrate hook (weight 10) uses the same env; nothing added to `templates/secrets.yaml` or `compose-app-secrets.sh` |
 | RBAC | Role `<release>-connectors`: `argoproj.io` `cronworkflows` `get`, `list`, `watch`, `patch`. No Secrets, no Workflows, no create or delete |
@@ -422,8 +421,7 @@ bar's two test files; `GEARS_SERVICES` in the identity-resolution helm test;
 pytest list. The reconcile branch's CI job (MariaDB + PyMySQL live tests) stays.
 
 **Guards.** OpenAPI drift; the rendered chart references no Secret beyond those the umbrella already
-requires plus the hook-created `insight-schedule-db`; one replica with `Recreate`; the route absent
-when the switch is off; the service Role has no verb beyond `get`, `list`, `watch`, `patch` on
+requires plus the hook-created `insight-schedule-db`; one replica with `Recreate`; the service, route and database always render; the service Role has no verb beyond `get`, `list`, `watch`, `patch` on
 CronWorkflows (A4).
 
 ## 5. Testing Strategy

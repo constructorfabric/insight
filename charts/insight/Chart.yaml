@@ -135,4 +135,3 @@ dependencies:
     alias: connectors
     version: "0.1.0"
     repository: "file://../../src/backend/services/connectors/helm"
-    condition: global.connectors.enabled
