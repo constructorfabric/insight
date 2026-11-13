@@ -9,14 +9,34 @@ manifest version stored refusals as all-NULL rows and kept reporting success.
 
 ## Prerequisites
 
-- Slack workspace on **Business+** or **Enterprise Grid** (Analytics API is not available on lower plans).
-- Slack **user OAuth token** (`xoxp-*`) with `admin.analytics:read` scope, installed by an **Org Owner/Admin**. Slack restricts `admin.*` scopes to user tokens — bot tokens (`xoxb-*`) are not supported by `admin.analytics.getFile`.
+- Slack **user OAuth token** (`xoxp-*`) installed by an **Org Owner/Admin**. Slack restricts `admin.*` scopes to user tokens — bot tokens (`xoxb-*`) are not supported by `admin.analytics.getFile`.
+- Scope `team.billing:read` on every plan: the connector reads the plan with `team.billing.info`.
+- Scope `admin.analytics:read` on **Business+** and **Enterprise** (the Analytics API does not exist on lower plans).
+
+## Plan and scopes
+
+Each check and each sync first calls `team.billing.info`, and reads the token's scopes from the `x-oauth-scopes` header of that answer. Each stream declares the plans that have its API and the scopes it needs (`source_slack/plan.py`); the connector reads only the streams the plan and the scopes permit.
+
+| Plan (`team.billing.info`) | Streams |
+|----------------------------|---------|
+| Free (`free`), Pro (`std`) | none yet: the main stream for these plans (message activity) is not implemented, so a sync succeeds with no rows |
+| Business+ (`plus`), Enterprise (`enterprise`, `compliance`) | `users_details` (main stream) |
+
+| Condition | Outcome |
+|-----------|---------|
+| `team.billing.info` refused with a token, scope or plan code (`missing_scope`, `invalid_auth`, `enterprise_is_restricted`, …) | Fails (`config_error`) naming the code; for `missing_scope`, also `team.billing:read` |
+| `team.billing.info` refused with another code, or HTTP or network errors after retries | Fails (`system_error`, or `transient_error` for the network) naming the code; the check exits non-zero |
+| Unknown plan value | Fails (`config_error`) naming the value |
+| Main stream lacks a scope | Fails (`config_error`) naming the scope |
+| Optional stream lacks a scope | The stream is skipped with a warning naming the scope; the other streams are read |
+
+The connection check reports the plan, the streams to read and the missing scopes, for example `Plan Business+ (plus). Streams to read: users_details. Missing scopes: none.`
 
 ### Creating the token
 
 1. Go to https://api.slack.com/apps → **Create New App** → **From scratch**
 2. Pick the workspace, name the app (e.g. `Insight Analytics`)
-3. **OAuth & Permissions** → add `admin.analytics:read` under the appropriate scopes list
+3. **OAuth & Permissions** → add `team.billing:read` and, on Business+ or Enterprise, `admin.analytics:read` under **User Token Scopes**
 4. Install the app by an org admin → copy the resulting OAuth token
 5. Store as `slack_bot_token` in the K8s Secret (field name kept for backward compatibility)
 
@@ -72,7 +92,7 @@ metadata:
     insight.cyberfabric.com/source-id: slack-main
 type: Opaque
 stringData:
-  slack_bot_token: "xoxp-..."       # OAuth token with admin.analytics:read
+  slack_bot_token: "xoxp-..."       # user token: team.billing:read, admin.analytics:read
   slack_start_date: "2026-04-03"    # Earliest analytics date to fetch
 ```
 
@@ -80,7 +100,7 @@ stringData:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `slack_bot_token` | Yes | User OAuth token (`xoxp-*`) with `admin.analytics:read` |
+| `slack_bot_token` | Yes | User OAuth token (`xoxp-*`) with `team.billing:read`, plus `admin.analytics:read` on Business+ or Enterprise |
 | `slack_start_date` | Yes | Earliest analytics date (YYYY-MM-DD). Recommended: 14 days ago. |
 
 ### Automatically injected

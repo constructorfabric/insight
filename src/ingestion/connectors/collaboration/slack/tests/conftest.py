@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import requests_mock as rm
 from airbyte_cdk.models import (
     AirbyteStateBlob,
     AirbyteStateMessage,
@@ -22,7 +23,7 @@ from airbyte_cdk.test.catalog_builder import CatalogBuilder
 from airbyte_cdk.test.entrypoint_wrapper import EntrypointOutput, read
 from source_slack import client as client_module
 from source_slack import streams as streams_module
-from source_slack.client import API_URL
+from source_slack.client import API_URL, BILLING_URL
 from source_slack.source import SourceSlack
 
 TODAY = date(2026, 10, 4)  # today - 2 days = 2026-10-02
@@ -42,9 +43,22 @@ def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """Freeze the clock and record every retry wait instead of sleeping."""
     waits: list[float] = []
     monkeypatch.setattr(streams_module, "today", lambda: TODAY)
-    monkeypatch.setattr("source_slack.source.today", lambda: TODAY)
     monkeypatch.setattr(client_module.time, "sleep", waits.append)
     return waits
+
+
+SCOPES = ("admin.analytics:read", "team.billing:read")
+
+
+def billing(plan: str = "plus", scopes: tuple[str, ...] = SCOPES) -> dict[str, Any]:
+    return {"json": {"ok": True, "plan": plan}, "headers": {"x-oauth-scopes": ",".join(scopes)}}
+
+
+def slack(plan: str = "plus", scopes: tuple[str, ...] = SCOPES) -> rm.Mocker:
+    """A mocked Slack that answers team.billing.info; each test registers the rest."""
+    http = rm.Mocker()
+    http.post(BILLING_URL, **billing(plan, scopes))
+    return http
 
 
 def member_rows(day: str) -> list[dict[str, Any]]:
