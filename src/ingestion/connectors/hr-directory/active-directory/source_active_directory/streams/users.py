@@ -23,12 +23,14 @@ dbt surface:
 """
 
 import logging
-from typing import Any, Iterable, List, Mapping, MutableMapping, Optional
+from collections.abc import Iterable, Mapping, MutableMapping
+from typing import Any
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import Stream
 
 from source_active_directory import ldap_client
+from source_active_directory.config import ActiveDirectoryConfig
 
 logger = logging.getLogger("airbyte")
 
@@ -39,15 +41,15 @@ class ActiveDirectoryUsersStream(Stream):
     name = "users"
     primary_key = "unique_key"
 
-    def __init__(self, config: Mapping[str, Any], tenant_id: str, source_id: str):
+    def __init__(self, config: ActiveDirectoryConfig):
         self._config = config
-        self._tenant_id = tenant_id
-        self._source_id = source_id
+        self._tenant_id = config.insight_tenant_id
+        self._source_id = config.insight_source_id
 
     # ------------------------------------------------------------------ helpers
 
     @staticmethod
-    def _scalar(attrs: Mapping[str, Any], key: str) -> Optional[Any]:
+    def _scalar(attrs: Mapping[str, Any], key: str) -> Any | None:
         """Read a single-valued attribute, tolerating ldap3 returning a 1-element list."""
         val = attrs.get(key)
         if isinstance(val, list):
@@ -57,7 +59,7 @@ class ActiveDirectoryUsersStream(Stream):
         return val
 
     @staticmethod
-    def _multi(attrs: Mapping[str, Any], key: str) -> Optional[List[str]]:
+    def _multi(attrs: Mapping[str, Any], key: str) -> list[str] | None:
         """Read a multi-valued attribute as a list of strings (or None when empty)."""
         val = attrs.get(key)
         if val is None or val == "":
@@ -71,7 +73,7 @@ class ActiveDirectoryUsersStream(Stream):
         """Composite key per Connector Spec §4.6: `{tenant}-{source}-{natural_key}`."""
         return f"{self._tenant_id}-{self._source_id}-{object_guid}"
 
-    def _to_record(self, entry: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    def _to_record(self, entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
         attrs = entry.get("attributes") or {}
         raw = entry.get("raw_attributes") or {}
 
@@ -79,9 +81,7 @@ class ActiveDirectoryUsersStream(Stream):
         guid_raw = raw.get("objectGUID")
         if isinstance(guid_raw, list):
             guid_raw = guid_raw[0] if guid_raw else None
-        object_guid = ldap_client.guid_to_str(guid_raw) or ldap_client.guid_to_str(
-            self._scalar(attrs, "objectGUID")
-        )
+        object_guid = ldap_client.guid_to_str(guid_raw) or ldap_client.guid_to_str(self._scalar(attrs, "objectGUID"))
         if not object_guid:
             logger.warning("Skipping AD entry without objectGUID: dn=%s", entry.get("dn"))
             return None
@@ -123,23 +123,20 @@ class ActiveDirectoryUsersStream(Stream):
     def read_records(
         self,
         sync_mode: SyncMode,
-        cursor_field: Optional[List[str]] = None,
-        stream_slice: Optional[Mapping[str, Any]] = None,
-        stream_state: Optional[Mapping[str, Any]] = None,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
         from ldap3.core.exceptions import LDAPException
 
         conn = ldap_client.connect(self._config)
         try:
             entries = conn.extend.standard.paged_search(
-                search_base=self._config["ad_search_base"],
-                search_filter=self._config.get(
-                    "ad_user_filter",
-                    "(&(objectClass=user)(objectCategory=person)(!(sAMAccountName=krbtgt)))",
-                ),
+                search_base=self._config.ad_search_base,
+                search_filter=self._config.ad_user_filter,
                 search_scope="SUBTREE",
                 attributes=ldap_client.USER_ATTRIBUTES,
-                paged_size=int(self._config.get("ad_page_size", 500)),
+                paged_size=self._config.ad_page_size,
                 generator=True,
             )
             count = 0

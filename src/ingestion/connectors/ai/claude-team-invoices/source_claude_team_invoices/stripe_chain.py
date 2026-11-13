@@ -18,6 +18,10 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
+from source_claude_team_invoices.models import EnrichedInvoice, Invoice, InvoiceLine, Number, validation_summary
+
 logger = logging.getLogger("airbyte")
 
 # `https://invoice.stripe.com/i/{acct}/{token}?s=ap`. The token is the raw path
@@ -60,7 +64,7 @@ def parse_hosted_invoice_url(url: str | None) -> HostedRef | None:
 INVOICE_STATUS_DRAFT = "draft"
 
 
-def is_draft(invoice: Mapping[str, Any]) -> bool:
+def is_draft(invoice: Invoice) -> bool:
     """Whether the vendor has yet to finalise this invoice.
 
     A draft is not invoiced, and it carries no hosted URL to take an identity
@@ -70,7 +74,7 @@ def is_draft(invoice: Mapping[str, Any]) -> bool:
     moment the invoice is finalised, leaving the draft's copy standing beside the
     real one and counting that invoice's money twice.
     """
-    return str(invoice.get("status") or "").lower() == INVOICE_STATUS_DRAFT
+    return (invoice.status or "").lower() == INVOICE_STATUS_DRAFT
 
 
 def stable_invoice_ref(url: str | None) -> str | None:
@@ -112,22 +116,19 @@ def stable_invoice_ref(url: str | None) -> str | None:
         return None
 
 
-def classify_line(line: Mapping[str, Any]) -> str:
+def classify_line(line: InvoiceLine) -> str:
     """Categorise one invoice line by its Stripe parent, never by its text.
 
     A subscription-item parent is the recurring seat charge; an invoice-item
     parent is a one-off, which for this vendor is prepaid extra usage.
     Descriptions are localised marketing copy and change without notice.
     """
-    parent = line.get("parent") or {}
-    if parent.get("subscription_item_details") is not None:
+    if line.parent and line.parent.subscription_item_details is not None:
         return CATEGORY_SUBSCRIPTIONS
-    if parent.get("invoice_item_details") is not None:
-        return CATEGORY_OVERUSAGE
     return CATEGORY_OVERUSAGE
 
 
-def is_proration(line: Mapping[str, Any]) -> bool:
+def is_proration(line: InvoiceLine) -> bool:
     """Whether the line is a mid-period adjustment rather than a period's charge.
 
     A seat-count change emits a credit for the unused time and a charge for the
@@ -135,17 +136,16 @@ def is_proration(line: Mapping[str, Any]) -> bool:
     carries a unit price, and their amounts are partial-period — dividing one by
     its quantity yields a number that is not a seat price.
     """
-    parent = line.get("parent") or {}
-    details = parent.get("subscription_item_details") or {}
-    return bool(details.get("proration"))
+    details = line.parent.subscription_item_details if line.parent else None
+    return bool(details and details.proration)
 
 
-def prices_a_seat(line: Mapping[str, Any]) -> bool:
+def prices_a_seat(line: InvoiceLine) -> bool:
     """Whether this line is the kind that states a per-seat price at all."""
     return classify_line(line) == CATEGORY_SUBSCRIPTIONS and not is_proration(line)
 
 
-def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
+def seat_unit_amount(line: InvoiceLine) -> int | None:
     """The per-seat price on a line, in minor units, or None when it has none.
 
     Only a non-proration subscription line prices a seat. Everything else —
@@ -154,14 +154,14 @@ def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     """
     if not prices_a_seat(line):
         return None
-    amount = line.get("hosted_invoice_unit_amount")
+    amount = line.hosted_invoice_unit_amount
     # `bool` is an `int` in Python, and a boolean here would price a seat at 1.
     if isinstance(amount, bool) or not isinstance(amount, int):
         return None
     return int(amount)
 
 
-def unreadable_seat_prices(lines: Sequence[Mapping[str, Any]]) -> list[str]:
+def unreadable_seat_prices(lines: Sequence[InvoiceLine]) -> list[str]:
     """Type names found where a seat-pricing line should state an integer amount.
 
     `None` is not one of them: a subscription line the vendor left unpriced is a
@@ -174,7 +174,7 @@ def unreadable_seat_prices(lines: Sequence[Mapping[str, Any]]) -> list[str]:
     for line in lines:
         if not prices_a_seat(line):
             continue
-        amount = line.get("hosted_invoice_unit_amount")
+        amount = line.hosted_invoice_unit_amount
         if amount is None or (isinstance(amount, int) and not isinstance(amount, bool)):
             continue
         offenders.append(type(amount).__name__)
@@ -194,55 +194,47 @@ class PriceRef:
     product: str | None
 
 
-def price_details(line: Mapping[str, Any]) -> PriceRef:
+def price_details(line: InvoiceLine) -> PriceRef:
     """The line's price and product ids, absent where it names no tier."""
-    pricing = line.get("pricing") or {}
-    details = pricing.get("price_details") or {}
-    price, product = details.get("price"), details.get("product")
-    return PriceRef(str(price) if price else None, str(product) if product else None)
+    details = line.pricing.price_details if line.pricing else None
+    if details is None:
+        return PriceRef(None, None)
+    return PriceRef(details.price or None, details.product or None)
 
 
-def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
+def shape_line(line: InvoiceLine, invoice_key: str) -> dict[str, Any]:
     """Project one Stripe line onto the columns bronze keeps.
 
     `period` dates the line to the window it charges for, which is not always
     the window the invoice was issued in.
     """
-    period = line.get("period") or {}
     price = price_details(line)
     return {
         "invoice_key": invoice_key,
-        "line_id": line.get("id"),
-        "description": line.get("description"),
-        "product_name": line.get("hosted_invoice_product_name"),
-        "tier_label": line.get("hosted_invoice_tier_label"),
+        "line_id": line.id,
+        "description": line.description,
+        "product_name": line.hosted_invoice_product_name,
+        "tier_label": line.hosted_invoice_tier_label,
         "price_id": price.price,
         "product_id": price.product,
         "category": classify_line(line),
         "is_proration": is_proration(line),
-        "amount": line.get("amount"),
-        "currency": line.get("currency"),
-        "quantity": line.get("quantity"),
-        "unit_amount": line.get("hosted_invoice_unit_amount"),
+        "amount": line.amount,
+        "currency": line.currency,
+        "quantity": line.quantity,
+        "unit_amount": line.hosted_invoice_unit_amount,
         "seat_unit_amount": seat_unit_amount(line),
-        "period_start_ts": period.get("start"),
-        "period_end_ts": period.get("end"),
+        "period_start_ts": line.period.start if line.period else None,
+        "period_end_ts": line.period.end if line.period else None,
     }
 
 
-def read_bootstrap(payload: Mapping[str, Any]) -> tuple[str, str]:
-    """Take the invoice id and ephemeral key out of the bootstrap response.
-
-    The key authorises the next two requests and is never persisted or logged.
-    The id is shape-checked because it is interpolated into a URL.
-    """
-    invoice_id = payload.get("invoice_id")
-    ephemeral_key = payload.get("ephemeral_key")
-    if not invoice_id or not ephemeral_key:
-        raise StripeChainError("bootstrap response carried no invoice_id/ephemeral_key")
-    if not re.fullmatch(r"in_[A-Za-z0-9_-]+", str(invoice_id)):
-        raise StripeChainError(f"bootstrap returned an unexpected invoice id shape: {invoice_id!r}")
-    return str(invoice_id), str(ephemeral_key)
+def parse_hop[M: BaseModel](model: type[M], body: bytes | str, hop: str) -> M:
+    """Read one hop's answer, or fail the chain naming what it got wrong."""
+    try:
+        return model.model_validate_json(body)
+    except ValidationError as error:
+        raise StripeChainError(f"{hop} answered an unexpected shape: {validation_summary(error)}") from None
 
 
 # A parse failure on one invoice is one unpriced row; a parse failure on nearly
@@ -291,31 +283,31 @@ class UrlFormatDrift(RuntimeError):
     """Too few hosted URLs parsed for the run to be trustworthy."""
 
 
-def invoice_identity(invoice: Mapping[str, Any]) -> dict[str, Any]:
+def invoice_identity(invoice: Invoice) -> dict[str, Any]:
     """The invoice facts a line needs to place itself, carried on every row."""
     return {
-        "invoice_status": invoice.get("status"),
-        "invoice_created_ts": invoice.get("created_ts"),
-        "invoice_currency": invoice.get("currency"),
-        "invoice_ref": stable_invoice_ref(invoice.get("hosted_invoice_url")),
+        "invoice_status": invoice.status,
+        "invoice_created_ts": invoice.created_ts,
+        "invoice_currency": invoice.currency,
+        "invoice_ref": stable_invoice_ref(invoice.hosted_invoice_url),
     }
 
 
-def invoice_ledger(invoice: Mapping[str, Any]) -> dict[str, Any]:
+def invoice_ledger(invoice: Invoice) -> dict[str, Any]:
     """The invoice's money and the wrapper's own fields, for its row alone.
 
     `total_excluding_tax` is the net figure the class contract wants; `total`
     sits beside it so the tax component stays visible rather than dropped.
     """
     return {
-        "invoice_due_date_ts": invoice.get("due_date_ts"),
-        "invoice_total": invoice.get("total"),
-        "invoice_total_excluding_tax": invoice.get("total_excluding_tax"),
+        "invoice_due_date_ts": invoice.due_date_ts,
+        "invoice_total": invoice.total,
+        "invoice_total_excluding_tax": invoice.total_excluding_tax,
         # `num_seats` may be absent; where present it names one line's quantity
         # while an invoice can price several tiers. Kept for provenance; the seat
         # count comes from the line's own quantity.
-        "invoice_num_seats": invoice.get("num_seats"),
-        "invoice_payment_intent": invoice.get("payment_intent"),
+        "invoice_num_seats": invoice.num_seats,
+        "invoice_payment_intent": invoice.payment_intent,
     }
 
 
@@ -330,19 +322,19 @@ _EMPTY_LEDGER: Mapping[str, Any] = {
 }
 
 
-def lines_period(lines: Sequence[Mapping[str, Any]]) -> tuple[int | None, int | None]:
+def lines_period(lines: Sequence[InvoiceLine]) -> tuple[Number | None, Number | None]:
     """The window a whole invoice charges for: the span its lines cover."""
-    periods = [line.get("period") or {} for line in lines]
-    starts = [period["start"] for period in periods if period.get("start")]
-    ends = [period["end"] for period in periods if period.get("end")]
+    periods = [line.period for line in lines if line.period]
+    starts = [period.start for period in periods if period.start]
+    ends = [period.end for period in periods if period.end]
     return (min(starts) if starts else None, max(ends) if ends else None)
 
 
 def invoice_row(
-    invoice: Mapping[str, Any],
+    invoice: Invoice,
     chain_status: str,
     invoice_id: str | None,
-    period: tuple[int | None, int | None] = (None, None),
+    period: tuple[Number | None, Number | None] = (None, None),
 ) -> dict[str, Any]:
     """The invoice's own row: its money, how far its chain got, and no line.
 
@@ -362,7 +354,7 @@ def invoice_row(
     return row
 
 
-def line_row(invoice: Mapping[str, Any], invoice_id: str, line: Mapping[str, Any]) -> dict[str, Any]:
+def line_row(invoice: Invoice, invoice_id: str, line: InvoiceLine) -> dict[str, Any]:
     """One line's own row, carrying the line's money and none of the invoice's."""
     shaped = shape_line(line, invoice_id)
     shaped.pop("invoice_key", None)
@@ -370,11 +362,11 @@ def line_row(invoice: Mapping[str, Any], invoice_id: str, line: Mapping[str, Any
 
 
 def build_records(
-    invoices: Sequence[Mapping[str, Any]],
-    fetch_lines: Callable[[str, str], tuple[str, Sequence[Mapping[str, Any]]]],
+    invoices: Sequence[Invoice],
+    fetch_lines: Callable[[str, str], tuple[str, Sequence[InvoiceLine]]],
     *,
     drift_ratio: float = DRIFT_RATIO,
-    enriched: Mapping[str, Mapping[str, Any]] | None = None,
+    enriched: Mapping[str, EnrichedInvoice] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Turn wrapper invoices into records, degrading per invoice.
 
@@ -409,10 +401,10 @@ def build_records(
         # should not have to guess why a count differs.
         logger.info("skipped %s draft invoice(s): not invoiced yet, so not on the ledger", skipped)
 
-    parsed = [(inv, parse_hosted_invoice_url(inv.get("hosted_invoice_url"))) for inv in invoiced]
+    parsed = [(inv, parse_hosted_invoice_url(inv.hosted_invoice_url)) for inv in invoiced]
 
-    offered = [inv for inv, _ in parsed if inv.get("hosted_invoice_url")]
-    malformed = sum(1 for inv, ref in parsed if ref is None and inv.get("hosted_invoice_url"))
+    offered = [inv for inv, _ in parsed if inv.hosted_invoice_url]
+    malformed = sum(1 for inv, ref in parsed if ref is None and inv.hosted_invoice_url)
     if offered and malformed > len(offered) * drift_ratio:
         raise UrlFormatDrift(
             f"{malformed} of {len(offered)} hosted invoice URLs did not parse - the format "
@@ -423,7 +415,7 @@ def build_records(
     # the first chain call: falling back to the wrapper's mutable fields for a whole
     # run would key second copies of invoices that already have rows, and nothing
     # downstream can delete the originals.
-    undecodable = sum(1 for inv in offered if stable_invoice_ref(inv.get("hosted_invoice_url")) is None)
+    undecodable = sum(1 for inv in offered if stable_invoice_ref(inv.hosted_invoice_url) is None)
     if offered and undecodable > len(offered) * drift_ratio:
         raise UrlFormatDrift(
             f"{undecodable} of {len(offered)} hosted invoice URLs carry no decodable invoice "
@@ -432,20 +424,18 @@ def build_records(
 
     for invoice, ref in parsed:
         if ref is None:
-            absent = not invoice.get("hosted_invoice_url")
+            absent = not invoice.hosted_invoice_url
             yield invoice_row(invoice, CHAIN_NO_URL if absent else CHAIN_UNPARSABLE, None)
             continue
 
-        identity = stable_invoice_ref(invoice.get("hosted_invoice_url"))
+        identity = stable_invoice_ref(invoice.hosted_invoice_url)
         known = (enriched or {}).get(identity) if identity else None
         if known:
             # Chained by an earlier run: bronze already holds this invoice's lines
             # under the invoice id below, and a settled invoice's lines do not
             # move. The row is rebuilt from the listing, so the wrapper's money is
             # as fresh as a chained one's — only the two hops are skipped.
-            yield invoice_row(
-                invoice, CHAIN_OK, known.get("invoice_id"), (known.get("period_start_ts"), known.get("period_end_ts"))
-            )
+            yield invoice_row(invoice, CHAIN_OK, known.invoice_id, (known.period_start_ts, known.period_end_ts))
             continue
 
         try:
@@ -462,7 +452,7 @@ def build_records(
             # hop carries the token in that URL.
             logger.warning(
                 "stripe chain failed for the invoice created at %s: %s (HTTP %s)",
-                invoice.get("created_ts"),
+                invoice.created_ts,
                 str(error) if isinstance(error, StripeChainError) else type(error).__name__,
                 getattr(getattr(error, "response", None), "status_code", "n/a"),
             )

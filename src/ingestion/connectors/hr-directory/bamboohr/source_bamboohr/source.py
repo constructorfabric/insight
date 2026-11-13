@@ -7,32 +7,20 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from airbyte_cdk.models import ConnectorSpecification
+from airbyte_cdk.models import ConnectorSpecification, FailureType
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
+from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from pydantic import ValidationError
 
 from source_bamboohr.client import BambooClient, BambooHrApiError, BambooHrDomainError
+from source_bamboohr.config import BambooConfig, config_problem
 from source_bamboohr.streams.employees import EmployeesStream
 from source_bamboohr.streams.leave_requests import DEFAULT_START_DATE, LeaveRequestsStream
-from source_bamboohr.streams.meta_fields import MetaFieldsStream
+from source_bamboohr.streams.meta_fields import MetaFieldsStream, read_meta_fields
 from source_bamboohr.streams.whos_out import WhosOutStream
 
 logger = logging.getLogger("airbyte")
-
-REQUIRED_CONFIG_FIELDS = {
-    "insight_tenant_id": (
-        "insight_tenant_id MUST be a non-empty tenant UUID; an empty value would "
-        "stamp every record with an unscoped tenant, breaking tenant isolation."
-    ),
-    "insight_source_id": (
-        "insight_source_id MUST be set via the `insight.cyberfabric.com/source-id` "
-        "annotation; an empty value would cause silent dedup collisions."
-    ),
-    "bamboohr_api_key": "bamboohr_api_key MUST be set — generate one under Account > API Keys.",
-    "bamboohr_domain": (
-        "bamboohr_domain MUST be the BambooHR subdomain (the 'acme' of acme.bamboohr.com)."
-    ),
-}
 
 
 class SourceBamboohr(AbstractSource):
@@ -41,47 +29,47 @@ class SourceBamboohr(AbstractSource):
         spec_path = Path(__file__).parent / "spec.json"
         return ConnectorSpecification(**json.loads(spec_path.read_text()))
 
-    def check_connection(
-        self, logger: logging.Logger, config: Mapping[str, Any]
-    ) -> tuple[bool, str | None]:
-        for field, message in REQUIRED_CONFIG_FIELDS.items():
-            if not str(config.get(field) or "").strip():
-                return False, message
+    def check_connection(self, logger: logging.Logger, config: Mapping[str, Any]) -> tuple[bool, str | None]:
+        try:
+            parsed = BambooConfig.model_validate(config)
+        except ValidationError as exc:
+            return False, config_problem(exc)
 
         try:
-            _client(config).get("meta/fields")
+            read_meta_fields(_client(parsed))
         except BambooHrDomainError as exc:
             return False, str(exc)
         except BambooHrApiError as exc:
             return False, str(exc)
         except Exception as exc:  # noqa: BLE001 — any transport failure is a check failure
-            return False, (
-                f"Could not reach BambooHR for domain '{config['bamboohr_domain']}': {exc}"
-            )
+            return False, (f"Could not reach BambooHR for domain '{parsed.bamboohr_domain}': {exc}")
 
         return True, None
 
     def streams(self, config: Mapping[str, Any]) -> list[Stream]:
-        client = _client(config)
-        tenant_id = config["insight_tenant_id"]
-        source_id = config["insight_source_id"]
-        start_date = config.get("bamboohr_start_date") or DEFAULT_START_DATE
+        try:
+            parsed = BambooConfig.model_validate(config)
+        except ValidationError as exc:
+            message = config_problem(exc)
+            raise AirbyteTracedException(
+                message=message, internal_message=message, failure_type=FailureType.config_error
+            ) from None
+
+        client = _client(parsed)
+        tenant_id = parsed.insight_tenant_id
+        source_id = parsed.insight_source_id
+        start_date = parsed.bamboohr_start_date or DEFAULT_START_DATE
 
         return [
             EmployeesStream(client=client, tenant_id=tenant_id, source_id=source_id),
-            LeaveRequestsStream(
-                client=client,
-                tenant_id=tenant_id,
-                source_id=source_id,
-                start_date=start_date,
-            ),
+            LeaveRequestsStream(client=client, tenant_id=tenant_id, source_id=source_id, start_date=start_date),
             MetaFieldsStream(client=client, tenant_id=tenant_id, source_id=source_id),
             WhosOutStream(client=client, tenant_id=tenant_id, source_id=source_id, start_date=start_date),
         ]
 
 
-def _client(config: Mapping[str, Any]) -> BambooClient:
-    return BambooClient(domain=config["bamboohr_domain"], api_key=config["bamboohr_api_key"])
+def _client(config: BambooConfig) -> BambooClient:
+    return BambooClient(domain=config.bamboohr_domain, api_key=config.bamboohr_api_key)
 
 
 def main() -> None:

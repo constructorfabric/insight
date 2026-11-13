@@ -22,9 +22,11 @@ from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 from dateutil.relativedelta import relativedelta
+from pydantic import ValidationError
 
 from source_hubspot.api import Hubspot
 from source_hubspot.constants import ARCHIVED_STREAM_SUFFIX, CURATED_STREAMS, STREAM_REGISTRY
+from source_hubspot.models import HubspotConfig, validation_summary
 from source_hubspot.streams import (
     CrmArchivedListStream,
     CrmSearchStream,
@@ -51,7 +53,7 @@ class SourceHubspot(AbstractSource):
         return ConnectorSpecification(**json.loads(spec_path.read_text()))
 
     def check_connection(self, logger: logging.Logger, config: Mapping[str, Any]) -> tuple[bool, str | None]:
-        hubspot = Hubspot(access_token=config["hubspot_access_token"])
+        hubspot = Hubspot(access_token=_parse_config(config).hubspot_access_token)
         reason = hubspot.check_connection()
         if reason is not None:
             return False, reason
@@ -95,19 +97,20 @@ class SourceHubspot(AbstractSource):
     # ------- Stream discovery ----------------------------------------------
 
     def streams(self, config: Mapping[str, Any]) -> list[Stream]:
-        start_date = self._resolve_start_date(config)
-        hubspot = Hubspot(access_token=config["hubspot_access_token"])
-        return [self._build_stream(name, config, hubspot, start_date) for name in self._resolve_stream_list(config)]
+        parsed = _parse_config(config)
+        start_date = self._resolve_start_date(parsed.hubspot_start_date)
+        hubspot = Hubspot(access_token=parsed.hubspot_access_token)
+        return [self._build_stream(name, parsed, hubspot, start_date) for name in self._resolve_stream_list(config)]
 
     def _build_stream(
-        self, stream_name: str, config: Mapping[str, Any], hubspot: Hubspot, start_date: pendulum.DateTime
+        self, stream_name: str, config: HubspotConfig, hubspot: Hubspot, start_date: pendulum.DateTime
     ) -> HubspotStream:
         kwargs = dict(
             stream_name=stream_name,
             hubspot_api=hubspot,
-            access_token=config["hubspot_access_token"],
-            tenant_id=config["insight_tenant_id"],
-            source_id=config["insight_source_id"],
+            access_token=config.hubspot_access_token,
+            tenant_id=config.insight_tenant_id,
+            source_id=config.insight_source_id,
             start_date=start_date,
         )
         registry = STREAM_REGISTRY[stream_name]
@@ -116,8 +119,7 @@ class SourceHubspot(AbstractSource):
 
     # ------- Config helpers ------------------------------------------------
 
-    def _resolve_start_date(self, config: Mapping[str, Any]) -> pendulum.DateTime:
-        raw = config.get("hubspot_start_date")
+    def _resolve_start_date(self, raw: str | None) -> pendulum.DateTime:
         if raw:
             try:
                 parsed = pendulum.parse(raw)
@@ -149,6 +151,18 @@ class SourceHubspot(AbstractSource):
             if archived_name in STREAM_REGISTRY:
                 names.append(archived_name)
         return names
+
+
+def _parse_config(config: Mapping[str, Any]) -> HubspotConfig:
+    try:
+        return HubspotConfig.model_validate(config)
+    except ValidationError as exc:
+        summary = validation_summary(exc)
+        raise AirbyteTracedException(
+            message=f"Invalid HubSpot connector config: {summary}",
+            internal_message=summary,
+            failure_type=FailureType.config_error,
+        ) from None
 
 
 def _stream_class(kind: str, *, is_archived: bool) -> type[HubspotStream]:

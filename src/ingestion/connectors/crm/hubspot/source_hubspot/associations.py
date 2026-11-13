@@ -8,15 +8,14 @@ response into id arrays on the parent record.
 """
 
 import logging
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping
-
-import requests
+from collections.abc import Iterable, Mapping, MutableMapping
+from typing import Any
 
 from airbyte_cdk.sources.streams.http import HttpClient
+from pydantic import ValidationError
 
 from source_hubspot.constants import ASSOCIATIONS_BATCH_SIZE, BASE_URL
-from source_hubspot.rate_limiting import HubspotErrorHandler
-
+from source_hubspot.models import AssociationBatch, AssociationTarget, validation_summary
 
 logger = logging.getLogger("airbyte")
 
@@ -29,20 +28,12 @@ class AssociationFetcher:
     associations share the portal's 10/100 rps burst budget.
     """
 
-    def __init__(
-        self,
-        *,
-        from_object_type: str,
-        to_object_types: List[str],
-        http_client: HttpClient,
-    ) -> None:
+    def __init__(self, *, from_object_type: str, to_object_types: list[str], http_client: HttpClient) -> None:
         self._from = from_object_type
         self._to_list = list(to_object_types)
         self._http_client = http_client
 
-    def enrich(
-        self, records: List[MutableMapping[str, Any]]
-    ) -> List[MutableMapping[str, Any]]:
+    def enrich(self, records: list[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
         """Inline associations onto every record in ``records``.
 
         Adds ``associations_{to_object_type} = [id, id, ...]`` columns. Leaves
@@ -53,7 +44,7 @@ class AssociationFetcher:
         if not records or not self._to_list:
             return records
 
-        by_id: Dict[str, MutableMapping[str, Any]] = {}
+        by_id: dict[str, MutableMapping[str, Any]] = {}
         for rec in records:
             # Always seed empty association arrays so Bronze has a stable set
             # of columns regardless of whether a row has a fetchable id.
@@ -76,31 +67,26 @@ class AssociationFetcher:
                         parent[f"associations_{to_type}"] = to_ids
         return records
 
-    def _fetch_batch(
-        self, to_type: str, ids: List[str]
-    ) -> Mapping[str, List[str]]:
+    def _fetch_batch(self, to_type: str, ids: list[str]) -> Mapping[str, list[str]]:
         url = f"{BASE_URL}/crm/v4/associations/{self._from}/{to_type}/batch/read"
         body = {"inputs": [{"id": i} for i in ids]}
         _, resp = self._http_client.send_request(
-            "POST",
-            url,
-            headers={"Content-Type": "application/json"},
-            json=body,
-            request_kwargs={},
+            "POST", url, headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
         )
         try:
-            payload = resp.json()
-        except ValueError:
+            batch = AssociationBatch.model_validate_json(resp.content)
+        except ValidationError as exc:
             logger.warning(
-                "Association batch %s -> %s returned non-JSON response",
+                "Association batch %s -> %s returned an unexpected payload (%s)",
                 self._from,
                 to_type,
+                validation_summary(exc),
             )
             return {}
-        return _parse_association_response(payload)
+        return _association_ids(batch)
 
 
-def _parse_association_response(payload: Any) -> Mapping[str, List[str]]:
+def _association_ids(batch: AssociationBatch) -> Mapping[str, list[str]]:
     """Turn the v4 batch_read response into ``{from_id: [to_id, ...]}``.
 
     v4 shape::
@@ -110,26 +96,28 @@ def _parse_association_response(payload: Any) -> Mapping[str, List[str]]:
              {"from": {"id": "123"}, "to": [{"toObjectId": 456}, ...]},
              ...
          ]}
+
+    Entries that fail validation arrive as ``None`` and are skipped.
     """
-    out: Dict[str, List[str]] = {}
-    if not isinstance(payload, Mapping):
-        return out
-    for item in payload.get("results") or []:
-        if not isinstance(item, Mapping):
+    out: dict[str, list[str]] = {}
+    for item in batch.results:
+        if item is None or item.source is None or not item.source.id:
             continue
-        frm = (item.get("from") or {}).get("id")
-        if not frm:
-            continue
-        to_ids: List[str] = []
-        for t in item.get("to") or []:
-            if isinstance(t, Mapping):
-                tid = t.get("toObjectId") or t.get("id")
-                if tid is not None:
-                    to_ids.append(str(tid))
-        out[str(frm)] = to_ids
+        out[item.source.id] = _target_ids(item.to)
     return out
 
 
-def _chunked(seq: List[str], size: int) -> Iterable[List[str]]:
+def _target_ids(targets: list[AssociationTarget | None]) -> list[str]:
+    to_ids: list[str] = []
+    for target in targets:
+        if target is None:
+            continue
+        tid = target.toObjectId or target.id
+        if tid is not None:
+            to_ids.append(tid)
+    return to_ids
+
+
+def _chunked(seq: list[str], size: int) -> Iterable[list[str]]:
     for i in range(0, len(seq), size):
         yield seq[i : i + size]

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import Stream
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from source_bamboohr.client import BambooClient
+from source_bamboohr.parsing import ROWS, Id, malformed, valid_rows
 
 logger = logging.getLogger("airbyte")
 
@@ -31,22 +33,12 @@ SCHEMA: Mapping[str, Any] = {
         "end": NULLABLE_STR,
         "name": NULLABLE_STR,
         "dates": {"type": ["object", "null"], "additionalProperties": True},
-        "notes": {
-            "type": ["object", "null"],
-            "properties": {"manager": NULLABLE_STR, "employee": NULLABLE_STR},
-        },
+        "notes": {"type": ["object", "null"], "properties": {"manager": NULLABLE_STR, "employee": NULLABLE_STR}},
         "start": NULLABLE_STR,
-        "amount": {
-            "type": ["object", "null"],
-            "properties": {"unit": NULLABLE_STR, "amount": NULLABLE_STR},
-        },
+        "amount": {"type": ["object", "null"], "properties": {"unit": NULLABLE_STR, "amount": NULLABLE_STR}},
         "status": {
             "type": ["object", "null"],
-            "properties": {
-                "status": NULLABLE_STR,
-                "lastChanged": NULLABLE_STR,
-                "lastChangedByUserId": NULLABLE_STR,
-            },
+            "properties": {"status": NULLABLE_STR, "lastChanged": NULLABLE_STR, "lastChangedByUserId": NULLABLE_STR},
         },
         "actions": {
             "type": ["object", "null"],
@@ -68,6 +60,12 @@ SCHEMA: Mapping[str, Any] = {
 }
 
 
+class LeaveRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: Id
+
+
 class LeaveRequestsStream(Stream):
     name = "leave_requests"
     primary_key = "unique_key"
@@ -85,28 +83,21 @@ class LeaveRequestsStream(Stream):
         stream_slice: Mapping[str, Any] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
-        end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        rows = self._client.get("time_off/requests", params={"start": self._start_date, "end": end})
-        if not isinstance(rows, list):
-            raise RuntimeError(f"BambooHR time-off response is not a list: {type(rows).__name__}")
+        end = datetime.now(UTC).strftime("%Y-%m-%d")
+        body = self._client.get("time_off/requests", params={"start": self._start_date, "end": end})
+        try:
+            rows = ROWS.validate_json(body)
+        except ValidationError as exc:
+            raise malformed("time-off response", exc) from None
 
         count = 0
-        for row in rows:
-            if not isinstance(row, Mapping):
-                logger.warning("Skipping BambooHR leave request that is not an object")
-                continue
-
-            request_id = row.get("id")
-            if request_id is None or str(request_id).strip() == "":
-                logger.warning("Skipping BambooHR leave request without an id")
-                continue
-
+        for request, row in valid_rows(LeaveRequest, rows, "leave request"):
             count += 1
             yield {
                 **row,
                 "tenant_id": self._tenant_id,
                 "source_id": self._source_id,
-                "unique_key": f"{self._tenant_id}-{self._source_id}-{request_id}",
+                "unique_key": f"{self._tenant_id}-{self._source_id}-{request.id}",
             }
 
         logger.info("BambooHR leave_requests stream emitted %d records", count)

@@ -11,6 +11,7 @@ from airbyte_cdk.models import FailureType
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 from source_hubspot import source as source_mod
 from source_hubspot.constants import CURATED_STREAMS, STREAM_REGISTRY
+from source_hubspot.models import HubspotConfig
 from source_hubspot.source import SourceHubspot
 from source_hubspot.streams import (
     CrmArchivedListStream,
@@ -21,13 +22,12 @@ from source_hubspot.streams import (
     PropertyDefinitionsStream,
     PropertyHistoryStream,
 )
+from tests.conftest import assert_no_leak
 
-CONFIG = {
-    "hubspot_access_token": "pat-test-token",
-    "insight_tenant_id": "T",
-    "insight_source_id": "S",
-    "hubspot_start_date": "2024-01-01",
-}
+CONFIG = HubspotConfig(
+    hubspot_access_token="pat-test-token", insight_tenant_id="T", insight_source_id="S", hubspot_start_date="2024-01-01"
+).model_dump(mode="json")
+PERSONAL = "person@example.com"
 
 
 class FakeHubspotApi:
@@ -116,6 +116,34 @@ class TestCheckConnection:
         assert source._has_association_streams(CONFIG) is True
 
 
+class TestConfig:
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {k: v for k, v in CONFIG.items() if k != "insight_tenant_id"},
+            {**CONFIG, "insight_source_id": {"owner": PERSONAL}},
+            {**CONFIG, "hubspot_access_token": [PERSONAL]},
+            {**CONFIG, "hubspot_start_date": {"by": PERSONAL}},
+        ],
+    )
+    @pytest.mark.parametrize(
+        "entry",
+        [lambda source, config: source.check_connection(logging.getLogger(), config), SourceHubspot.streams],
+        ids=["check", "streams"],
+    )
+    def test_malformed_config_is_config_error_without_input(self, source, config, entry):
+        with pytest.raises(AirbyteTracedException) as exc_info:
+            entry(source, config)
+        error = exc_info.value
+        assert error.failure_type == FailureType.config_error, f"should reject: {config!r}"
+        assert_no_leak(error, PERSONAL)
+
+    def test_blank_start_date_falls_back(self, source):
+        streams = source.streams({**CONFIG, "hubspot_start_date": ""})
+        expected = pendulum.now("UTC").subtract(years=2)
+        assert abs(streams[0]._start_date.diff(expected).in_seconds()) < 60
+
+
 class TestStreams:
     def test_stream_classes_by_registry_shape(self, source):
         streams = {s.name: s for s in source.streams(CONFIG)}
@@ -148,35 +176,35 @@ class TestStreams:
 
 class TestResolveStartDate:
     def test_datetime_normalized_to_utc(self, source):
-        got = source._resolve_start_date({**CONFIG, "hubspot_start_date": "2024-01-01T06:00:00+05:00"})
+        got = source._resolve_start_date("2024-01-01T06:00:00+05:00")
         assert got == pendulum.datetime(2024, 1, 1, 1, tz="UTC")
         assert got.timezone_name == "UTC"
 
     def test_date_only_string(self, source):
-        got = source._resolve_start_date(CONFIG)
+        got = source._resolve_start_date("2024-01-01")
         assert got == pendulum.datetime(2024, 1, 1, tz="UTC")
 
     def test_date_object_branch(self, source, monkeypatch):
         # pendulum.parse returns DateTime for date strings by default; force
         # the Date branch to verify UTC-midnight normalization.
         monkeypatch.setattr(source_mod.pendulum, "parse", lambda raw: pendulum.date(2024, 2, 3))
-        got = source._resolve_start_date(CONFIG)
+        got = source._resolve_start_date("2024-02-03")
         assert got == pendulum.datetime(2024, 2, 3, tz="UTC")
 
     def test_invalid_string_raises_config_error(self, source):
         with pytest.raises(AirbyteTracedException) as exc_info:
-            source._resolve_start_date({**CONFIG, "hubspot_start_date": "garbage"})
+            source._resolve_start_date("garbage")
         assert exc_info.value.failure_type == FailureType.config_error
         assert "Invalid hubspot_start_date" in exc_info.value.message
 
     def test_non_date_parse_result_raises(self, source, monkeypatch):
         monkeypatch.setattr(source_mod.pendulum, "parse", lambda raw: "not-a-datetime")
         with pytest.raises(AirbyteTracedException) as exc_info:
-            source._resolve_start_date(CONFIG)
+            source._resolve_start_date("2024-01-01")
         assert "parsed as" in exc_info.value.message
 
     def test_fallback_is_two_years_ago(self, source):
-        got = source._resolve_start_date({k: v for k, v in CONFIG.items() if k != "hubspot_start_date"})
+        got = source._resolve_start_date(None)
         expected = pendulum.now("UTC").subtract(years=2)
         assert abs(got.diff(expected).in_seconds()) < 60
 

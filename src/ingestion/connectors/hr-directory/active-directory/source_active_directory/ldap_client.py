@@ -15,10 +15,12 @@ This module centralises everything transport-specific:
 import logging
 import ssl
 import uuid
-from datetime import datetime, timezone
-from typing import Any, List, Mapping, Optional
+from datetime import UTC, datetime
+from typing import Any
 
-from ldap3 import ALL, SUBTREE, Connection, Server, Tls
+from ldap3 import ALL, Connection, Server, Tls
+
+from source_active_directory.config import ActiveDirectoryConfig
 
 logger = logging.getLogger("airbyte")
 
@@ -26,92 +28,61 @@ logger = logging.getLogger("airbyte")
 # whole AD object (which can carry photos, addresses, phone numbers, etc.).
 # Mirrors the ms-entra `$select` allowlist so the two directory connectors collect
 # the same identity surface. Privacy by default (Connector Spec NFR privacy).
-USER_ATTRIBUTES: List[str] = [
-    "objectGUID",            # stable binary GUID — analog of Entra `id`/oid
-    "sAMAccountName",        # legacy pre-Windows-2000 login — analog of onPremisesSamAccountName
-    "userPrincipalName",     # UPN (user@domain)
-    "mail",                  # primary SMTP address
-    "proxyAddresses",        # alternate SMTP addresses (multi-valued)
+USER_ATTRIBUTES: list[str] = [
+    "objectGUID",  # stable binary GUID — analog of Entra `id`/oid
+    "sAMAccountName",  # legacy pre-Windows-2000 login — analog of onPremisesSamAccountName
+    "userPrincipalName",  # UPN (user@domain)
+    "mail",  # primary SMTP address
+    "proxyAddresses",  # alternate SMTP addresses (multi-valued)
     "displayName",
     "givenName",
-    "sn",                    # surname
+    "sn",  # surname
     "employeeID",
     "department",
-    "title",                 # job title
-    "userAccountControl",    # bitmask — ACCOUNTDISABLE (0x2) drives enabled/disabled
+    "title",  # job title
+    "userAccountControl",  # bitmask — ACCOUNTDISABLE (0x2) drives enabled/disabled
     "distinguishedName",
-    "manager",               # manager DN (resolved to person downstream, not in v1)
-    "whenCreated",           # Generalized-Time
-    "whenChanged",           # Generalized-Time
+    "manager",  # manager DN (resolved to person downstream, not in v1)
+    "whenCreated",  # Generalized-Time
+    "whenChanged",  # Generalized-Time
 ]
 
 # ACCOUNTDISABLE flag in userAccountControl (Microsoft AD schema).
 _UAC_ACCOUNTDISABLE = 0x2
 
-# Default port selection
-_LDAPS_PORT = 636
-_LDAP_PORT = 389
 
-
-def _as_bool(value: Any, default: bool) -> bool:
-    """Coerce a config value to bool. K8s Secrets/env vars always deliver strings
-    (e.g. `"false"`), which are truthy in Python — a plain `if value` check would
-    always select LDAPS/636 regardless of the operator's intent."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in ("true", "1", "yes"):
-            return True
-        if normalized in ("false", "0", "no"):
-            return False
-        raise ValueError(f"ad_use_ssl must be a boolean-like value, got {value!r}")
-    return bool(value)
-
-
-def _port(config: Mapping[str, Any], use_ssl: bool) -> int:
-    port = config.get("ad_port")
-    if port:
-        return int(port)
-    return _LDAPS_PORT if use_ssl else _LDAP_PORT
-
-
-def build_server(config: Mapping[str, Any]) -> Server:
+def build_server(config: ActiveDirectoryConfig) -> Server:
     """Construct an `ldap3.Server` from connector config."""
-    use_ssl = _as_bool(config.get("ad_use_ssl"), default=True)
     # Require server certificate validation. Private AD CAs are supported via
     # `ad_ca_cert_path` (a CA bundle mounted into the connector pod) — never fall
     # back to CERT_NONE, which skips hostname/certificate checking entirely.
-    ca_cert_path = config.get("ad_ca_cert_path") or None
-    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=ca_cert_path) if use_ssl else None
+    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=config.ad_ca_cert_path or None) if config.ad_use_ssl else None
     return Server(
-        host=config["ad_server_host"],
-        port=_port(config, use_ssl),
-        use_ssl=use_ssl,
+        host=config.ad_server_host,
+        port=config.port,
+        use_ssl=config.ad_use_ssl,
         tls=tls,
         get_info=ALL,
         connect_timeout=15,
     )
 
 
-def connect(config: Mapping[str, Any]) -> Connection:
+def connect(config: ActiveDirectoryConfig) -> Connection:
     """Open and bind an LDAP connection. Raises `ldap3.core.exceptions.LDAPException`
     (or a subclass) on failure — callers translate that into a check/read error."""
     server = build_server(config)
     conn = Connection(
         server,
-        user=config["ad_bind_dn"],
-        password=config["ad_bind_password"],
-        auto_bind=True,        # bind immediately; raises LDAPBindError on bad creds
+        user=config.ad_bind_dn,
+        password=config.ad_bind_password,
+        auto_bind=True,  # bind immediately; raises LDAPBindError on bad creds
         raise_exceptions=True,
         receive_timeout=60,
     )
     return conn
 
 
-def guid_to_str(raw: Any) -> Optional[str]:
+def guid_to_str(raw: Any) -> str | None:
     """Convert an AD `objectGUID` raw value to the canonical GUID string.
 
     AD stores objectGUID as a 16-byte little-endian blob. `uuid.UUID(bytes_le=...)`
@@ -127,7 +98,7 @@ def guid_to_str(raw: Any) -> Optional[str]:
     return str(raw)
 
 
-def generalized_time_to_iso(value: Any) -> Optional[str]:
+def generalized_time_to_iso(value: Any) -> str | None:
     """Convert AD Generalized-Time (`YYYYMMDDHHMMSS.0Z`) to ISO-8601.
 
     ldap3 often parses these into `datetime` objects already; handle both that and
@@ -137,19 +108,19 @@ def generalized_time_to_iso(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     text = value.decode() if isinstance(value, (bytes, bytearray)) else str(value)
     text = text.strip()
     if len(text) >= 14 and text[:14].isdigit():
         try:
-            dt = datetime.strptime(text[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(text[:14], "%Y%m%d%H%M%S").replace(tzinfo=UTC)
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         except ValueError:
             return text
     return text
 
 
-def account_enabled(uac: Any) -> Optional[bool]:
+def account_enabled(uac: Any) -> bool | None:
     """Decode the ACCOUNTDISABLE bit of `userAccountControl`. None when absent."""
     if uac is None or uac == "":
         return None

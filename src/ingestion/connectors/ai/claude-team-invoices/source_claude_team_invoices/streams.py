@@ -38,13 +38,25 @@ from typing import Any
 
 import requests
 from airbyte_cdk.sources.streams import CheckpointMixin, Stream
+from pydantic import JsonValue, ValidationError
 
+from source_claude_team_invoices.models import (
+    Bootstrap,
+    ConnectorConfig,
+    EnrichedInvoice,
+    Invoice,
+    InvoiceLine,
+    InvoicePage,
+    LinePage,
+    StreamState,
+    validation_summary,
+)
 from source_claude_team_invoices.stripe_chain import (
     CHAIN_OK,
     StripeChainError,
     build_records,
     line_projection_id,
-    read_bootstrap,
+    parse_hop,
     unique_key_parts,
 )
 
@@ -53,11 +65,6 @@ logger = logging.getLogger("airbyte")
 STRIPE_VERSION = "2026-06-24.dahlia"
 BOOTSTRAP_HOST = "https://invoicedata.stripe.com"
 STRIPE_API = "https://api.stripe.com/v1"
-
-# The two keys in the stream's state blob: the index of chained invoices, and
-# the shape of the line rows it stands for.
-STATE_ENRICHED = "enriched"
-STATE_PROJECTION = "line_projection"
 
 PER_PAGE = 12
 # Bounds on the two cursor walks, far above any real history. They guard
@@ -74,6 +81,19 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def readable_entries(stored: Mapping[str, JsonValue]) -> dict[str, EnrichedInvoice]:
+    """The state entries that still name their bronze keys; any other is chained again."""
+    known: dict[str, EnrichedInvoice] = {}
+    for identity, entry in stored.items():
+        try:
+            known[identity] = EnrichedInvoice.model_validate(entry)
+        except ValidationError as error:
+            logger.warning(
+                "chaining one remembered invoice again: its state entry is unreadable (%s)", validation_summary(error)
+            )
+    return known
+
+
 class InvoiceLines(Stream, CheckpointMixin):
     """`claude_team_invoice_lines` — one record per invoice, plus one per line."""
 
@@ -84,19 +104,19 @@ class InvoiceLines(Stream, CheckpointMixin):
     # and therefore keep that set (reconcile-connectors' catalogue normaliser).
     cursor_field = "collected_at"
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
-        self._proxy_url = str(config["proxy_url"]).rstrip("/")
-        self._proxy_token = config["proxy_auth_token"]
-        self._org_id = config["claude_org_id"]
-        self._tenant_id = config["insight_tenant_id"]
-        self._source_id = config["insight_source_id"]
+    def __init__(self, config: ConnectorConfig) -> None:
+        self._proxy_url = config.proxy_url.rstrip("/")
+        self._proxy_token = config.proxy_auth_token
+        self._org_id = config.claude_org_id
+        self._tenant_id = config.insight_tenant_id
+        self._source_id = config.insight_source_id
         self._session = requests.Session()
         self._chained = False
         # INVARIANT: `_known` is the map as of the start of the run and is never
         # written to during one. What a run learns goes to `_learned`, so which
         # invoices it chains cannot depend on the order of its own records.
-        self._known: dict[str, dict[str, Any]] = {}
-        self._learned: dict[str, dict[str, Any]] = {}
+        self._known: dict[str, EnrichedInvoice] = {}
+        self._learned: dict[str, EnrichedInvoice] = {}
 
     @property
     def name(self) -> str:
@@ -107,20 +127,24 @@ class InvoiceLines(Stream, CheckpointMixin):
 
         return load_stream_schema(self.name)
 
-    def _get_json(self, url: str, headers: Mapping[str, str] | None = None) -> Any:
+    def _get_body(self, url: str, headers: Mapping[str, str] | None = None) -> bytes:
         response = self._session.get(url, headers=dict(headers or {}), timeout=TIMEOUT)
         response.raise_for_status()
-        return response.json()
+        return response.content
 
-    def _walk_invoices(self) -> list[Mapping[str, Any]]:
+    def _walk_invoices(self) -> list[Invoice]:
         """Page the claude.ai wrapper until it stops offering a cursor."""
-        invoices: list[Mapping[str, Any]] = []
-        cursor: str | None = None
+        invoices: list[Invoice] = []
+        cursor: str | int | None = None
         for _ in range(MAX_PAGES):
             url = f"{self._proxy_url}/api/stripe/{self._org_id}/invoices?limit={PER_PAGE}&page={cursor or ''}"
-            body = self._get_json(url, {"Authorization": f"Bearer {self._proxy_token}"})
-            invoices.extend(body.get("invoices") or [])
-            cursor = body.get("next_page")
+            body = self._get_body(url, {"Authorization": f"Bearer {self._proxy_token}"})
+            try:
+                page = InvoicePage.model_validate_json(body)
+            except ValidationError as error:
+                raise RuntimeError(f"invoice list answered an unexpected shape: {validation_summary(error)}") from None
+            invoices.extend(page.invoices or [])
+            cursor = page.next_page
             if not cursor:
                 return invoices
         # Stopping silently here would drop the oldest invoices and read as a
@@ -130,31 +154,37 @@ class InvoiceLines(Stream, CheckpointMixin):
             f"({MAX_PAGES * PER_PAGE} invoices); the page cursor is not advancing"
         )
 
-    def _fetch_lines(self, acct: str, token: str) -> tuple[str, Sequence[Mapping[str, Any]]]:
+    def _fetch_lines(self, acct: str, token: str) -> tuple[str, Sequence[InvoiceLine]]:
         """Run the Stripe hops and return the invoice id with its full line set."""
         if self._chained:
             time.sleep(CHAIN_DELAY_SECS)
         self._chained = True
 
-        bootstrap = self._get_json(f"{BOOTSTRAP_HOST}/hosted_invoice_page/{acct}/{token}")
-        invoice_id, ephemeral_key = read_bootstrap(bootstrap)
+        bootstrap = parse_hop(
+            Bootstrap, self._get_body(f"{BOOTSTRAP_HOST}/hosted_invoice_page/{acct}/{token}"), "bootstrap"
+        )
+        invoice_id = bootstrap.invoice_id
 
-        headers = {"Authorization": f"Bearer {ephemeral_key}", "Stripe-Version": STRIPE_VERSION, "Stripe-Account": acct}
+        headers = {
+            "Authorization": f"Bearer {bootstrap.ephemeral_key}",
+            "Stripe-Version": STRIPE_VERSION,
+            "Stripe-Account": acct,
+        }
         # Issued back to back: the key is short-lived, so nothing sleeps between hops.
-        lines: list[Mapping[str, Any]] = []
+        lines: list[InvoiceLine] = []
         starting_after: str | None = None
         for _ in range(MAX_LINE_PAGES):
             url = f"{STRIPE_API}/invoices/{invoice_id}/lines?limit=100"
             if starting_after:
                 url += f"&starting_after={starting_after}"
-            page = self._get_json(url, headers)
-            batch = page.get("data") or []
+            page = parse_hop(LinePage, self._get_body(url, headers), "line page")
+            batch = page.data or []
             lines.extend(batch)
-            if not page.get("has_more"):
+            if not page.has_more:
                 return invoice_id, lines
-            if not batch or not batch[-1].get("id"):
+            if not batch or not batch[-1].id:
                 raise StripeChainError("line page claims has_more with no cursor to advance")
-            starting_after = batch[-1]["id"]
+            starting_after = batch[-1].id
         raise StripeChainError(f"line pagination exceeded {MAX_LINE_PAGES} pages")
 
     def _envelope(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -180,24 +210,33 @@ class InvoiceLines(Stream, CheckpointMixin):
         The projection marker rides along so the next run can tell whether the
         rows this index stands for still carry the columns bronze now expects.
         """
-        return {STATE_ENRICHED: {**self._known, **self._learned}, STATE_PROJECTION: line_projection_id()}
+        enriched = {
+            identity: entry.model_dump(mode="json") for identity, entry in {**self._known, **self._learned}.items()
+        }
+        return StreamState(enriched=enriched, line_projection=line_projection_id()).model_dump(mode="json")
 
     @state.setter
     def state(self, value: Mapping[str, Any]) -> None:
         self._learned = {}
-        stored = value.get(STATE_ENRICHED) if isinstance(value, Mapping) else None
-        marker = value.get(STATE_PROJECTION) if isinstance(value, Mapping) else None
-        if stored and marker != line_projection_id():
+        try:
+            stored = StreamState.model_validate(value)
+        except ValidationError as error:
+            logger.warning("ignoring a stream state of unexpected shape (%s)", validation_summary(error))
+            self._known = {}
+            return
+
+        stored_entries = stored.enriched or {}
+        if stored_entries and stored.line_projection != line_projection_id():
             # The index says these invoices need no chain, but it was written for
             # a narrower line row: skipping them would leave the columns added
             # since empty for good, because only a chain emits a line row.
             logger.info(
                 "line projection changed since this state was written — chaining %s known invoice(s) once more",
-                len(stored),
+                len(stored_entries),
             )
             self._known = {}
             return
-        self._known = dict(stored) if isinstance(stored, Mapping) else {}
+        self._known = readable_entries(stored_entries)
 
     def _remember(self, record: Mapping[str, Any]) -> None:
         """Record what a completed chain found, so the next sync can skip it.
@@ -211,11 +250,11 @@ class InvoiceLines(Stream, CheckpointMixin):
         identity, invoice_id = record.get("invoice_ref"), record.get("invoice_id")
         if not identity or not invoice_id:
             return
-        self._learned[str(identity)] = {
-            "invoice_id": invoice_id,
-            "period_start_ts": record.get("period_start_ts"),
-            "period_end_ts": record.get("period_end_ts"),
-        }
+        self._learned[str(identity)] = EnrichedInvoice(
+            invoice_id=invoice_id,
+            period_start_ts=record.get("period_start_ts"),
+            period_end_ts=record.get("period_end_ts"),
+        )
 
     def read_records(self, sync_mode: Any, **kwargs: Any) -> Iterable[MutableMapping[str, Any]]:
         for record in build_records(self._walk_invoices(), self._fetch_lines, enriched=self._known):

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Annotated, Any
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import Stream
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 from source_bamboohr.client import BambooClient
+from source_bamboohr.parsing import ROWS, Row, blank_to_none, malformed, valid_rows
 
 logger = logging.getLogger("airbyte")
 
@@ -33,11 +35,34 @@ SCHEMA: Mapping[str, Any] = {
 }
 
 
-def field_key(field: Mapping[str, Any]) -> str:
+# No attribute of a metadata entry can fail it: a dropped entry would take its id
+# out of the sensitive-key set and let a sensitive column through unredacted.
+AnyId = Annotated[str | None, BeforeValidator(lambda v: None if v is None else str(v)), AfterValidator(blank_to_none)]
+AnyText = Annotated[str, BeforeValidator(lambda v: str(v or ""))]
+Truthy = Annotated[bool, BeforeValidator(bool)]
+
+
+class MetaField(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: AnyId = None
+    alias: AnyText = ""
+    deprecated: Truthy = False
+
+
+def read_meta_fields(client: BambooClient) -> list[tuple[MetaField, Row]]:
+    try:
+        rows = ROWS.validate_json(client.get("meta/fields"))
+    except ValidationError as exc:
+        raise malformed("field metadata", exc) from None
+
+    return list(valid_rows(MetaField, rows, "field metadata entry"))
+
+
+def field_key(field_id: str, deprecated: bool) -> str:
     """Natural key of a field-metadata row: a deprecated field may carry the id of
     an active one, so the prefix is what keeps the two keys apart."""
-    field_id = field["id"]
-    return f"d{field_id}" if field.get("deprecated") else str(field_id)
+    return f"d{field_id}" if deprecated else field_id
 
 
 class MetaFieldsStream(Stream):
@@ -56,21 +81,13 @@ class MetaFieldsStream(Stream):
         stream_slice: Mapping[str, Any] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
-        rows = self._client.get("meta/fields")
-        if not isinstance(rows, list):
-            raise RuntimeError(f"BambooHR field metadata is not a list: {type(rows).__name__}")
-
         count = 0
-        for row in rows:
-            if not isinstance(row, Mapping):
-                logger.warning("Skipping BambooHR field metadata entry that is not an object")
-                continue
-
-            if row.get("id") is None or str(row["id"]).strip() == "":
+        for field, row in read_meta_fields(self._client):
+            if field.id is None:
                 logger.warning("Skipping BambooHR field metadata entry without an id")
                 continue
 
-            unique = field_key(row)
+            unique = field_key(field.id, field.deprecated)
             count += 1
             yield {
                 **row,

@@ -62,6 +62,7 @@ from source_hubspot.constants import (
     STREAM_REGISTRY,
 )
 from source_hubspot.envelope import envelope, inject_envelope_properties
+from source_hubspot.models import HistoryObject, HistoryPage, PropertyChange, RecordPage, parse_answer
 from source_hubspot.rate_limiting import HubspotErrorHandler
 
 logger = logging.getLogger("airbyte")
@@ -309,8 +310,7 @@ class CrmSearchStream(HubspotStream):
             results, next_after = self._post_search(payload)
             if not results:
                 return
-            for rec in results:
-                yield rec
+            yield from results
 
             if next_after is None:
                 return
@@ -349,15 +349,8 @@ class CrmSearchStream(HubspotStream):
         _, resp = self._http_client.send_request(
             "POST", self._search_url(), headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
         )
-        data = resp.json()
-        results = list(data.get("results") or [])
-        next_after = None
-        paging = data.get("paging") or {}
-        if isinstance(paging, Mapping):
-            nxt = paging.get("next") or {}
-            if isinstance(nxt, Mapping):
-                next_after = nxt.get("after")
-        return results, next_after
+        page = parse_answer(RecordPage, resp.content, what=f"search answer on '{self._stream_name}'")
+        return list(page.results), page.next_after
 
     def _search_body(
         self, *, lower: str, upper: str, property_names: list[str], after: str | None, min_object_id: str | None
@@ -444,12 +437,9 @@ class OwnersStream(HubspotStream):
             if after:
                 params["after"] = after
             _, resp = self._http_client.send_request("GET", url, headers={}, params=params, request_kwargs={})
-            data = resp.json()
-            for rec in data.get("results") or []:
-                yield rec
-            paging = data.get("paging") or {}
-            nxt = (paging.get("next") or {}) if isinstance(paging, Mapping) else {}
-            after = nxt.get("after") if isinstance(nxt, Mapping) else None
+            page = parse_answer(RecordPage, resp.content, what=f"list answer on '{self._stream_name}'")
+            yield from page.results
+            after = page.next_after
             if not after:
                 return
 
@@ -576,12 +566,9 @@ class CrmArchivedListStream(HubspotStream):
             if after:
                 params["after"] = after
             _, resp = self._http_client.send_request("GET", url, headers={}, params=params, request_kwargs={})
-            data = resp.json()
-            for rec in data.get("results") or []:
-                yield rec
-            paging = data.get("paging") or {}
-            nxt = (paging.get("next") or {}) if isinstance(paging, Mapping) else {}
-            after = nxt.get("after") if isinstance(nxt, Mapping) else None
+            page = parse_answer(RecordPage, resp.content, what=f"list answer on '{self._stream_name}'")
+            yield from page.results
+            after = page.next_after
             if not after:
                 return
 
@@ -608,9 +595,7 @@ class CrmArchivedListStream(HubspotStream):
         _, resp = self._http_client.send_request(
             "POST", url, headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
         )
-        data = resp.json()
-        for rec in data.get("results") or []:
-            yield rec
+        yield from parse_answer(RecordPage, resp.content, what=f"batch read answer on '{self._stream_name}'").results
 
 
 # =============================================================================
@@ -650,7 +635,8 @@ class PipelinesStream(HubspotStream):
     ) -> Iterable[Mapping[str, Any]]:
         url = f"{BASE_URL}/crm/v3/pipelines/{self._object_type}"
         _, resp = self._http_client.send_request("GET", url, headers={}, request_kwargs={})
-        for pipeline in resp.json().get("results") or []:
+        page = parse_answer(RecordPage, resp.content, what=f"pipelines answer on '{self._stream_name}'")
+        for pipeline in page.results:
             yield _with_cursor({**pipeline, "objectType": self._object_type}, self.cursor_field)
 
 
@@ -716,7 +702,7 @@ class PropertyDefinitionsStream(HubspotStream):
         url = f"{BASE_URL}/crm/v3/properties/{object_type}"
         params = {"archived": "true" if archived else "false"}
         _, resp = self._http_client.send_request("GET", url, headers={}, params=params, request_kwargs={})
-        return list(resp.json().get("results") or [])
+        return parse_answer(RecordPage, resp.content, what=f"properties answer on '{self._stream_name}'").results
 
 
 # =============================================================================
@@ -789,7 +775,8 @@ class PropertyHistoryStream(CrmSearchStream):
         _, resp = self._http_client.send_request(
             "POST", url, headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
         )
-        for obj in resp.json().get("results") or []:
+        page = parse_answer(HistoryPage, resp.content, what=f"history answer on '{self._stream_name}'")
+        for obj in page.results:
             yield from _history_changes(self._object_type, obj)
 
 
@@ -798,7 +785,7 @@ class PropertyHistoryStream(CrmSearchStream):
 # =============================================================================
 
 
-def _after_exceeds_cap(after: Any) -> bool:
+def _after_exceeds_cap(after: str) -> bool:
     """True if the ``after`` cursor crosses HubSpot's 10k search-result cap.
 
     ``after`` is an opaque string from HubSpot but in practice it's numeric
@@ -806,8 +793,8 @@ def _after_exceeds_cap(after: Any) -> bool:
     non-numeric (shouldn't happen, but guards against API surprise).
     """
     try:
-        return int(str(after)) >= SEARCH_AFTER_HARD_CAP
-    except (TypeError, ValueError):
+        return int(after) >= SEARCH_AFTER_HARD_CAP
+    except ValueError:
         return False
 
 
@@ -850,32 +837,29 @@ def _record_cursor_passes(
     return value >= threshold if inclusive else value > threshold
 
 
-def _history_changes(object_type: str, obj: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
+def _history_changes(object_type: str, obj: HistoryObject) -> Iterable[Mapping[str, Any]]:
     """Flatten one batch/read result into a record per property change."""
-    object_id = str(obj.get("id"))
-    history = obj.get("propertiesWithHistory") or {}
-    for property_name, changes in history.items():
-        for change in changes or []:
+    for property_name, changes in obj.propertiesWithHistory.items():
+        for change in changes:
             yield {
-                "id": _history_change_id(object_id, property_name, change),
+                "id": _history_change_id(obj.id, property_name, change),
                 "objectType": object_type,
-                "objectId": object_id,
+                "objectId": obj.id,
                 "propertyName": property_name,
-                "value": change.get("value"),
-                "timestamp": change.get("timestamp"),
-                "sourceType": change.get("sourceType"),
-                "sourceId": change.get("sourceId"),
-                "sourceLabel": change.get("sourceLabel"),
-                "updatedByUserId": change.get("updatedByUserId"),
-                "updatedAt": obj.get("updatedAt"),
+                "value": change.value,
+                "timestamp": change.timestamp,
+                "sourceType": change.sourceType,
+                "sourceId": change.sourceId,
+                "sourceLabel": change.sourceLabel,
+                "updatedByUserId": change.updatedByUserId,
+                "updatedAt": obj.updatedAt,
             }
 
 
-def _history_change_id(object_id: str, property_name: str, change: Mapping[str, Any]) -> str:
+def _history_change_id(object_id: str, property_name: str, change: PropertyChange) -> str:
     # INVARIANT: built only from the change itself, so a replayed history
     # keeps every change on its first unique_key.
-    fingerprint = "\x1f".join(
-        str(change.get(key) or "") for key in ("timestamp", "value", "sourceType", "sourceId", "updatedByUserId")
-    )
+    parts = (change.timestamp, change.value, change.sourceType, change.sourceId, change.updatedByUserId)
+    fingerprint = "\x1f".join(str(part or "") for part in parts)
     digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
     return f"{object_id}:{property_name}:{digest}"

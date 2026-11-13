@@ -11,19 +11,21 @@ from typing import Any
 import pytest
 import requests
 import requests_mock as rm_module
+from source_claude_team_invoices.models import ConnectorConfig, InvoicePage
 from source_claude_team_invoices.source import SourceClaudeTeamInvoices, load_stream_schema
 from source_claude_team_invoices.streams import InvoiceLines
 
-CONFIG = {
-    "proxy_url": "https://proxy.example/",
-    "proxy_auth_token": "proxy-token",
-    "claude_org_id": "org_EXAMPLE",
-    "insight_tenant_id": "11111111-1111-1111-1111-111111111111",
-    "insight_source_id": "claude-team-invoices-1",
-}
+CONFIG = ConnectorConfig(
+    proxy_url="https://proxy.example/",
+    proxy_auth_token="proxy-token",
+    claude_org_id="org_EXAMPLE",
+    insight_tenant_id="11111111-1111-1111-1111-111111111111",
+    insight_source_id="claude-team-invoices-1",
+).model_dump()
 INVOICES_URL = f"https://proxy.example/api/stripe/{CONFIG['claude_org_id']}/invoices"
 HEALTH_URL = "https://proxy.example/health"
 STRIPE_PING = "https://api.stripe.com/v1"
+EMPTY_LISTING = InvoicePage(invoices=[]).model_dump(mode="json")
 
 
 @pytest.fixture
@@ -74,7 +76,7 @@ def test_a_proxy_holding_no_session_key_is_named_before_the_listing_is_called(
     and every `/api/` call refusing. Read from the listing alone that is a bare
     503; `/health` says which of the two it is."""
     http.get(HEALTH_URL, status_code=503, json={"status": "init", "ready": False})
-    listing = http.get(INVOICES_URL, json={"invoices": []})
+    listing = http.get(INVOICES_URL, json=EMPTY_LISTING)
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
     assert "holds no claude.ai session key" in message
@@ -85,7 +87,7 @@ def test_a_proxy_holding_no_session_key_is_named_before_the_listing_is_called(
 def test_the_readiness_probe_carries_no_credential(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
     """`/health` is the one route the proxy leaves open, and it is reached before
     the token is known to be good — so the token is not offered to it."""
-    http.get(INVOICES_URL, json={"invoices": []})
+    http.get(INVOICES_URL, json=EMPTY_LISTING)
     http.get(STRIPE_PING, status_code=401)
     source.check_connection(None, CONFIG)
     probe = next(r for r in http.request_history if r.path == "/health")
@@ -97,7 +99,7 @@ def test_a_proxy_build_without_the_route_lets_the_listing_decide(
 ) -> None:
     """An older proxy answers 404 there; that is not a reason to refuse a sync."""
     http.get(HEALTH_URL, status_code=404, json={"error": "not found"})
-    http.get(INVOICES_URL, json={"invoices": []})
+    http.get(INVOICES_URL, json=EMPTY_LISTING)
     http.get(STRIPE_PING, status_code=401)
     assert source.check_connection(None, CONFIG) == (True, None)
 
@@ -144,12 +146,13 @@ def test_any_other_status_is_reported_with_its_code(source: SourceClaudeTeamInvo
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ({"text": "<html>maintenance</html>"}, "not JSON"),
-        ({"json": ["invoice"]}, "answered a list"),
+        ({"text": "<html>maintenance</html>"}, "(<root>: json_invalid)"),
+        ({"json": ["invoice"]}, "(<root>: model_type)"),
         ({"json": {"data": []}}, "`invoices` array"),
-        ({"json": {"invoices": 1}}, "`invoices` array"),
+        ({"json": {"invoices": 1}}, "(invoices: list_type)"),
+        ({"json": {"invoices": [{"status": ["secret-status"]}]}}, "(invoices.0.status: string_type)"),
     ],
-    ids=["not-json", "not-an-object", "no-invoices-field", "invoices-not-an-array"],
+    ids=["not-json", "not-an-object", "no-invoices-field", "invoices-not-an-array", "invoice-of-the-wrong-shape"],
 )
 def test_a_200_that_is_not_an_invoice_listing_is_refused(
     source: SourceClaudeTeamInvoices, http: rm_module.Mocker, body: dict[str, Any], expected: str
@@ -163,6 +166,25 @@ def test_a_200_that_is_not_an_invoice_listing_is_refused(
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
     assert expected in message
+    assert "secret" not in message and "maintenance" not in message, "the body's values stay out of the message"
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {key: value for key, value in CONFIG.items() if key != "proxy_auth_token"},
+        dict(CONFIG, proxy_auth_token=["secret-token"]),
+    ],
+    ids=["missing", "wrong-type"],
+)
+def test_a_config_of_the_wrong_shape_is_refused_naming_the_field_not_its_value(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker, config: dict[str, Any]
+) -> None:
+    ok, message = source.check_connection(None, config)
+    assert ok is False
+    assert "connector config is invalid: proxy_auth_token" in message
+    assert "secret-token" not in message
+    assert http.call_count == 0, "a config that cannot be read is refused without a call"
 
 
 def test_blocked_egress_to_stripe_is_refused_even_when_the_proxy_is_healthy(
@@ -170,7 +192,7 @@ def test_blocked_egress_to_stripe_is_refused_even_when_the_proxy_is_healthy(
 ) -> None:
     """A green proxy with no egress yields invoices without prices — the silent
     emptiness this check exists to prevent."""
-    http.get(INVOICES_URL, json={"invoices": []})
+    http.get(INVOICES_URL, json=EMPTY_LISTING)
     http.get(STRIPE_PING, exc=requests.ConnectionError("blocked"))
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
@@ -179,6 +201,6 @@ def test_blocked_egress_to_stripe_is_refused_even_when_the_proxy_is_healthy(
 
 
 def test_a_reachable_proxy_and_stripe_pass(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
-    http.get(INVOICES_URL, json={"invoices": []})
+    http.get(INVOICES_URL, json=EMPTY_LISTING)
     http.get(STRIPE_PING, status_code=401, json={"error": "unauthenticated"})
     assert source.check_connection(None, CONFIG) == (True, None)

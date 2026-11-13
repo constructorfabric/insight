@@ -14,7 +14,10 @@ from collections.abc import Mapping, MutableMapping, MutableSet
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from source_hubspot.constants import BODY_PROPERTIES
+from source_hubspot.models import RecordKeys, unexpected_payload
 
 logger = logging.getLogger("airbyte")
 
@@ -96,8 +99,12 @@ def envelope(
     ``collision_seen`` gates one-shot-per-stream warnings on reserved-name
     collisions.
     """
+    try:
+        keys = RecordKeys.model_validate(record)
+    except ValidationError as exc:
+        raise unexpected_payload("record shape", exc) from None
+
     out: MutableMapping[str, Any] = {}
-    properties = record.get("properties") or {}
 
     for key, value in record.items():
         if key == "properties":
@@ -107,7 +114,7 @@ def envelope(
             continue
         out[key] = value
 
-    for prop_name, prop_value in properties.items():
+    for prop_name, prop_value in keys.properties.items():
         # A column the advertised schema never declared would be drift;
         # ``raw_data`` carries what the allowlist leaves out.
         if prop_name not in allowed_property_names:
@@ -121,10 +128,8 @@ def envelope(
     # JSON would leave it unparseable.
     out["raw_data"] = json.dumps(_truncate_deep(record), separators=(",", ":"), default=str)
 
-    hs_id = record.get("id")
-    # Treat only None / empty string as missing — a numeric 0 is still a
-    # legitimate id from HubSpot's perspective.
-    if hs_id is None or hs_id == "":
+    hs_id = keys.id
+    if not hs_id:
         # Every HubSpot CRM object carries a numeric ``id``. An empty value
         # likely means a malformed response; derive a stable content hash so
         # Bronze ReplacingMergeTree doesn't collapse these rows into each

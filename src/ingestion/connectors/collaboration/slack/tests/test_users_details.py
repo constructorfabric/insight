@@ -14,7 +14,7 @@ import requests
 import requests_mock as rm
 from airbyte_cdk.models import FailureType, SyncMode
 from airbyte_cdk.test.entrypoint_wrapper import discover
-from conftest import CONFIG, catalog, day_url, last_state, member_file, refusal, run, stream_state
+from conftest import CONFIG, assert_not_echoed, catalog, day_url, last_state, member_file, refusal, run, stream_state
 from jsonschema import Draft7Validator
 from source_slack.source import SourceSlack
 
@@ -222,41 +222,79 @@ def test_a_body_that_is_neither_gzip_nor_json_fails_the_sync() -> None:
 
         output = run(expecting_exception=True)
 
-    messages = [e.trace.error.message or "" for e in output.errors]
-    assert any("not JSON Lines" in m for m in messages)
-    assert not any("maintenance" in m for m in messages), "the body must not be echoed"
+    assert any("not JSON Lines" in (e.trace.error.message or "") for e in output.errors)
+    assert_not_echoed(output, "maintenance")
 
 
-def test_a_json_body_that_is_not_a_refusal_fails_the_sync() -> None:
+@pytest.mark.parametrize("body", [{"ok": True}, {"ok": "secret-flag"}, {"ok": False, "error": ["secret-code"]}])
+def test_a_json_body_that_is_not_a_refusal_fails_the_sync(body: dict[str, object]) -> None:
     with rm.Mocker() as http:
-        http.get(day_url("2026-10-01"), json={"ok": True}, status_code=200)
+        http.get(day_url("2026-10-01"), json=body, status_code=200)
 
         output = run(expecting_exception=True)
 
-    assert any("without a member file" in (e.trace.error.message or "") for e in output.errors)
+    messages = [e.trace.error.message or "" for e in output.errors]
+    assert any("without a member file" in m for m in messages), f"should reject: {body!r}"
+    assert_not_echoed(output, "secret")
+
+
+def test_a_member_file_line_that_is_not_an_object_never_echoes_member_data() -> None:
+    import gzip
+
+    body = gzip.compress(b'["secret@example.com"]\n')
+    with rm.Mocker() as http:
+        http.get(day_url("2026-10-01"), content=body, status_code=200)
+
+        output = run(expecting_exception=True)
+
+    assert any("not a JSON object" in (e.trace.error.message or "") for e in output.errors)
+    assert_not_echoed(output, "secret@example.com")
 
 
 def test_a_member_file_that_does_not_parse_never_echoes_member_data() -> None:
-    body = b'{"user_id": "U1", "email_address": "secret@example.com"}\n{broken'
+    body = b'{"user_id": "U1", "email_address": "secret@example.com"}\n{"email_address": "secret@example.com", broken'
     with rm.Mocker() as http:
         http.get(day_url("2026-10-01"), content=body, status_code=200)
 
         output = run(expecting_exception=True)
 
     assert output.errors
-    assert not any("secret@example.com" in (e.trace.error.message or "") for e in output.errors)
+    assert_not_echoed(output, "secret@example.com")
 
 
-def test_a_row_without_user_id_fails_the_sync() -> None:
+@pytest.mark.parametrize(
+    ("row", "problem"),
+    [
+        ({"date": "2026-10-01"}, "user_id: missing"),
+        ({"user_id": "", "date": "2026-10-01"}, "user_id: string_too_short"),
+        ({"user_id": 4242, "date": "2026-10-01"}, "user_id: string_type"),
+        ({"user_id": "U1", "date": 4242}, "date: string_type"),
+    ],
+)
+def test_a_row_without_a_usable_user_id_or_date_fails_the_sync(row: dict[str, object], problem: str) -> None:
     import gzip
 
-    body = gzip.compress(json.dumps({"date": "2026-10-01", "email_address": "x@example.com"}).encode())
+    body = gzip.compress(json.dumps({**row, "email_address": "secret@example.com"}).encode())
     with rm.Mocker() as http:
         http.get(day_url("2026-10-01"), content=body, status_code=200)
 
         output = run(expecting_exception=True)
 
-    assert any("without user_id" in (e.trace.error.message or "") for e in output.errors)
+    errors = [e.trace.error for e in output.errors]
+    assert FailureType.system_error in [e.failure_type for e in errors]
+    assert any(problem in (e.message or "") for e in errors), f"should name {problem!r} for {row!r}"
+    assert_not_echoed(output, "secret@example.com")
+    assert_not_echoed(output, "4242")
+
+
+def test_a_config_the_spec_accepts_but_the_model_refuses_fails_as_a_config_error() -> None:
+    with rm.Mocker():
+        output = run(config={**CONFIG, "slack_start_date": "secret-date"}, expecting_exception=True)
+
+    errors = [e.trace.error for e in output.errors]
+    assert FailureType.config_error in [e.failure_type for e in errors]
+    assert any("slack_start_date" in (e.message or "") for e in errors)
+    assert_not_echoed(output, "secret-date")
 
 
 def test_discover_offers_incremental_on_a_source_defined_date_cursor() -> None:

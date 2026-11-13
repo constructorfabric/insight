@@ -5,15 +5,28 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
+from airbyte_cdk.models import FailureType
+from airbyte_cdk.utils import AirbyteTracedException
 from source_hubspot.constants import BASE_URL, SEARCH_PAGE_LIMIT
-from tests.conftest import SOURCE, TENANT, FakeResponse, wire
+from source_hubspot.models import (
+    AssociationBatch,
+    AssociationResult,
+    AssociationSource,
+    AssociationTarget,
+    NextPage,
+    Paging,
+    RecordPage,
+)
+from tests.conftest import SOURCE, TENANT, FakeResponse, assert_no_leak, wire
 
 
 def search_page(records, next_after=None):
-    payload = {"results": records}
-    if next_after is not None:
-        payload["paging"] = {"next": {"after": next_after}}
-    return FakeResponse(payload)
+    paging = Paging(next=NextPage(after=next_after)) if next_after is not None else None
+    return FakeResponse(RecordPage(results=records, paging=paging).model_dump(mode="json"))
+
+
+PERSONAL = "person@example.com"
 
 
 def rec(i, updated="2024-06-01T00:00:00Z", **props):
@@ -83,6 +96,27 @@ class TestPostSearch:
         assert deals_stream._post_search({})[1] is None
         assert deals_stream._post_search({})[1] is None
 
+    def test_numeric_after_read_as_string(self, deals_stream):
+        wire(deals_stream, [FakeResponse({"results": [rec(1)], "paging": {"next": {"after": 100}}})])
+        assert deals_stream._post_search({})[1] == "100"
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            FakeResponse(text=PERSONAL),
+            FakeResponse(PERSONAL),
+            FakeResponse({"results": PERSONAL}),
+            FakeResponse({"results": [PERSONAL]}),
+        ],
+    )
+    def test_malformed_answer_is_system_error_without_input(self, deals_stream, response):
+        wire(deals_stream, [response])
+        with pytest.raises(AirbyteTracedException) as exc_info:
+            deals_stream._post_search({})
+        error = exc_info.value
+        assert error.failure_type == FailureType.system_error, f"should reject: {response.text!r}"
+        assert_no_leak(error, PERSONAL)
+
 
 class TestGenerateRecords:
     def test_single_page(self, deals_stream):
@@ -137,10 +171,14 @@ class TestGenerateRecords:
 
 class TestReadRecordsPipeline:
     def test_envelope_and_association_enrichment(self, deals_stream):
-        assoc_payload = {
-            "status": "COMPLETE",
-            "results": [{"from": {"id": "1"}, "to": [{"toObjectId": 900}, {"toObjectId": 901}]}],
-        }
+        assoc_payload = AssociationBatch(
+            results=[
+                AssociationResult(
+                    source=AssociationSource(id="1"),
+                    to=[AssociationTarget(toObjectId="900"), AssociationTarget(toObjectId="901")],
+                )
+            ]
+        ).model_dump(mode="json", by_alias=True)
         client = wire(
             deals_stream,
             [
@@ -151,7 +189,7 @@ class TestReadRecordsPipeline:
                     ]
                 ),
                 FakeResponse(assoc_payload),  # companies batch
-                FakeResponse({"results": []}),  # contacts batch
+                FakeResponse(AssociationBatch().model_dump(mode="json", by_alias=True)),  # contacts batch
             ],
         )
         out = list(deals_stream.read_records(sync_mode=None))

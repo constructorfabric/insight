@@ -14,6 +14,7 @@ from typing import Any
 
 import pendulum
 import pytest
+from airbyte_cdk.utils import AirbyteTracedException
 from source_hubspot.streams import (
     CrmArchivedListStream,
     CrmSearchStream,
@@ -27,10 +28,17 @@ SOURCE = "S"
 START = pendulum.datetime(2024, 1, 1, tz="UTC")
 
 
+def assert_no_leak(error: AirbyteTracedException, value: str) -> None:
+    """``value`` reaches neither the message nor the stack trace the CDK emits."""
+    stack_trace = error.as_airbyte_message().trace.error.stack_trace
+    for surface in (error.message, error.internal_message, stack_trace):
+        assert value not in (surface or ""), f"input leaked into: {surface!r}"
+
+
 class FakeResponse:
     """Minimal stand-in for requests.Response as consumed by streams/api.
 
-    The code under test only touches ``.json()``, ``.ok``, ``.status_code``,
+    The code under test only touches ``.content``, ``.ok``, ``.status_code``,
     ``.url`` and ``.text``.
     """
 
@@ -41,7 +49,6 @@ class FakeResponse:
         url: str = "https://api.hubapi.com/x",
         text: str | None = None,
     ):
-        self._payload = payload
         self.status_code = status_code
         self.url = url
         if text is not None:
@@ -50,13 +57,12 @@ class FakeResponse:
             self.text = json.dumps(payload) if payload is not None else ""
 
     @property
+    def content(self) -> bytes:
+        return self.text.encode("utf-8")
+
+    @property
     def ok(self) -> bool:
         return self.status_code < 400
-
-    def json(self) -> Any:
-        if isinstance(self._payload, Exception):
-            raise self._payload
-        return self._payload
 
 
 class FakeHttpClient:

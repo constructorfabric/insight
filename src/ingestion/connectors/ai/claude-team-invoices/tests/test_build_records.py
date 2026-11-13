@@ -7,10 +7,11 @@ a network, a cluster or the CDK to verify.
 
 import base64
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
+from source_claude_team_invoices.models import EnrichedInvoice, Invoice, InvoiceLine
 from source_claude_team_invoices.stripe_chain import (
     CHAIN_FAILED,
     CHAIN_NO_URL,
@@ -21,7 +22,7 @@ from source_claude_team_invoices.stripe_chain import (
     build_records,
     unique_key_parts,
 )
-from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE
+from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE, with_unit_amount
 
 EPHEMERAL_KEY = "ek_live_super_secret_value"
 
@@ -45,26 +46,25 @@ FAILING_URL, FAILING_TOKEN = _hosted("entFAILS")
 BINARY_NONCE = b"\xff\xfe\x01"
 
 
-def invoice(url: str | None = GOOD_URL, **over: Any) -> dict[str, Any]:
-    base = {
-        "hosted_invoice_url": url,
-        "status": "paid",
-        "created_ts": 1756771200,
-        "currency": "usd",
-        "total": 3300,
-        "total_excluding_tax": 3000,
-        "num_seats": 3,
-        "payment_intent": "pi_1",
-    }
-    base.update(over)
-    return base
+def invoice(url: str | None = GOOD_URL, **over: Any) -> Invoice:
+    paid = Invoice(
+        hosted_invoice_url=url,
+        status="paid",
+        created_ts=1756771200,
+        currency="usd",
+        total=3300,
+        total_excluding_tax=3000,
+        num_seats=3,
+        payment_intent="pi_1",
+    )
+    return paid.model_copy(update=over)
 
 
-def lines_ok(acct: str, token: str) -> tuple[str, Sequence[Mapping[str, Any]]]:
+def lines_ok(acct: str, token: str) -> tuple[str, Sequence[InvoiceLine]]:
     return "in_1ABC", [SUBSCRIPTION_LINE, EXTRA_USAGE_LINE]
 
 
-def lines_raise(acct: str, token: str) -> tuple[str, Sequence[Mapping[str, Any]]]:
+def lines_raise(acct: str, token: str) -> tuple[str, Sequence[InvoiceLine]]:
     # The key would be in scope here in production; the message must not carry it.
     raise StripeChainError("bootstrap response carried no invoice_id/ephemeral_key")
 
@@ -152,7 +152,7 @@ def test_a_seat_price_of_an_unexpected_type_degrades_the_invoice_visibly(caplog:
     chain still read as complete — indistinguishable from a vendor pricing no seats."""
 
     def lines_with_a_string_price(acct, token):
-        return "in_1ABC", [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount="1000")]
+        return "in_1ABC", [with_unit_amount(SUBSCRIPTION_LINE, "1000")]
 
     with caplog.at_level(logging.WARNING):
         records = list(build_records([invoice()], lines_with_a_string_price))
@@ -168,7 +168,7 @@ def test_a_seat_line_the_vendor_left_unpriced_does_not_degrade_the_invoice() -> 
     """Absence is a state this connector reports; only a changed type is a fault."""
 
     def lines_unpriced(acct, token):
-        return "in_1ABC", [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=None)]
+        return "in_1ABC", [with_unit_amount(SUBSCRIPTION_LINE, None)]
 
     records = list(build_records([invoice()], lines_unpriced))
     assert [r["chain_status"] for r in records] == [CHAIN_OK, CHAIN_OK]
@@ -257,7 +257,7 @@ def test_neither_a_record_nor_a_log_line_carries_the_ephemeral_key(caplog: pytes
     """The key authorises the line calls and must escape by neither route.
 
     The key is put where each route would pick it up: in line fields, which only
-    the projection keeps out of a row, and in the failure message of the hop that
+    the parse keeps out of a row, and in the failure message of the hop that
     carries it in its own URL, which only a type-and-status log keeps out of the
     log. A stub that never puts it in scope would assert nothing.
     """
@@ -265,10 +265,11 @@ def test_neither_a_record_nor_a_log_line_carries_the_ephemeral_key(caplog: pytes
     def lines_with_key(acct, token):
         if token == FAILING_TOKEN:
             raise RuntimeError(f"401 for https://invoicedata.stripe.com/hosted_invoice_page/{acct}/{EPHEMERAL_KEY}")
-        leaky = dict(
-            SUBSCRIPTION_LINE, ephemeral_key=EPHEMERAL_KEY, request_headers={"Authorization": f"Bearer {EPHEMERAL_KEY}"}
-        )
-        return "in_1ABC", [leaky]
+        body = SUBSCRIPTION_LINE.model_dump(mode="json") | {
+            "ephemeral_key": EPHEMERAL_KEY,
+            "request_headers": {"Authorization": f"Bearer {EPHEMERAL_KEY}"},
+        }
+        return "in_1ABC", [InvoiceLine.model_validate(body)]
 
     with caplog.at_level(logging.WARNING):
         records = list(build_records([invoice(), invoice(url=FAILING_URL), invoice(url="bad")], lines_with_key))
@@ -338,10 +339,12 @@ def test_two_lines_of_one_invoice_get_different_keys() -> None:
 # An invoice the connector has already chained. Bronze holds its lines under the
 # invoice id below, and a settled invoice's lines do not move — so the two hops
 # are what a later run skips, never the row.
-ENRICHED = {"acct_1ABC,_ent1ABC": {"invoice_id": "in_1ABC", "period_start_ts": 1756684800, "period_end_ts": 1759276800}}
+ENRICHED = {
+    "acct_1ABC,_ent1ABC": EnrichedInvoice(invoice_id="in_1ABC", period_start_ts=1756684800, period_end_ts=1759276800)
+}
 
 
-def lines_never(acct: str, token: str) -> tuple[str, Sequence[Mapping[str, Any]]]:
+def lines_never(acct: str, token: str) -> tuple[str, Sequence[InvoiceLine]]:
     raise AssertionError("the chain ran for an invoice that was already enriched")
 
 
@@ -372,7 +375,7 @@ def test_an_enriched_invoice_repeats_the_key_it_already_has() -> None:
 
 
 def test_an_invoice_absent_from_the_map_still_chains() -> None:
-    other = {"acct_1ABC,_someone_else": {"invoice_id": "in_OTHER"}}
+    other = {"acct_1ABC,_someone_else": EnrichedInvoice(invoice_id="in_OTHER")}
     rows = list(build_records([invoice()], lines_ok, enriched=other))
     assert [r["chain_status"] for r in rows] == ["ok", "ok", "ok"], "its own row plus one per line"
 

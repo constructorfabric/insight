@@ -94,14 +94,7 @@ class TestSchema:
         schema = deals_stream.get_json_schema()
         props = schema["properties"]
         assert props["properties_amount"] == {"type": ["string", "null"]}
-        for field in (
-            "tenant_id",
-            "source_id",
-            "unique_key",
-            "data_source",
-            "collected_at",
-            "raw_data",
-        ):
+        for field in ("tenant_id", "source_id", "unique_key", "data_source", "collected_at", "raw_data"):
             assert field in props, f"missing envelope column: {field}"
         assert "custom_fields" not in props
         # deals registry declares [companies, contacts]
@@ -120,9 +113,7 @@ class TestSchema:
 
 
 class TestHelpers:
-    @pytest.mark.parametrize(
-        "after,expected", [("10000", True), (10001, True), ("9999", False), ("abc", False), (None, False)]
-    )
+    @pytest.mark.parametrize("after,expected", [("10000", True), ("10001", True), ("9999", False), ("abc", False)])
     def test_after_exceeds_cap(self, after, expected):
         assert _after_exceeds_cap(after) is expected
 

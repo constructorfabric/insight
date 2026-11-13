@@ -20,7 +20,9 @@ from typing import Any
 import requests
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
+from pydantic import ValidationError
 
+from source_claude_team_invoices.models import InvoicePage, parse_config, validation_summary
 from source_claude_team_invoices.streams import InvoiceLines
 
 logger = logging.getLogger("airbyte")
@@ -86,16 +88,19 @@ class SourceClaudeTeamInvoices(AbstractSource):
         produce invoices with no prices — the exact silent-emptiness this
         connector exists to avoid. Both are checked before a sync is allowed.
         """
-        source_id = (config.get("insight_source_id") or "").strip()
-        if not source_id:
+        try:
+            parsed = parse_config(config)
+        except ValueError as error:
+            return False, str(error)
+
+        if not parsed.insight_source_id.strip():
             return False, (
                 "insight_source_id MUST be set via the "
                 "`insight.cyberfabric.com/source-id` annotation; an empty value "
                 "would collide unique_keys across connector instances."
             )
 
-        proxy_url = str(config["proxy_url"]).rstrip("/")
-        org_id = config["claude_org_id"]
+        proxy_url = parsed.proxy_url.rstrip("/")
 
         not_ready = proxy_readiness_error(proxy_url)
         if not_ready:
@@ -103,8 +108,8 @@ class SourceClaudeTeamInvoices(AbstractSource):
 
         try:
             response = requests.get(
-                f"{proxy_url}/api/stripe/{org_id}/invoices?limit=1&page=",
-                headers={"Authorization": f"Bearer {config['proxy_auth_token']}"},
+                f"{proxy_url}/api/stripe/{parsed.claude_org_id}/invoices?limit=1&page=",
+                headers={"Authorization": f"Bearer {parsed.proxy_auth_token}"},
                 timeout=30,
             )
         except requests.RequestException as error:
@@ -122,14 +127,15 @@ class SourceClaudeTeamInvoices(AbstractSource):
         if response.status_code != 200:
             return False, f"invoice list returned HTTP {response.status_code}"
         try:
-            listing = response.json()
-        except ValueError:
-            return False, "invoice list answered 200 with a body that is not JSON"
-        if not isinstance(listing, dict):
-            return False, f"invoice list answered a {type(listing).__name__}, not an object"
-        if not isinstance(listing.get("invoices"), list):
-            # A sync extends this value; anything else fails mid-run, after
-            # this check has already reported the source healthy.
+            listing = InvoicePage.model_validate_json(response.content)
+        except ValidationError as error:
+            return (
+                False,
+                f"invoice list answered 200 with a body that is not an invoice listing ({validation_summary(error)})",
+            )
+        if listing.invoices is None:
+            # A sync reads a missing array as no invoices at all, which would
+            # pass for an empty billing history.
             return False, "invoice list did not carry an `invoices` array"
 
         try:
@@ -146,7 +152,7 @@ class SourceClaudeTeamInvoices(AbstractSource):
         return True, None
 
     def streams(self, config: Mapping[str, Any]) -> list[Stream]:
-        return [InvoiceLines(config)]
+        return [InvoiceLines(parse_config(config))]
 
 
 def main() -> None:

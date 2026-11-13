@@ -13,30 +13,30 @@ import json
 import logging
 import sys
 from collections.abc import Mapping
-from datetime import date
 from pathlib import Path
 from typing import Any
 
-from airbyte_cdk.models import ConnectorSpecification
+from airbyte_cdk.models import ConnectorSpecification, FailureType
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
+from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from pydantic import ValidationError
 
 from source_slack.client import SlackAnalyticsClient, SlackApiError, SlackResponseError
+from source_slack.models import SlackConfig, describe
 from source_slack.streams import NOT_YET_AVAILABLE, PUBLICATION_DELAY, UsersDetails, today
 
 logger = logging.getLogger("airbyte")
 
 _PACKAGE = Path(__file__).parent
 
-REQUIRED_CONFIG_FIELDS = ("insight_tenant_id", "insight_source_id", "slack_bot_token", "slack_start_date")
-
 
 def load_stream_schema(name: str) -> Mapping[str, Any]:
     return json.loads((_PACKAGE / "schemas" / f"{name}.json").read_text(encoding="utf-8"))
 
 
-def _client(config: Mapping[str, Any]) -> SlackAnalyticsClient:
-    return SlackAnalyticsClient(config["slack_bot_token"])
+def _client(config: SlackConfig) -> SlackAnalyticsClient:
+    return SlackAnalyticsClient(config.slack_bot_token)
 
 
 class SourceSlack(AbstractSource):
@@ -44,16 +44,14 @@ class SourceSlack(AbstractSource):
         return ConnectorSpecification(**json.loads((_PACKAGE / "spec.json").read_text(encoding="utf-8")))
 
     def check_connection(self, logger: Any, config: Mapping[str, Any]) -> tuple[bool, Any | None]:
-        for field in REQUIRED_CONFIG_FIELDS:
-            if not str(config.get(field) or "").strip():
-                return False, f"{field} must be set"
         try:
-            date.fromisoformat(config["slack_start_date"])
-        except ValueError:
-            return False, f"slack_start_date must be YYYY-MM-DD, got {config['slack_start_date']!r}"
+            parsed = SlackConfig.model_validate(config)
+        except ValidationError as error:
+            return False, f"Invalid config: {describe(error)}"
+
         day = (today() - PUBLICATION_DELAY).isoformat()
         try:
-            rows = _client(config).member_day(day)
+            rows = _client(parsed).member_day(day)
             next(rows, None)
             rows.close()
         except SlackApiError as error:
@@ -66,7 +64,14 @@ class SourceSlack(AbstractSource):
         return True, None
 
     def streams(self, config: Mapping[str, Any]) -> list[Stream]:
-        return [UsersDetails(config, _client(config))]
+        try:
+            parsed = SlackConfig.model_validate(config)
+        except ValidationError as error:
+            message = f"Invalid config: {describe(error)}"
+            raise AirbyteTracedException(
+                message=message, internal_message=message, failure_type=FailureType.config_error
+            ) from None
+        return [UsersDetails(parsed, _client(parsed))]
 
 
 def main() -> None:

@@ -10,6 +10,7 @@ from airbyte_cdk.models import FailureType
 from airbyte_cdk.sources.streams.http.error_handlers import ResponseAction
 from airbyte_cdk.sources.streams.http.exceptions import DefaultBackoffException
 from source_hubspot import rate_limiting as rl
+from source_hubspot.models import ErrorDetail, ErrorSummary, ScopeContext, ScopeError
 from source_hubspot.rate_limiting import (
     HubspotErrorHandler,
     _extract_error,
@@ -182,11 +183,13 @@ class TestParseRetryAfter:
 
 class TestExtractError:
     def test_json_dict_fields(self):
-        resp = make_response(400, body={"category": "X", "message": "m"})
+        resp = make_response(400, body=ErrorSummary(category="X", message="m").model_dump(exclude_none=True))
         assert _extract_error(resp) == ("X", "m")
 
     def test_error_code_and_description_fallbacks(self):
-        resp = make_response(400, body={"errorCode": "E1", "error_description": "d"})
+        resp = make_response(
+            400, body=ErrorSummary(errorCode="E1", error_description="d").model_dump(exclude_none=True)
+        )
         assert _extract_error(resp) == ("E1", "d")
 
     def test_non_json_body(self):
@@ -199,17 +202,24 @@ class TestExtractError:
 
     def test_non_dict_json(self):
         resp = make_response(400, body=["a", "b"])
-        assert _extract_error(resp) == (None, "['a', 'b']")
+        assert _extract_error(resp) == (None, '["a", "b"]')
 
 
 class TestExtractMissingScopes:
     def test_scopes_from_errors_context(self):
-        resp = make_response(403, body={"errors": [{"context": {"requiredScopes": ["s1", "s2"]}}]})
+        body = ScopeError(errors=[ErrorDetail(context=ScopeContext(requiredScopes=["s1", "s2"]))])
+        resp = make_response(403, body=body.model_dump(exclude_none=True))
         assert _extract_missing_scopes(resp) == ["s1", "s2"]
 
     def test_scopes_from_top_level_context(self):
-        resp = make_response(403, body={"context": {"requiredScopes": ["s3"]}})
+        resp = make_response(
+            403, body=ScopeError(context=ScopeContext(requiredScopes=["s3"])).model_dump(exclude_none=True)
+        )
         assert _extract_missing_scopes(resp) == ["s3"]
+
+    def test_first_error_without_scopes_falls_back_to_top_level(self):
+        resp = make_response(403, body={"errors": ["junk"], "context": {"requiredScopes": ["s4"]}})
+        assert _extract_missing_scopes(resp) == ["s4"]
 
     def test_non_list_scopes_ignored(self):
         resp = make_response(403, body={"context": {"requiredScopes": "s3"}})

@@ -17,28 +17,20 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional, Union
 
 import requests
+from airbyte_cdk.models import FailureType
+from airbyte_cdk.sources.streams.http.error_handlers import ErrorHandler, ErrorResolution, ResponseAction
+from airbyte_cdk.sources.streams.http.exceptions import DefaultBackoffException
+from pydantic import ValidationError
 from requests import codes, exceptions  # type: ignore[import]
 
-from airbyte_cdk.models import FailureType
-from airbyte_cdk.sources.streams.http.error_handlers import (
-    ErrorHandler,
-    ErrorResolution,
-    ResponseAction,
-)
-from airbyte_cdk.sources.streams.http.exceptions import DefaultBackoffException
-
 from source_hubspot.constants import CLOUDFLARE_ORIGIN_DNS_ERROR
-
+from source_hubspot.models import ErrorSummary, ScopeError
 
 # Urllib3/requests exceptions that occur mid-body-consumption or at connect
 # time. Replaying the request usually succeeds.
-RESPONSE_CONSUMPTION_EXCEPTIONS = (
-    exceptions.ChunkedEncodingError,
-    exceptions.JSONDecodeError,
-)
+RESPONSE_CONSUMPTION_EXCEPTIONS = (exceptions.ChunkedEncodingError, exceptions.JSONDecodeError)
 
 TRANSIENT_EXCEPTIONS = (
     DefaultBackoffException,
@@ -61,7 +53,11 @@ logger = logging.getLogger("airbyte")
 def _is_search_request(response: requests.Response) -> bool:
     """True iff the response is a CRM Search POST."""
     try:
-        return response.request.method == "POST" and "/crm/v3/objects/" in response.url and response.url.endswith("/search")
+        return (
+            response.request.method == "POST"
+            and "/crm/v3/objects/" in response.url
+            and response.url.endswith("/search")
+        )
     except Exception:
         return False
 
@@ -74,15 +70,13 @@ class HubspotErrorHandler(ErrorHandler):
     and the only useful action is to surface a config error.
     """
 
-    max_retries: Optional[int] = 5
-    max_time: Optional[int] = 600
+    max_retries: int | None = 5
+    max_time: int | None = 600
 
     def __init__(self, stream_name: str = "<unknown stream>") -> None:
         self._stream_name = stream_name
 
-    def interpret_response(
-        self, response: Optional[Union[requests.Response, Exception]]
-    ) -> ErrorResolution:
+    def interpret_response(self, response: requests.Response | Exception | None) -> ErrorResolution:
         if isinstance(response, TRANSIENT_EXCEPTIONS):
             return ErrorResolution(
                 ResponseAction.RETRY,
@@ -116,9 +110,7 @@ class HubspotErrorHandler(ErrorHandler):
                 error_code, message = _extract_error(response)
                 if error_code == "MISSING_SCOPES" or "MISSING_SCOPES" in message.upper():
                     missing = _extract_missing_scopes(response)
-                    scope_hint = (
-                        f" Missing scopes: {', '.join(missing)}." if missing else ""
-                    )
+                    scope_hint = f" Missing scopes: {', '.join(missing)}." if missing else ""
                     return ErrorResolution(
                         ResponseAction.FAIL,
                         FailureType.config_error,
@@ -200,36 +192,22 @@ def _parse_retry_after(response: requests.Response) -> float:
     return float(_DEFAULT_RETRY_AFTER_SECONDS)
 
 
-def _extract_error(response: requests.Response) -> tuple[Optional[str], str]:
+def _extract_error(response: requests.Response) -> tuple[str | None, str]:
     try:
-        body = response.json()
-    except (exceptions.JSONDecodeError, ValueError):
+        body = ErrorSummary.model_validate_json(response.content)
+    except ValidationError:
         return None, response.text[:500] if response.text else ""
-    if isinstance(body, dict):
-        return body.get("category") or body.get("errorCode") or body.get("error"), (
-            body.get("message") or body.get("error_description") or ""
-        )
-    return None, str(body)[:500]
+    return body.category or body.errorCode or body.error, body.message or body.error_description or ""
 
 
 def _extract_missing_scopes(response: requests.Response) -> list[str]:
     try:
-        body = response.json()
-    except (exceptions.JSONDecodeError, ValueError):
+        body = ScopeError.model_validate_json(response.content)
+    except ValidationError:
         return []
-    if not isinstance(body, dict):
-        return []
-    errors = body.get("errors") or []
-    if errors and isinstance(errors, list) and isinstance(errors[0], dict):
-        ctx = errors[0].get("context") or {}
-        scopes = ctx.get("requiredScopes")
-        if isinstance(scopes, list):
-            return [str(s) for s in scopes]
-    context = body.get("context") or {}
-    if isinstance(context, dict):
-        scopes = context.get("requiredScopes")
-        if isinstance(scopes, list):
-            return [str(s) for s in scopes]
+    first_error = body.errors[0] if body.errors else None
+    contexts = (first_error.context if first_error else None, body.context)
+    for context in contexts:
+        if context is not None and context.requiredScopes is not None:
+            return list(context.requiredScopes)
     return []
-
-
