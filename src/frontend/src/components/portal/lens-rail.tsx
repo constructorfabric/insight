@@ -6,6 +6,7 @@ import brandSymbol from "@/assets/brand-symbol.svg";
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
 import {
+  Button,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -72,7 +73,10 @@ function useRailLabelsShown(): boolean {
   return labels && state === "expanded";
 }
 
-/** Shows or hides the rail's names; collapsed to icons, there is no room. */
+/**
+ * Shows or hides the rail's names: an icon with a tooltip either way, at the
+ * rail's end edge. Collapsed to icons, there is no room for names.
+ */
 function LabelsToggle() {
   const { t } = useTranslation();
   const labels = usePortalRailLabels();
@@ -85,17 +89,17 @@ function LabelsToggle() {
     : t("common.a11y.show_navigation_labels");
   const Icon = labels ? ChevronsLeft : ChevronsRight;
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem className="flex justify-end">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Icon />}
               aria-label={label}
               onClick={() => setPortalRailLabels(!labels)}
-            >
-              <Icon />
-              <span>{label}</span>
-            </SidebarMenuButton>
+            />
           }
         />
         <TooltipContent side="right">{label}</TooltipContent>

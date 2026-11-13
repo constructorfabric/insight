@@ -1,7 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect } from "storybook/test";
 import type { CSSProperties } from "react";
 
 import { SidebarProvider } from "@gears-frontx/ui-kit";
+import { setPortalRailLabels } from "@/lib/portal/portal-store";
 import { handlers } from "@/mocks/handlers";
 import { expectHorizontallyCentred } from "@/test/storybook/layout";
 
@@ -52,5 +54,31 @@ export const TestLogoSitsCentredInTheRailHeader: Story = {
     const logo = await canvas.findByRole("img", { name: "Constructor Fabric" });
 
     expectHorizontallyCentred(logo.parentElement!, logo, "Logo");
+  },
+};
+
+export const NamesShown: Story = {
+  beforeEach: () => {
+    setPortalRailLabels(true);
+    return () => setPortalRailLabels(false);
+  },
+  decorators: [
+    (Story) => (
+      <div style={{ "--rail-width": "12rem" } as CSSProperties}>
+        <Story />
+      </div>
+    ),
+  ],
+};
+
+export const TestTheToggleStaysIconOnlyWithNamesShown: Story = {
+  ...NamesShown,
+  tags: ["test"],
+  play: async ({ canvas }) => {
+    const toggle = await canvas.findByRole("button", {
+      name: "Hide navigation labels",
+    });
+
+    expect(toggle.textContent).toBe("");
   },
 };

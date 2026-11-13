@@ -168,6 +168,21 @@ describe("LensRail names", () => {
     expect(tooltipFor("People")).toBeUndefined();
   });
 
+  it.each([
+    ["icons only", false, "Show navigation labels"],
+    ["names shown", true, "Hide navigation labels"],
+  ])("labels the toggle by tooltip alone, %s", async (_, labels, name) => {
+    const user = userEvent.setup();
+    act(() => setPortalRailLabels(labels));
+    rail(true);
+    const toggle = screen.getByRole("button", { name });
+    expect(toggle).toHaveTextContent(/^$/);
+
+    await user.hover(toggle);
+
+    await waitFor(() => expect(tooltipFor(name)).toBeDefined());
+  });
+
   it("offers no toggle while the sidebar is collapsed to icons", () => {
     collapsedRail();
     expect(screen.queryByRole("button", { name: /navigation labels/ })).not.toBeInTheDocument();
