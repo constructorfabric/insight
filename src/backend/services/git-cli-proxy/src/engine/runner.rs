@@ -64,6 +64,8 @@ pub enum GitError {
     TransientlyOverCap,
     #[error("origin is throttling this client")]
     Throttled,
+    #[error("a fetched branch name collides with a local one: {0}")]
+    RefNameConflict(String),
     #[error("git timed out after {0:?}")]
     TimedOut(Duration),
     #[error("git failed: {0}")]
@@ -601,7 +603,14 @@ fn classify_failure(output: &Output) -> GitError {
     while cut < stderr.len() && !stderr.is_char_boundary(cut) {
         cut += 1;
     }
-    GitError::Failed(stderr[cut..].trim().to_owned())
+    let tail = stderr[cut..].trim().to_owned();
+
+    // `refs/heads/feature` blocks `refs/heads/feature/x` (and the reverse):
+    // a local repository state a prune clears, not an origin failure.
+    if lower.contains("exists; cannot create") {
+        return GitError::RefNameConflict(tail);
+    }
+    GitError::Failed(tail)
 }
 
 // WORKAROUND: on an HTTP 404 git's transport prints the URL between
@@ -775,6 +784,15 @@ mod tests {
                 "fatal: unable to access 'https://x/': Failed to connect to x port 443: Connection refused\n\
                  fatal: could not read from remote repository",
                 |e| matches!(e, GitError::Failed(_)),
+            ),
+            // A branch replaced by one nested under its name, either way round.
+            (
+                "error: 'refs/heads/feature' exists; cannot create 'refs/heads/feature/x'",
+                |e| matches!(e, GitError::RefNameConflict(_)),
+            ),
+            (
+                "error: cannot lock ref 'refs/heads/feature': 'refs/heads/feature/x' exists; cannot create 'refs/heads/feature'",
+                |e| matches!(e, GitError::RefNameConflict(_)),
             ),
         ];
         for (stderr, check) in cases {

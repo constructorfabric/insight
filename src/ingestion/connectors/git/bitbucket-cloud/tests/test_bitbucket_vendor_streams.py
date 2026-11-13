@@ -710,6 +710,43 @@ def _repo_with_clone() -> dict[str, Any]:
 
 
 @freezegun.freeze_time(_FROZEN)
+@pytest.mark.parametrize("status", [404, 413, 422])
+def test_a_repository_the_proxy_cannot_serve_is_skipped_and_the_rest_are_read(
+    http_mocker: HttpMocker, status: int
+) -> None:
+    """404 gone at origin, 413 over the cache cap, 422 failing to refresh
+    several times in a row: each is permanent for one repository, so the
+    stream reads the others and the sync succeeds."""
+    config = BitbucketCloudConfigBuilder().build()
+    broken = _repo() | {
+        "uuid": "{r-0}",
+        "full_name": "acme/broken",
+        "slug": "broken",
+        "links": {"clone": [{"name": "https", "href": "https://bot@bitbucket.org/acme/broken.git"}]},
+    }
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [broken, _repo()]}), status_code=200),
+    )
+    for repo, response in (
+        ("broken", HttpResponse(body="", status_code=status)),
+        ("app", _branches_page(_branch_row("main", "2026-06-15T10:00:00+00:00", is_default=True))),
+    ):
+        http_mocker.get(
+            HttpRequest(
+                f"{PROXY_URL}/v1/branches",
+                query_params={"repo": f"https://bitbucket.org/acme/{repo}.git", "page_size": "500"},
+            ),
+            response,
+        )
+
+    output = read_stream(_CONNECTOR, "branches", config)
+
+    assert not output.errors, f"status {status} must skip the repository, not fail the stream"
+    assert {r.record.data["repository"] for r in output.records} == {"https://bitbucket.org/acme/app.git"}
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_commit_authors_pair_a_git_email_with_its_account(http_mocker: HttpMocker) -> None:
     """The proxy names the authors that changed; Bitbucket names the account
     behind each one. `author.raw` is the git ident the commit rows carry, so the

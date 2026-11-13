@@ -234,6 +234,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::PAYLOAD_TOO_LARGE,
             "Repository exceeds the configured per-repository size cap",
         )
+        .problem_response(
+            openapi,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Repository has failed to refresh several times in a row",
+        )
         .handler(data::list_commits)
         .register(router, openapi);
 
@@ -297,6 +302,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::PAYLOAD_TOO_LARGE,
             "Repository exceeds the configured per-repository size cap",
         )
+        .problem_response(
+            openapi,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Repository has failed to refresh several times in a row",
+        )
         .handler(data::list_file_changes)
         .register(router, openapi);
 
@@ -344,6 +354,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             openapi,
             StatusCode::PAYLOAD_TOO_LARGE,
             "Repository exceeds the configured per-repository size cap",
+        )
+        .problem_response(
+            openapi,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Repository has failed to refresh several times in a row",
         )
         .handler(data::list_authors)
         .register(router, openapi);
@@ -427,6 +442,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             openapi,
             StatusCode::PAYLOAD_TOO_LARGE,
             "Repository exceeds the configured per-repository size cap",
+        )
+        .problem_response(
+            openapi,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Repository has failed to refresh several times in a row",
         )
         .handler(data::list_branches)
         .register(router, openapi)

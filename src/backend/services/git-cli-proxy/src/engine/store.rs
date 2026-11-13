@@ -60,6 +60,10 @@ const PURGE_FAILURES_BEFORE_EVICTION: u32 = 2;
 /// readers: the repack has to run while the pack can still finish inside the
 /// heavy budget, not once the entry is already at the cap.
 const PURGE_PRESSURE_CAP_DIVISOR: u64 = 2;
+/// Unexplained refresh failures in a row after which a repository answers as
+/// unrefreshable, which the connectors skip, instead of a `500` they retry
+/// until the whole sync fails. Any success resets the count.
+const REFRESH_FAILURES_BEFORE_UNREFRESHABLE: u32 = 3;
 
 /// Why a refresh failed, in a form that survives being broadcast to every
 /// waiter (`GitError` is not `Clone`).
@@ -74,6 +78,7 @@ pub enum RefreshFailure {
     Timeout,
     TooLarge { cap_bytes: u64 },
     Other(String),
+    Unrefreshable,
 }
 
 impl From<&GitError> for RefreshFailure {
@@ -86,7 +91,9 @@ impl From<&GitError> for RefreshFailure {
             GitError::AdmissionRejected | GitError::TransientlyOverCap => Self::AdmissionRejected,
             GitError::Throttled => Self::Throttled,
             GitError::TimedOut(_) => Self::Timeout,
-            GitError::Failed(message) => Self::Other(message.clone()),
+            GitError::Failed(message) | GitError::RefNameConflict(message) => {
+                Self::Other(message.clone())
+            }
             GitError::Io(e) => Self::Other(e.to_string()),
             GitError::TooLarge { cap_bytes } => Self::TooLarge {
                 cap_bytes: *cap_bytes,
@@ -117,6 +124,8 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("repository exceeds the per-repository size cap of {cap_bytes} bytes")]
     TooLarge { cap_bytes: u64 },
+    #[error("repository refreshes keep failing")]
+    Unrefreshable,
 }
 
 impl From<RefreshFailure> for StoreError {
@@ -135,6 +144,7 @@ impl From<RefreshFailure> for StoreError {
             RefreshFailure::Timeout => Self::Git("git timed out".to_owned()),
             RefreshFailure::TooLarge { cap_bytes } => Self::TooLarge { cap_bytes },
             RefreshFailure::Other(message) => Self::Git(message),
+            RefreshFailure::Unrefreshable => Self::Unrefreshable,
         }
     }
 }
@@ -265,6 +275,8 @@ pub struct RepoStore {
     /// checks in a row lost the repack's lock probe to readers, and how many
     /// post-serve purges in a row failed.
     drift: Mutex<HashMap<String, DriftState>>,
+    /// Per entry: unexplained refresh failures in a row.
+    refresh_failures: Mutex<HashMap<String, u32>>,
     /// Bytes promised to heavy operations that have been admitted but have not
     /// finished writing them.
     reserved_bytes: AtomicU64,
@@ -359,6 +371,7 @@ impl RepoStore {
             tmp_counter: AtomicU64::new(0),
             gauges: Arc::new(DiskGauges::default()),
             drift: Mutex::new(HashMap::new()),
+            refresh_failures: Mutex::new(HashMap::new()),
             reserved_bytes: AtomicU64::new(0),
             admission: Mutex::new(()),
             space_freed: Notify::new(),
@@ -626,7 +639,10 @@ impl RepoStore {
                 ))),
             };
             let published = match &outcome {
-                Ok(generation) => Ok(*generation),
+                Ok(generation) => {
+                    store.refresh_failures.lock().await.remove(&key.dir_name());
+                    Ok(*generation)
+                }
                 Err(error) => {
                     tracing::warn!(
                         error = %error,
@@ -636,7 +652,9 @@ impl RepoStore {
                         kind = ?kind,
                         "background refresh failed"
                     );
-                    Err(RefreshFailure::from(error))
+                    Err(store
+                        .tally_failure(&key.dir_name(), RefreshFailure::from(error))
+                        .await)
                 }
             };
             store.inflight.lock().await.remove(&flight);
@@ -644,6 +662,21 @@ impl RepoStore {
         });
 
         receiver
+    }
+
+    async fn tally_failure(&self, dir_name: &str, failure: RefreshFailure) -> RefreshFailure {
+        if !matches!(failure, RefreshFailure::Other(_) | RefreshFailure::Timeout) {
+            return failure;
+        }
+
+        let mut failures = self.refresh_failures.lock().await;
+        let count = failures.entry(dir_name.to_owned()).or_default();
+        *count = count.saturating_add(1);
+        if *count < REFRESH_FAILURES_BEFORE_UNREFRESHABLE {
+            return failure;
+        }
+        tracing::warn!(dir = %dir_name, failures = *count, "repository keeps failing to refresh; answering it as unrefreshable");
+        RefreshFailure::Unrefreshable
     }
 
     async fn refresh(
@@ -839,23 +872,31 @@ impl RepoStore {
         // treated as absent, re-cloned, and every old cursor answers 409.
         park_meta(entry_dir);
 
-        let fetched = self
-            .runner
-            .run_capped(
-                Some(git_dir),
-                &["fetch", "--prune", "--atomic", "origin", BARE_REFSPEC],
-                Some(creds),
-                git_dir,
-                self.max_repo_bytes,
-            )
-            .await;
-        if let Err(e) = fetched {
-            // `--atomic` means a failed fetch moved nothing: the parked
-            // document is still true, and restoring it keeps a warm entry
-            // serveable through a transient origin outage.
-            unpark_meta(entry_dir);
-            metrics::record_fetch(FetchResult::Error);
-            return Err(e);
+        match self.fetch_refs(git_dir, creds).await {
+            Ok(()) => {}
+            // WORKAROUND: one `--atomic` transaction refuses `feature/x` while
+            // `feature` still exists, even though the same fetch prunes it.
+            Err(GitError::RefNameConflict(conflict)) => {
+                tracing::warn!(dir = %key.dir_name(), %conflict, "pruning before refetching a renamed branch");
+                // The prune moves refs, so the parked document stops being
+                // true: a failure from here leaves the entry to re-clone.
+                let retried = match self.prune_heads(git_dir, creds).await {
+                    Ok(()) => self.fetch_refs(git_dir, creds).await,
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = retried {
+                    metrics::record_fetch(FetchResult::Error);
+                    return Err(e);
+                }
+            }
+            Err(e) => {
+                // `--atomic` means a failed fetch moved nothing: the parked
+                // document is still true, and restoring it keeps a warm entry
+                // serveable through a transient origin outage.
+                unpark_meta(entry_dir);
+                metrics::record_fetch(FetchResult::Error);
+                return Err(e);
+            }
         }
 
         self.track_origin_head(git_dir, creds).await;
@@ -932,6 +973,26 @@ impl RepoStore {
         publish_meta(&meta, entry_dir)?;
         discard_parked_meta(entry_dir);
         Ok(generation)
+    }
+
+    async fn fetch_refs(&self, git_dir: &Path, creds: &GitCredentials) -> Result<(), GitError> {
+        self.runner
+            .run_capped(
+                Some(git_dir),
+                &["fetch", "--prune", "--atomic", "origin", BARE_REFSPEC],
+                Some(creds),
+                git_dir,
+                self.max_repo_bytes,
+            )
+            .await
+            .map(drop)
+    }
+
+    async fn prune_heads(&self, git_dir: &Path, creds: &GitCredentials) -> Result<(), GitError> {
+        self.runner
+            .run_heavy(Some(git_dir), &["remote", "prune", "origin"], Some(creds))
+            .await
+            .map(drop)
     }
 
     /// Rebuild the entry as a full clone.
@@ -2786,6 +2847,66 @@ pub(crate) mod tests {
         assert!(
             waited >= ADMISSION_WAIT && waited < PREPARATION_WAIT,
             "the admission wait must be what ends it, not the caller's own timeout: {waited:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_that_keeps_failing_to_refresh_answers_unrefreshable_until_it_recovers() {
+        let f = fixture("unrefreshable");
+        let key = key(&f);
+        let origin = f.root.join("origin");
+        drop(open_until_ready(&f, &key, refresh()).await);
+
+        // A new commit whose loose object is then corrupted: upload-pack
+        // fails with output the classifier has no name for.
+        sh(
+            &origin,
+            "git commit -q --allow-empty -m c2 && \
+             obj=$(git rev-parse HEAD) && \
+             cp .git/objects/${obj%${obj#??}}/${obj#??} ../intact && \
+             chmod 644 .git/objects/${obj%${obj#??}}/${obj#??} && \
+             echo junk > .git/objects/${obj%${obj#??}}/${obj#??}",
+        );
+        let outcomes = [
+            f.store.open(&key, &creds(), always_fetch()).await,
+            f.store.open(&key, &creds(), always_fetch()).await,
+            f.store.open(&key, &creds(), always_fetch()).await,
+        ];
+        let kinds: Vec<&str> = outcomes
+            .iter()
+            .map(|outcome| match outcome {
+                Err(StoreError::Git(_)) => "git",
+                Err(StoreError::Unrefreshable) => "unrefreshable",
+                Ok(_) => "ok",
+                Err(_) => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["git", "git", "unrefreshable"]);
+
+        sh(
+            &origin,
+            "obj=$(git rev-parse HEAD) && cp ../intact .git/objects/${obj%${obj#??}}/${obj#??}",
+        );
+        let recovered = f.store.open(&key, &creds(), always_fetch()).await;
+        assert!(
+            recovered.is_ok(),
+            "a repaired origin must be served: {:?}",
+            recovered.err()
+        );
+        drop(recovered);
+
+        sh(
+            &origin,
+            "git commit -q --allow-empty -m c3 && \
+             obj=$(git rev-parse HEAD) && \
+             chmod 644 .git/objects/${obj%${obj#??}}/${obj#??} && \
+             echo junk > .git/objects/${obj%${obj#??}}/${obj#??}",
+        );
+        let after_success = f.store.open(&key, &creds(), always_fetch()).await;
+        assert!(
+            matches!(after_success, Err(StoreError::Git(_))),
+            "a success must reset the count: {:?}",
+            after_success.err()
         );
     }
 
