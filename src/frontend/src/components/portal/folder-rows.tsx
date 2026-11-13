@@ -50,8 +50,8 @@ import {
 
 const LIST_PATH = /^\/portal\/custom\/?$/;
 
-/** Folder counts keep clear of the row's `···`, so the count reads before it. */
-const FOLDER_COUNT = "end-8";
+/** The row's `···` sits clear of its count, which stays flush right as in Browse. */
+const FOLDER_ACTION = "end-10";
 
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
@@ -101,9 +101,6 @@ export function FoldersGroup() {
                   <Folder />
                   <span>{folder.name}</span>
                 </SidebarMenuButton>
-                <CountBadge className={FOLDER_COUNT}>
-                  {folder.dashboards}
-                </CountBadge>
                 <FolderMenu
                   name={folder.name}
                   allows={folderAllows(folder.access, isAdmin)}
@@ -114,6 +111,7 @@ export function FoldersGroup() {
                     setConfirming(true);
                   }}
                 />
+                <CountBadge>{folder.dashboards}</CountBadge>
               </SidebarMenuItem>
             )
           )}
@@ -132,7 +130,7 @@ export function FoldersGroup() {
                 <Folder />
                 <span>Unfiled</span>
               </SidebarMenuButton>
-              <CountBadge className={FOLDER_COUNT}>{data.unfiled}</CountBadge>
+              <CountBadge>{data.unfiled}</CountBadge>
             </SidebarMenuItem>
           ) : null}
           <SidebarMenuItem>
@@ -226,7 +224,11 @@ function FolderMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <SidebarMenuAction showOnHover aria-label={`More for ${name}`} />
+          <SidebarMenuAction
+            showOnHover
+            className={FOLDER_ACTION}
+            aria-label={`More for ${name}`}
+          />
         }
       >
         <Ellipsis />
