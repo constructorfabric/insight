@@ -180,7 +180,12 @@ Tooling owns layout and correctness lints: rustfmt plus clippy pedantic (deny) i
 ### Python
 
 - Type hints on every signature; no bare `Any` escapes.
-- Typed boundary shapes are `@dataclass(frozen=True)`, `NamedTuple`, or enum.
+- External data (API answers, stream lines, connector config, files from outside the package) goes through a pydantic v2 model with `frozen=True`: `Model.model_validate_json(body)` for a body, `TypeAdapter(T).validate_json(line)` for one line of a stream. Never parse by hand with `json.loads` plus `isinstance` and `.get()` checks. The model declares only the fields the code reads; `extra="ignore"` keeps unknown fields from failing the parse. A field the code only copies into a record is typed `JsonValue` or left out of the model, so a vendor type change does not fail the sync; the emitted record keeps the raw shape.
+- A `ValidationError` becomes the existing failure type. Its message names the field path (`loc`) and error `type` from `errors(include_input=False)`, never the input value — it can be personal data. Raise the replacement `from None`: the `ValidationError` text quotes the input, and a chained cause reaches the traceback and the logs. A `dict` key is part of `loc`, so a map keyed by personal data needs a model that does not name the key.
+- Declare `pydantic>=2,<3` in the `pyproject.toml` of each package that imports it; never rely on a transitive dependency.
+- Internal values that need no validation are `@dataclass(frozen=True)`, `NamedTuple`, or enum.
+- Tests build fixtures from the models (`Model(...).model_dump(mode="json")`), not hand-written dicts, unless the test is about malformed input.
+- Exception: a script that runs on the bare CI runner Python, with no package install step, stays on the standard library.
 - `pytest.mark.parametrize` over copy-pasted cases.
 - Comprehensions stay single-clause — one needing two `for` clauses or an `else` becomes a loop.
 
