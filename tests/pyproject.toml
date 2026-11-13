@@ -144,6 +144,7 @@ target-version = "py313"
 # every time, and the drift check is the one that matters.
 extend-exclude = [
     "stand/api/schemas/analytics.py",
+    "stand/api/schemas/connectors.py",
     "stand/api/schemas/authenticator.py",
     "stand/api/schemas/identity.py",
     "stand/api/schemas/previews.py",

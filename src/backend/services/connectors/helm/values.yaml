@@ -1,0 +1,47 @@
+replicaCount: 1
+infraFromUmbrella: false
+podAnnotations: {}
+image:
+  repository: ghcr.io/constructorfabric/insight-connectors
+  tag: ""
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8088
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+databaseName: connectors
+mariadb:
+  host: ""
+  port: 3306
+  username: ""
+  passwordSecret: {name: insight-db-creds, key: mariadb-password}
+clickhouse:
+  host: ""
+  port: 8123
+  protocol: http
+  database: insight
+  username: ""
+  passwordSecret: {name: insight-db-creds, key: clickhouse-password}
+identityUrl: 'http://{{ .Release.Name }}-identity-resolution:8082'
+existingSecret: ""
+migrateEnvSecret: ""
+gateway:
+  issuer: https://gateway.invalid
+  discoveryUrl: ""
+  audience: internal-services
+  caCertPaths: []
+  caCertSecret: ""
+opentelemetry:
+  metrics: {enabled: false}
+  tracing: {enabled: false}
+  exporter: {kind: otlp_grpc, endpoint: ""}
+livenessProbe:
+  httpGet: {path: /healthz, port: http}
+  initialDelaySeconds: 5
+  periodSeconds: 10
+readinessProbe:
+  httpGet: {path: /health, port: http}
+  initialDelaySeconds: 5
+  periodSeconds: 5

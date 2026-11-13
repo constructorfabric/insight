@@ -29,6 +29,7 @@ services=(
   "IDENTITY_RESOLUTION:src/backend/services/identity-resolution/helm/Chart.yaml"
   "INSIGHT_V3_CORE:src/backend/services/insight-v3-core/helm/Chart.yaml"
   "GIT_CLI_PROXY:src/backend/services/git-cli-proxy/helm/Chart.yaml"
+  "CONNECTORS:src/backend/services/connectors/helm/Chart.yaml"
   "PREVIEWS:src/backend/services/previews/helm/Chart.yaml"
   "FRONTEND:src/frontend/helm/Chart.yaml"
 )

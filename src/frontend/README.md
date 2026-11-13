@@ -175,6 +175,7 @@ Build-time (Vite, `.env.local`):
 | `VITE_HIDE_MOCK_BANNER` | `"true"` to hide the warning strip while mocks are on (for screenshots). |
 | `VITE_API_PROXY_TARGET` | Dev-only `/api` proxy target (e.g. `http://localhost:8080`). |
 | `VITE_API_BASE` | Override analytics API base URL (default `/api/analytics/v1`). |
+| `VITE_CONNECTORS_BASE` | Override connector health, syncs and ingestion API base URL (default `/api/connectors/v1`). |
 | `VITE_IDENTITY_BASE` | Override identity API base URL (default `/api/identity/v1`). |
 | `VITE_SENTRY_DSN` | Sentry DSN for local runs only; a deployed stand uses `sentry.dsn`. Unset means Sentry never initializes. |
 | `VITE_APP_RELEASE` | Release attached to events. Defaults to `local-<git sha>`; CI passes the image tag. |

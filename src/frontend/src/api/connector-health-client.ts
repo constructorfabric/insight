@@ -2,7 +2,7 @@ import { AnalyticsApiError } from "@/api/analytics-client";
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 const BASE =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
+  (import.meta.env.VITE_CONNECTORS_BASE as string | undefined) ?? "/api/connectors/v1";
 
 /**
  * The mover's own word for how a sync ended, carried through unchanged.

@@ -12,7 +12,7 @@
 # observed — a sweep that cannot record must not stop connectors from being
 # reconciled — so every path returns 0 and says what happened in the log.
 #
-# Spec: docs/components/backend/analytics/specs/connector-health.
+# Spec: docs/components/backend/connectors/specs/connector-health.
 # ---------------------------------------------------------------------------
 
 # NOTE: this file is sourced; no top-level `set -euo pipefail`.

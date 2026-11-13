@@ -231,3 +231,10 @@ frontend:
   # proxies "/" to the frontend), so only the gateway holds an HTTPRoute.
   route:
     enabled: false
+
+connectors:
+  image:
+    repository: insight-connectors
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicaCount: 1

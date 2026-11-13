@@ -1,10 +1,8 @@
 //! HTTP API layer — routes and handlers.
 
 pub(crate) mod ai;
-mod connector_health;
 pub(crate) mod error;
 mod feedback;
-mod ingestion;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
@@ -41,7 +39,6 @@ use tokio::sync::Semaphore;
 
 use crate::config::GearConfig;
 use crate::domain::ai::dto as ai_dto;
-use crate::domain::connector_health as connector_health_domain;
 use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
@@ -289,84 +286,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(usage::get_usage_actions)
-        .register(router, openapi);
-
-    // Connector health: the operator's view of what the mover reports about
-    // every connector's syncs. Admin-gated inside the handler, like every other
-    // instance-wide read here.
-    router = OperationBuilder::get("/v1/connector-health")
-        .operation_id("analytics_api.connector_health.summary")
-        .summary("Recorded sync state of every connector")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<connector_health_domain::ConnectorHealthResponse>(
-            openapi,
-            StatusCode::OK,
-            "One row per connector, ordered by what needs acting on",
-        )
-        .standard_errors(openapi)
-        .handler(connector_health::get_connector_health)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/v1/connector-health/{connector}/syncs")
-        .operation_id("analytics_api.connector_health.syncs")
-        .summary("Recent syncs of one connector, newest first")
-        .authenticated()
-        .no_license_required()
-        .path_param("connector", "Connector name, as the descriptors spell it")
-        .query_param_typed(
-            "tenant_id",
-            false,
-            "Tenant of one installation of the connector. Required alongside \
-             source_id; omit both to span every installation",
-            "string",
-        )
-        .query_param_typed(
-            "source_id",
-            false,
-            "Source id of one installation, as its Secret annotates it. \
-             Required alongside tenant_id",
-            "string",
-        )
-        .json_response_with_schema::<connector_health_domain::SyncHistoryResponse>(
-            openapi,
-            StatusCode::OK,
-            "A bounded window of recorded syncs",
-        )
-        .standard_errors(openapi)
-        .handler(connector_health::get_connector_syncs)
-        .register(router, openapi);
-
-    // Ingestion intensity (ops). Admin-gated inside the handler, like the usage
-    // read model: bronze rows carry no tenant, so this surface is
-    // infrastructure-wide and cannot be scoped by the caller's tenant.
-    router = OperationBuilder::get("/v1/ingestion/intensity")
-        .operation_id("analytics_api.ingestion.intensity")
-        .summary("Bronze extraction intensity per bucket")
-        .authenticated()
-        .no_license_required()
-        .query_param_typed("grain", false, "Bucket width: 15m or 1s", "string")
-        .query_param_typed(
-            "scope",
-            false,
-            "Bronze database to scope to, e.g. bronze_bamboohr",
-            "string",
-        )
-        .query_param_typed(
-            "series",
-            false,
-            "What one band counts: connector, stream or total",
-            "string",
-        )
-        .query_param_typed("from", false, "Inclusive lower bound, RFC 3339", "string")
-        .query_param_typed("to", false, "Exclusive upper bound, RFC 3339", "string")
-        .json_response_with_schema::<ingestion::IngestionIntensityResponse>(
-            openapi,
-            StatusCode::OK,
-            "Extraction intensity buckets",
-        )
-        .standard_errors(openapi)
-        .handler(ingestion::get_ingestion_intensity)
         .register(router, openapi);
 
     // Sending is open to any signed-in caller; the listing is admin-gated

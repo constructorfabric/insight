@@ -25,7 +25,7 @@
 <!-- /toc -->
 
 Realises [PRD.md](PRD.md). Scoped addition to the
-[Analytics service design](../../DESIGN.md) on the read side and to the reconcile loop on the
+[Connectors service design](../DESIGN.md) on the read side and to the reconcile loop on the
 write side. Everything the parent design already specifies — the admin gate, error taxonomy,
 OpenAPI registration — applies unchanged; this document adds one table, one writer, two
 endpoints, and one portal pane.
@@ -87,7 +87,7 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 |---|---|
 | Ingestion control | the sweep inside the reconcile tick |
 | Warehouse | `ingestion_history.sync_events` and one grant |
-| Analytics service | a domain read module and two admin routes |
+| Connectors service | a domain read module and two admin routes |
 | Portal | the Connector health pane, replacing Data health |
 
 ## 2. Principles & Constraints
@@ -98,8 +98,8 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-principle-seam-is-a-table`
 
-The writer and the reader never meet. The reconcile loop knows nothing about the analytics
-service; the analytics service knows nothing about the mover. Either side can change, fail,
+The writer and the reader never meet. The reconcile loop knows nothing about the connectors
+service; the connectors service knows nothing about the mover. Either side can change, fail,
 or be replaced without the other noticing, and the page answers from the table while
 everything above the seam is down (FR-11).
 
@@ -479,7 +479,7 @@ prints unknown rather than a zero.
 Realises `cpt-insightspec-connhealth-interface-read-surface`, and consumes
 `cpt-insightspec-connhealth-contract-mover-history` on the write side.
 
-Two admin routes on the analytics service, registered like every other route in the parent
+Two admin routes on the connectors service, registered like every other route in the parent
 design.
 
 `GET /v1/connector-health` — the whole install:
@@ -586,7 +586,7 @@ Shape rules that the generated contract enforces:
 
 ### 3.4 Internal Dependencies
 
-- The analytics service's existing warehouse client, admin-role gate, and OpenAPI
+- The connectors service's existing warehouse client, admin-role gate, and OpenAPI
   registration — the summary and the per-connector history are two more routes.
 - The portal's Manage-zone navigation: the `data-health` item is replaced by this pane; the
   admin-gate wrapper is reused as-is.
@@ -704,7 +704,7 @@ arriving.
 ```mermaid
 sequenceDiagram
     participant P as Portal
-    participant A as Analytics
+    participant A as Connectors
     participant L as Sync ledger
 
     P->>A: GET /v1/connector-health
@@ -822,7 +822,7 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
 | configuration | none — the sweep reuses the credentials the reconcile loop already holds |
-| two routes | analytics service |
+| two routes | connectors service |
 | pane | portal bundle |
 
 Nothing here adds a deployable unit. The sweep runs inside a controller that already exists,

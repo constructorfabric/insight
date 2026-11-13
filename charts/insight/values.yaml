@@ -965,3 +965,20 @@ frontend:
     # toggled by the viewer's "Show planned sections" switch. A path in both
     # lists is hidden.
     planned: []
+
+connectors:
+  infraFromUmbrella: true
+  replicaCount: 1
+  databaseName: connectors
+  image:
+    repository: ghcr.io/constructorfabric/insight-connectors
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  gateway:
+    issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
+    audience: internal-services
+    caCertSecret: insight-authenticator-authn-tls-cert
+    caCertPaths: ["/etc/insight/authn-ca/ca.crt"]

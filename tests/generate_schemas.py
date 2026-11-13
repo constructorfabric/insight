@@ -69,8 +69,7 @@ CODEGEN_ARGS = (
     "forbid",
     "--disable-timestamp",
     "--formatters",
-    "ruff-format",
-    "--formatters",
+    "isort",
     "ruff-check",
 )
 
@@ -96,6 +95,15 @@ status code from here — every one is asserted from observed behaviour.
 ONE substitution is applied after generation: every `AwareDatetime` becomes
 `UnzonedDatetime`, because the contract declares `format: date-time` while the
 service serialises timestamps with no offset. See `common.UnzonedDatetime`.
+"""
+
+'''
+
+
+CONNECTORS_HEADER = '''"""Connectors response shapes — GENERATED, do not edit.
+
+Regenerate: uv run --project tests --frozen python tests/generate_schemas.py
+Source: docs/components/backend/connectors/openapi.json
 """
 
 '''
@@ -251,6 +259,12 @@ TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
         output=_SCHEMAS / "analytics.py",
         header=ANALYTICS_HEADER,
         unzoned_datetime=True,
+    ),
+    Generated(
+        name="connectors",
+        spec=_SPECS / "connectors" / "openapi.json",
+        output=_SCHEMAS / "connectors.py",
+        header=CONNECTORS_HEADER,
     ),
     Generated(
         name="authenticator",

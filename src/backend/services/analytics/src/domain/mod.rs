@@ -1,5 +1,4 @@
 pub mod ai;
-pub(crate) mod connector_health;
 pub mod contract_version;
 pub(crate) mod date_window;
 pub mod external_links;

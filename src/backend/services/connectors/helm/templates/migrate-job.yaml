@@ -1,0 +1,74 @@
+{{- define "insight-connectors.migrate" -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight-connectors.fullname" . }}-migrate
+  labels:
+    {{- include "insight-connectors.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "insight-connectors.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+            - -ec
+            - |
+              printf 'server:\n  home_dir: /tmp/gears\ngears:\n  connectors:\n    config: {}\n' > /tmp/migrate.yaml
+              exec /app/connectors -c /tmp/migrate.yaml migrate
+          {{- if or .Values.existingSecret .Values.migrateEnvSecret }}
+          envFrom:
+            {{- with .Values.existingSecret }}
+            - secretRef:
+                name: {{ . | quote }}
+                optional: true
+            {{- end }}
+            {{- with .Values.migrateEnvSecret }}
+            - secretRef:
+                name: {{ . | quote }}
+                optional: true
+            {{- end }}
+          {{- end }}
+          env:
+            {{- include "insight-connectors.databaseEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- if not .Values.infraFromUmbrella }}
+{{ include "insight-connectors.migrate" . }}
+{{- end }}

@@ -23,6 +23,10 @@ routes:
     upstream: http://analytics:8081
     strip_prefix: true
     timeout_ms: 135000
+  - prefix: /api/connectors
+    upstream: http://connectors:8088
+    strip_prefix: true
+    timeout_ms: 135000
   - prefix: /api/identity
     upstream: http://identity-resolution:8082
     strip_prefix: true

@@ -38,7 +38,7 @@
 
 <!-- /toc -->
 
-Scoped addition to the [Analytics service](../../DESIGN.md) and the reconcile loop: what an
+Scoped addition to the [Connectors service](../DESIGN.md) and the reconcile loop: what an
 instance operator must be able to learn about the state of every connector, and what the
 product may and may not claim about it. Realised by [DESIGN.md](DESIGN.md). Supersedes the
 current Data health pane and the sketch in
@@ -135,7 +135,7 @@ a reported record count. Source the sweep reads; never read on the page's reques
 
 **Role**: stores the sync ledger and serves it to the read surface.
 
-#### Analytics service
+#### Connectors service
 
 **ID**: `cpt-insightspec-connhealth-actor-analytics`
 
@@ -152,7 +152,7 @@ connector's recent syncs.
 
 Facts flow one way. On a fixed cadence the reconcile loop reads the mover's job history and
 records each sync's outcome into the sync ledger, alongside a snapshot of the connectors it
-manages. At read time the analytics service answers from the ledger alone — no call leaves
+manages. At read time the connectors service answers from the ledger alone — no call leaves
 the warehouse on the request path, and nothing the page shows depends on the mover being
 reachable.
 
@@ -411,7 +411,7 @@ a small service table and never enters customer-facing exports or metric relatio
 
 **ID**: `cpt-insightspec-connhealth-interface-read-surface`
 
-One operator-gated read surface on the analytics service returning the per-connector summary
+One operator-gated read surface on the connectors service returning the per-connector summary
 and the recent-sync history described in §5.2. Contract, shape, and transport are specified
 in [DESIGN.md](DESIGN.md).
 

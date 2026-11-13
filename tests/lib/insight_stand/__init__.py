@@ -24,6 +24,7 @@ from collections.abc import Sequence
 
 from .api import (
     ANALYTICS_PREFIX,
+    CONNECTORS_PREFIX,
     GATEWAY_API_PREFIXES,
     IDENTITY_PREFIX,
     ApiClient,
@@ -33,6 +34,7 @@ from .api import (
     QueryValue,
     StandSession,
     analytics_path,
+    connectors_path,
     identity_path,
 )
 from .errors import (
@@ -123,6 +125,7 @@ __all__: Sequence[str] = (
     "BASE_URL_ENV",
     "BOOLEAN_CAPABILITIES",
     "CALLBACK_PATH",
+    "CONNECTORS_PREFIX",
     "GATEWAY_API_PREFIXES",
     "IDENTITY_PREFIX",
     "IDENTITY_URL_ENV",
@@ -171,6 +174,7 @@ __all__: Sequence[str] = (
     "Tenants",
     "analytics_path",
     "artifact_dir",
+    "connectors_path",
     "default_audience",
     "default_identity_url",
     "default_manifest_path",

@@ -78,6 +78,10 @@ gateway:
       timeoutMs: 40000
       mcpOnly: true
       v3Only: true
+    - prefix: /api/connectors
+      upstream: 'http://{{ .Release.Name }}-connectors:8088'
+      timeoutMs: 135000
+      stripPrefix: true
     - prefix: /api/analytics
       upstream: 'http://{{ .Release.Name }}-analytics:8081'
       timeoutMs: 135000

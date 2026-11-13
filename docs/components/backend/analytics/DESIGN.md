@@ -44,7 +44,7 @@ A request names the metrics, the people or the tenant, a period and the views it
 
 Authorization and computation fail differently. Before any ClickHouse work the requested people are checked, in one call, against the set identity says the caller may see, and one invisible id refuses the whole request. Once authorized, a view whose ClickHouse query fails answers in its own slot with a stable error code, and the rest of the response stands; a request that cannot be planned, or a view that exceeds its row limit, fails as a whole.
 
-Around that core the service carries the surfaces that read the same relations or the same definitions: evidence drilldown and its export, metric report preview and export, saved ad-hoc queries, an AI explanation of one reading, product-usage recording, connector sync history and bronze ingestion intensity. The API Gateway mounts it at `/api/analytics`; every route is versioned under `/v1/...`.
+Around that core the service carries the surfaces that read the same relations or the same definitions: evidence drilldown and its export, metric report preview and export, saved ad-hoc queries, an AI explanation of one reading, product-usage recording. The API Gateway mounts it at `/api/analytics`; every route is versioned under `/v1/...`.
 
 ### 1.2 Architecture Drivers
 
@@ -178,13 +178,13 @@ Schema changes and built-in definition reconciliation run only in the `migrate` 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-warehouse-writes`
 
-The service reads the gold, silver, identity and ingestion-history relations and writes nothing there. Its only ClickHouse write is product-usage beacons into `product_usage.usage_events`, using ClickHouse asynchronous inserts; a failed write is logged and the beacon dropped, and with usage recording off the route answers 204 and records nothing.
+The service reads the gold, silver and identity relations and writes nothing there. Its only ClickHouse write is product-usage beacons into `product_usage.usage_events`, using ClickHouse asynchronous inserts; a failed write is logged and the beacon dropped, and with usage recording off the route answers 204 and records nothing.
 
 #### Tenant Comes From the Signed Token
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-tenant-claim`
 
-The tenant is the signed `tenant_id` claim of the gateway JWT, resolved by the single-tenant resolver; there is no tenant header. The tenant predicate on readings, drilldown, reports and absences is enforced only when `metric_catalog.enforce_tenant_scope` is on; it defaults to off and no chart value sets it, so by default those reads match every tenant in the warehouse. Custom SQL observations carry whatever tenant their author emits. Saved queries, the SQL explorer, connector health and ingestion intensity are not filtered by tenant.
+The tenant is the signed `tenant_id` claim of the gateway JWT, resolved by the single-tenant resolver; there is no tenant header. The tenant predicate on readings, drilldown, reports and absences is enforced only when `metric_catalog.enforce_tenant_scope` is on; it defaults to off and no chart value sets it, so by default those reads match every tenant in the warehouse. Custom SQL observations carry whatever tenant their author emits. Saved queries and the SQL explorer are not filtered by tenant.
 
 ## 3. Technical Architecture
 
@@ -370,7 +370,7 @@ Admins need to see how the product is used, whether connectors sync and what use
 
 ##### Responsibility scope
 
-Record usage beacons and serve admin summaries over `product_usage.usage_events`; serve connector sync history from `ingestion_history.sync_events` and bronze ingestion intensity from `insight.bronze_insert_events`; store feedback and list it for admins.
+Record usage beacons and serve admin summaries over `product_usage.usage_events`; store feedback and list it for admins.
 
 ##### Responsibility boundaries
 
@@ -413,9 +413,6 @@ Every read but the usage configuration is admin-only; nothing here feeds metric 
 | `POST` | `/v1/usage/events` | Record usage beacons | authenticated |
 | `GET` | `/v1/usage/config` | Whether usage is recorded | authenticated |
 | `GET` | `/v1/usage/summary`, `/people`, `/pages`, `/actions` | Usage read model | admin |
-| `GET` | `/v1/connector-health` | Recorded sync state of every connector | admin |
-| `GET` | `/v1/connector-health/{connector}/syncs` | Recent syncs of one connector | admin |
-| `GET` | `/v1/ingestion/intensity` | Bronze extraction intensity | admin |
 | `POST`, `GET` | `/v1/feedback` | Send feedback; list it | send authenticated; list admin |
 
 The SQL explorer listens separately: an MCP tool authenticated by an OAuth access token with the `mcp:query` scope, and an HTTP query endpoint authenticated by a static bearer token.
@@ -430,7 +427,7 @@ The SQL explorer listens separately: an MCP tool authenticated by an OAuth acces
 | API Gateway | Signed JWT on every request | Caller, tenant and subject type |
 | dbt gold and identity layers | `insight.<family>_metric_observations`, `insight.<family>_metric_evidence`, `insight.metric_entity_cohorts_current`, `identity.person_map`, `identity.account_assignment`, `identity.identity_persons` | Readings, drilldown and person display names |
 | dbt silver layer | `silver.class_person_absences`, `silver.contract_version` | Absence context on readings; a periodic, logged-only contract version check |
-| Ingestion | `product_usage.usage_events`, `ingestion_history.sync_events`, `insight.bronze_insert_events` | Usage, connector health and ingestion intensity |
+| Ingestion | `product_usage.usage_events` | Usage |
 
 ### 3.5 External Dependencies
 
@@ -438,7 +435,7 @@ The SQL explorer listens separately: an MCP tool authenticated by an OAuth acces
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| insight-clickhouse | HTTP, bound parameters, per-query settings | Readings, drilldown, reports, saved queries, usage writes and reads, connector health, person names |
+| insight-clickhouse | HTTP, bound parameters, per-query settings | Readings, drilldown, reports, saved queries, usage writes and reads, person names |
 
 #### MariaDB
 
@@ -553,7 +550,7 @@ One Deployment behind the gateway, plus the `migrate` hook Job that runs before 
 
 ### Metric families specified beside this document
 
-`specs/ai-cost/` carries the AI development cost family — PRD, design, decomposition and the audit behind them — with [ADR-0003](specs/ADR/0003-price-card-per-person-token-cost.md) on pricing. It specifies `insight.ai_cost_metric_evidence` and `insight.ai_cost_metric_observations`, a separate evidence family because seat measures are monthly snapshots rather than daily activity and one evidence relation binds per source. `specs/connector-health/` carries the connector sync history read model. Those documents are written against the code they ship with; where they and this document disagree, they are the newer of the two.
+`specs/ai-cost/` carries the AI development cost family — PRD, design, decomposition and the audit behind them — with [ADR-0003](specs/ADR/0003-price-card-per-person-token-cost.md) on pricing. It specifies `insight.ai_cost_metric_evidence` and `insight.ai_cost_metric_observations`, a separate evidence family because seat measures are monthly snapshots rather than daily activity and one evidence relation binds per source. [Connector health](../connectors/specs/connector-health/DESIGN.md) carries the connector sync history read model in the connectors service. Those documents are written against the code they ship with; where they and this document disagree, they are the newer of the two.
 
 ### Known gaps
 
@@ -575,7 +572,7 @@ The code as it stands, recorded so a reader does not assume otherwise:
 - **Definition registry**: [registry.yaml](../../../../src/backend/services/analytics/src/domain/metric_definitions/registry.yaml)
 - **Metric passports**: [passports.md](../../../../src/backend/services/analytics/src/domain/metric_definitions/passports.md)
 - **ADRs**: [ADR/](specs/ADR/)
-- **Metric families**: [ai-cost](specs/ai-cost/DESIGN.md), [connector-health](specs/connector-health/DESIGN.md)
+- **Metric families**: [ai-cost](specs/ai-cost/DESIGN.md)
 
 | Design Element | Realized In |
 |---|---|

@@ -129,6 +129,7 @@ jobs:
       insight_v3_core: ${{ steps.filter.outputs.insight_v3_core }}
       git_cli_proxy: ${{ github.event_name != 'merge_group' && steps.filter.outputs.git_cli_proxy == 'true' }}
       previews: ${{ github.event_name != 'merge_group' && steps.filter.outputs.previews == 'true' }}
+      connectors: ${{ steps.filter.outputs.connectors == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_connectors == 'true') }}
       frontend: ${{ github.event_name != 'merge_group' && steps.filter.outputs.frontend == 'true' }}
       toolbox: ${{ github.event_name != 'merge_group' && steps.filter.outputs.toolbox == 'true' }}
       seed: ${{ github.event_name != 'merge_group' && steps.filter.outputs.seed == 'true' }}
@@ -284,6 +285,18 @@ jobs:
               - 'src/backend/docker-entrypoint.sh'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
+            connectors:
+              - 'src/backend/services/connectors/!(helm)/**'
+              - 'src/backend/libs/insight-clickhouse/**'
+              - 'src/backend/Dockerfile'
+              - 'src/backend/.dockerignore'
+              - 'src/backend/docker-entrypoint.sh'
+              - 'src/backend/Cargo.toml'
+              - 'src/backend/Cargo.lock'
+              - 'src/backend/libs/insight-migration/**'
+              - 'src/backend/libs/insight-http-metrics/**'
+              - 'src/backend/libs/insight-log-context/**'
+              - 'src/backend/libs/insight-openapi/**'
             frontend:
               - 'src/frontend/!(helm)/**'
             toolbox:
@@ -342,6 +355,10 @@ jobs:
               - '.github/workflows/build-images.yml'
               - '.github/workflows/e2e-stand.yml'
               - 'src/backend/services/identity-resolution/helm/Chart.yaml'
+            mq_connectors:
+              - '.github/workflows/build-images.yml'
+              - '.github/workflows/e2e-stand.yml'
+              - 'src/backend/services/connectors/helm/Chart.yaml'
             validation:
               - '.github/workflows/release-helm.yml'
               - '.github/workflows/scripts/verify-chart-candidate.sh'
@@ -1172,6 +1189,141 @@ jobs:
       - name: Report pushed image
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/insight-identity-resolution:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
+
+  backend-connectors:
+    needs: changes
+    if: |
+      needs.changes.outputs.connectors == 'true'
+      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+        if: matrix.arch != 'amd64'
+        with:
+          platforms: ${{ matrix.arch }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/Dockerfile
+          target: connectors
+          platforms: linux/${{ matrix.arch }}
+          tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-connectors:e2e-prebuilt' || '' }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && format('type=docker,dest={0}/e2e-prebuilt.tar', runner.temp) || format('type=image,name={0}/insight-connectors,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
+          cache-from: |
+            type=registry,ref=${{ env.BUILDCACHE }}:connectors-${{ matrix.arch }}
+            type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
+          cache-to: |
+            ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:connectors-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
+            ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:backend-deps-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
+      - name: Upload image for the e2e rig
+        if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: e2e-prebuilt-insight-connectors
+          path: ${{ runner.temp }}/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      - name: Export digest
+        if: needs.changes.outputs.should_push == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.changes.outputs.should_push == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: digests-connectors-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-connectors:
+    needs: [changes, backend-connectors]
+    if: |
+      always()
+      && needs.backend-connectors.result != 'skipped'
+      && needs.changes.outputs.should_push == 'true'
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small-vm' }}
+    timeout-minutes: 60
+    steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-connectors.result != 'success'
+        run: |
+          echo "::error::backend-connectors finished '${{ needs.backend-connectors.result }}' — nothing to merge."
+          exit 1
+      - name: Download digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-connectors-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-connectors
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Fail on a fixable critical before any tag points here
+        uses: ./.github/actions/image-cve-gate
+        with:
+          image: ${{ env.IMAGE_PREFIX }}/insight-connectors
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest and push
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_PREFIX }}/insight-connectors
+        run: |
+          tags="$(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          args=()
+          while IFS= read -r tag; do args+=(-t "$tag"); done <<< "$tags"
+          for digest in *; do args+=("${IMAGE_NAME}@sha256:${digest}"); done
+          docker buildx imagetools create "${args[@]}"
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-connectors:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-connectors
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+      - name: Report pushed image
+        env:
+          IMAGE_REF: ${{ env.IMAGE_PREFIX }}/insight-connectors:${{ needs.changes.outputs.build_tag }}
+        run: printf -- "- \`%s\`\n" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Insight v3 core ───────────────────────────────────────────────────────
   # Not in the e2e compose rig, so no e2e-prebuilt export path.
@@ -2160,6 +2312,7 @@ jobs:
       - merge-git-cli-proxy
       - merge-insight-v3-core
       - merge-previews
+      - merge-connectors
       - merge-frontend
       - merge-toolbox
       - merge-seed
@@ -2179,6 +2332,7 @@ jobs:
         || needs.changes.outputs.insight_v3_core == 'true'
         || needs.changes.outputs.git_cli_proxy == 'true'
         || needs.changes.outputs.previews     == 'true'
+        || needs.changes.outputs.connectors     == 'true'
         || needs.changes.outputs.frontend     == 'true'
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.seed         == 'true'
@@ -2230,6 +2384,7 @@ jobs:
       - merge-git-cli-proxy
       - merge-insight-v3-core
       - merge-previews
+      - merge-connectors
       - merge-frontend
       - merge-toolbox
       - merge-image
@@ -2258,6 +2413,7 @@ jobs:
       && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
       && (needs.merge-insight-v3-core.result == 'success' || needs.merge-insight-v3-core.result == 'skipped')
       && (needs.merge-previews.result      == 'success' || needs.merge-previews.result      == 'skipped')
+      && (needs.merge-connectors.result      == 'success' || needs.merge-connectors.result      == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small-vm' }}
@@ -2346,6 +2502,7 @@ jobs:
           INSIGHT_V3_CORE: ${{ needs.changes.outputs.insight_v3_core }}
           GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
           PREVIEWS: ${{ needs.changes.outputs.previews }}
+          CONNECTORS: ${{ needs.changes.outputs.connectors }}
           FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -2388,6 +2545,7 @@ jobs:
                   src/backend/services/insight-v3-core/helm/Chart.yaml \
                   src/backend/services/git-cli-proxy/helm/Chart.yaml \
                   src/backend/services/previews/helm/Chart.yaml \
+                  src/backend/services/connectors/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml
 
           if git diff --staged --quiet; then
@@ -2435,6 +2593,7 @@ jobs:
       - merge-git-cli-proxy
       - merge-insight-v3-core
       - merge-previews
+      - merge-connectors
       - merge-frontend
       - merge-toolbox
       - merge-seed
