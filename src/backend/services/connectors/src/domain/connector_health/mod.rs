@@ -12,6 +12,7 @@
 mod model;
 mod name;
 mod read;
+pub(crate) mod schedules;
 
 #[cfg(test)]
 mod tests;

@@ -65,7 +65,7 @@ a connection in the mover and its job history goes with it; the ledger keeps six
   what makes the first sweep read the mover's whole retained window.
 - The configured set is recorded (FR-4) — drives the sealed per-tick snapshot.
 - Facts, not verdicts (FR-7) — drives a wire shape that ships observations and no state enum.
-- The read path depends on nothing external (FR-11) — drives the single-relation read.
+- Sync history depends on recorded facts; schedules use a live cluster list (FR-11).
 - A stopped recorder is visible (FR-12) — drives serving the age of the last read beside the
   facts it produced.
 
@@ -88,7 +88,7 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 | Ingestion control | the sweep inside the reconcile tick |
 | Warehouse | `ingestion_history.sync_events` and one grant |
 | Connectors service | a domain read module and two admin routes |
-| Portal | the Connector health pane, replacing Data health |
+| Portal | the Connectors page, replacing Data health |
 
 ## 2. Principles & Constraints
 
@@ -100,8 +100,8 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 
 The writer and the reader never meet. The reconcile loop knows nothing about the connectors
 service; the connectors service knows nothing about the mover. Either side can change, fail,
-or be replaced without the other noticing, and the page answers from the table while
-everything above the seam is down (FR-11).
+or be replaced without the other noticing, and sync history remains available in the ledger when the mover is down. Schedule enrichment
+reads CronWorkflows live and reports cluster failures explicitly (FR-11).
 
 #### Recording is subordinate to the recorded
 
@@ -397,12 +397,19 @@ instance of it — which is domain logic that belongs in one tested module, not 
 
 ##### Responsibility scope
 
-A handful of reads per request, all over the ledger alone. Pure functions merge them into
+Ledger reads provide sync history and the configured set. Schedule enrichment reads saved requests
+from MariaDB and lists CronWorkflows once per summary request. It verifies instance identity and
+computes status and the row schedule from the live object. A database or list failure sets
+`schedule_read_error` and clears schedule fields while preserving history. A source id rejected
+by the service, an excessive job-name length, an identity mismatch or an invalid schedule clears
+only that row's schedule and observation and sets `schedule_request.read_error`; the page shows
+Unavailable with its reason while the other rows retain their statuses. A job with `spec.suspend`
+reports `paused` (Paused), regardless of the saved request, and shows no next runs. Pure functions merge them into
 connector summaries, resolve the quiet states from the configured set, order rows by
 attention (FR-8), and mark unknowns explicitly (FR-7). Serves the bounded sync history for
 the expansion (FR-6), and measures the interval between the recent sealed ticks so the pane
-can date the picture it is showing (FR-12). The configured-set read carries the recorded
-applied schedule, timezone, origin and suspension from that same sealed tick (FR-13).
+can date the picture it is showing (FR-12). The configured-set read identifies the instances; live enrichment supplies the applied schedule,
+timezone, origin and suspension (FR-13).
 
 ##### Responsibility boundaries
 
@@ -415,7 +422,7 @@ answers an empty list rather than erroring (FR-10).
 
 - Serves `cpt-insightspec-connhealth-component-health-pane`.
 
-#### Connector Health Pane
+#### Connectors page
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-component-health-pane`
 
@@ -430,7 +437,7 @@ One row per connector instance with the fields of FR-5; a row expands to the rec
 that instance, not of every instance sharing its connector's name. Two installations of one
 connector are told apart by the identity cell. The Next sync column immediately after it
 shows roughly how long until the earliest start strictly after the viewer's clock across
-all recorded expressions. It is computed when the row renders, without a live timer or
+all live expressions. It is computed when the row renders, without a live timer or
 updates when the tooltip opens. Below one minute the interval reads `in < 1 min`.
 Otherwise, round the delay to the nearest whole minute, with half units rounded up,
 and use minutes while that rounded value is under 60. Beyond that, round the delay
@@ -550,13 +557,11 @@ Shape rules that the generated contract enforces:
   what every other DTO on this service does — a lone shape with its own nullability convention
   would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
-- `schedule` is the applied schedule recorded in the newest sealed configured set, dated by
-  `checked_at`, never an intended schedule. It is null outside that set or when its row has
-  an empty `schedules` array, including rows predating those columns. Otherwise `crons` is
-  the non-empty list as recorded; `timezone` is null for an empty recorded value, meaning
-  the Argo controller's timezone. `origin` is `annotation`, `descriptor`, or `default`, and
-  null for an empty or unknown recorded value. `suspended` is an always-present boolean
-  read from `schedule_suspended`, defaulting to false. No value is inferred (FR-13).
+- `schedule` is the live CronWorkflow's crons, timezone, origin and suspension read in this
+  request, verified against the instance identity. Origin accepts `api`, `annotation`, `descriptor`
+  and `default`. A missing job gives a null schedule. A failed enrichment clears schedule fields
+  and sets `schedule_read_error`. Saved requests are read from `connector_schedules` without an
+  instance lock; their status is computed against the same live list, with no attempt record.
 - **`as_of` and `checked_at` are different clocks and both are needed.** `as_of` is when the
   service computed the answer; `checked_at` is the newest sealed tick's own stamp — when the
   mover was last read. `as_of` dates the answer, `checked_at` dates the facts in it, and the

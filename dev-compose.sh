@@ -1313,6 +1313,17 @@ seed_identity_projection() {
   }
 }
 
+seed_connector_schedules() {
+  local env_file="$1"
+  local user password
+  user="$(env_file_value "$env_file" CLICKHOUSE_USER)"
+  password="$(env_file_value "$env_file" CLICKHOUSE_PASSWORD)"
+  [[ -n "$user" && -n "$password" ]] || return 1
+  docker exec -i "${COMPOSE_PROJECT_NAME}-clickhouse" clickhouse-client \
+    -u "$user" --password "$password" --multiquery \
+    < "$ROOT_DIR/tests/stand/fixtures/connector-schedules.sql"
+}
+
 # Every connector's bronze, created the way a first sync does: its own `discover`
 # into destination-clickhouse. The seed needs the lot — not just the relations
 # its generators write — because the dbt run that follows builds EVERY
@@ -2408,6 +2419,8 @@ cmd_test_stand() {
       # the issuer was persisted — so its manifest would record the wrong IdP.
       # Re-seed explicitly now that the env file is complete.
       cmd_seed --env-file "$TEST_STAND_ENV_FILE" all || return 1
+
+      seed_connector_schedules "$TEST_STAND_ENV_FILE" || return 1
 
       test_stand_wait_ready "$run_started_at" || return 1
 

@@ -1,6 +1,10 @@
 {{- $service := .Subcharts.connectors }}
-{{- $values := mergeOverwrite (deepCopy $service.Values) (dict "mariadb" .Values.mariadb "clickhouse" .Values.clickhouse) }}
+{{- $values := mergeOverwrite (deepCopy $service.Values) (dict "mariadb" .Values.mariadb "clickhouse" .Values.clickhouse "tenantId" .Values.ingestion.reconcile.tenantId "cluster" (dict "enabled" .Values.ingestion.templates.enabled)) }}
 {{- $context := mergeOverwrite (deepCopy $service) (dict "Values" $values) }}
+{{ include "insight-connectors.configmap" $context }}
+---
+{{ include "insight-connectors.rbac" $context }}
+---
 {{ include "insight-connectors.deployment" $context }}
 ---
 {{ include "insight-connectors.migrate" $context }}

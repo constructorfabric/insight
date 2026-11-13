@@ -22,7 +22,7 @@ def test_single_replica_recreates_with_its_service_account() -> None:
     assert deployment["spec"]["strategy"] == {"type": "Recreate"}
     assert deployment["spec"]["template"]["spec"]["serviceAccountName"] == "contract-test-connectors"
     assert workload(documents, "Service")["spec"]["ports"][0]["port"] == 8088
-    assert workload(documents, "ServiceAccount")["automountServiceAccountToken"] is False
+    assert workload(documents, "ServiceAccount")["automountServiceAccountToken"] is True
 
 
 @pytest.mark.parametrize("replicas", ["0", "2", "1.5", "invalid"])
@@ -81,6 +81,8 @@ def test_umbrella_uses_existing_password_secrets_for_both_workloads(connectors_u
         "--set",
         "credentials.autoGenerate=false",
         "--set",
+        "ingestion.reconcile.tenantId=11111111-2222-4333-8444-555555555555",
+        "--set",
         "mariadb.host=database.example.test",
         "--set",
         "mariadb.port=3307",
@@ -118,6 +120,8 @@ def test_umbrella_uses_existing_password_secrets_for_both_workloads(connectors_u
         assert "database_url" not in env
         assert "envFrom" not in container or all("secretRef" not in item for item in container["envFrom"])
         if kind == "Deployment":
+            assert env["reconcile_workflow_name"]["value"] == "contract-test-reconcile-loop"
+            assert env["tenant_id"]["value"] == "11111111-2222-4333-8444-555555555555"
             assert env["clickhouse_url"]["value"] == "https://warehouse.example.test:8124"
             assert env["clickhouse_user"]["value"] == "example-reader"
             assert env["clickhouse_password"]["valueFrom"]["secretKeyRef"] == {
@@ -166,6 +170,9 @@ def test_gears_host_verifies_gateway_identity(connectors_umbrella: Path) -> None
     )
     config = yaml.safe_load(configmap["data"]["insight.yaml"])
     assert config["logging"]["default"] == {"console_level": "debug", "console_format": "pretty"}
+    assert config["gears"]["connectors"]["config"]["cluster"]["enabled"] is True
+    assert "drift" not in config["gears"]["connectors"]["config"]
+    assert config["gears"]["connectors"]["config"]["namespace"] == "default"
     host = config["gears"]["api-gateway"]["config"]
     assert host["bind_addr"] == "0.0.0.0:8088"
     assert host["metrics"]["prefix"] == "host"
@@ -173,3 +180,66 @@ def test_gears_host_verifies_gateway_identity(connectors_umbrella: Path) -> None
     jwt = config["gears"]["oidc-authn-plugin"]["config"]["jwt"]
     assert jwt["claim_mapping"]["subject_tenant_id"] == "tenant_id"
     assert jwt["trusted_issuers"][0]["issuer"] == "https://contract-test-authenticator.default.svc.cluster.local:8443"
+
+
+def test_role_only_patches_existing_connector_cronworkflows() -> None:
+    documents = connectors_documents(CONNECTORS_CHART)
+    assert workload(documents, "Role")["rules"] == [
+        {"apiGroups": ["argoproj.io"], "resources": ["cronworkflows"], "verbs": ["get", "list", "watch", "patch"]}
+    ]
+    binding = workload(documents, "RoleBinding")
+    assert binding["roleRef"] == {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "contract-test-connectors",
+    }
+    assert binding["subjects"] == [
+        {"kind": "ServiceAccount", "name": "contract-test-connectors", "namespace": "default"}
+    ]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("tenant", ["", "example-tenant"])
+def test_cluster_integration_requires_a_tenant_only_when_enabled(enabled: bool, tenant: str) -> None:
+    result = render_connectors(
+        CONNECTORS_CHART, "--set", f"cluster.enabled={str(enabled).lower()}", "--set-string", f"tenantId={tenant}"
+    )
+    if enabled and not tenant:
+        assert result.returncode != 0
+        assert "tenantId is required" in result.stderr
+        return
+
+    assert result.returncode == 0, result.stderr
+    documents = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+    configmap = next(doc for doc in documents if doc["kind"] == "ConfigMap")
+    config = yaml.safe_load(configmap["data"]["insight.yaml"])["gears"]["connectors"]["config"]
+    assert config["cluster"]["enabled"] is enabled
+    container = workload(documents, "Deployment")["spec"]["template"]["spec"]["containers"][0]
+    env = {entry["name"]: entry for entry in container["env"]}
+    tenant_env = "APP__gears__connectors__config__tenant_id"
+    if enabled:
+        assert config["tenant_id"] == tenant
+        assert env[tenant_env]["value"] == tenant
+    else:
+        assert "tenant_id" not in config
+        assert tenant_env not in env
+    for kind in ["Role", "RoleBinding"]:
+        roles = [doc for doc in documents if doc["kind"] == kind]
+        assert len(roles) == int(enabled)
+
+
+def test_schedule_service_has_no_background_worker_or_retry_interval() -> None:
+    service = Path(__file__).resolve().parents[2]
+    gear = (service / "src/gear.rs").read_text()
+    config = (service / "src/config.rs").read_text()
+    assert "drift" not in gear
+    assert "stateful" not in gear
+    assert "RunnableCapability" not in gear
+    assert "drift" not in config
+    assert not (service / "src/domain/connector_schedules/drift.rs").exists()
+
+
+def test_compose_mounts_the_authentication_ca_bundle_for_connectors() -> None:
+    root = Path(__file__).resolve().parents[6]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    assert "./deploy/compose/authn-tls-certs:/certs:ro" in compose["services"]["connectors"]["volumes"]

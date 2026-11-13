@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 class Grain(StrEnum):
@@ -31,6 +32,12 @@ class IngestionPoint(BaseModel):
     rows: int = Field(..., ge=0)
 
 
+class PendingReason(StrEnum):
+    no_cronworkflow = 'no_cronworkflow'
+    awaiting_reconcile = 'awaiting_reconcile'
+    different_schedule = 'different_schedule'
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -47,10 +54,34 @@ class Problem(BaseModel):
     type: str
 
 
+class RequestedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    updated_at: AwareDatetime
+    updated_by: UUID
+
+
 class ScheduleOrigin(StrEnum):
+    api = 'api'
     annotation = 'annotation'
     descriptor = 'descriptor'
     default = 'default'
+
+
+class ScheduleRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str] = Field(..., max_length=10, min_length=1)
+
+
+class ScheduleStatus(StrEnum):
+    applied = 'applied'
+    pending = 'pending'
+    inherited = 'inherited'
+    paused = 'paused'
 
 
 class Series(StrEnum):
@@ -97,6 +128,73 @@ class AppliedSchedule(BaseModel):
     timezone: str | None = Field(None, description="Absent when the `CronWorkflow` uses the Argo controller's timezone.")
 
 
+class IngestionIntensityResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    grain: Grain = Field(..., description='Echoed resolved, not as asked: the caller may have pinned neither bound.')
+    points: list[IngestionPoint]
+    scope: str | None = Field(None, description='The `source_database` the read was scoped to; absent when org-wide.')
+    series: Series
+    to: str
+    truncated: bool = Field(..., description='The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.')
+
+
+class InheritedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    origin: ScheduleOrigin
+
+
+class LiveSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    observed_at: AwareDatetime
+    origin: ScheduleOrigin | None = None
+    suspended: bool
+    timezone: str | None = None
+
+
+class ScheduleObservation(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    observed_at: AwareDatetime
+    status: ScheduleStatus
+
+
+class ScheduleResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    inherited: InheritedSchedule | None = None
+    live: LiveSchedule | None = None
+    next_reconcile_at: AwareDatetime | None = None
+    pending_reason: PendingReason | None = None
+    read_error: str | None = None
+    reconcile_interval_secs: int | None = None
+    requested: RequestedSchedule | None = None
+    revision: int = Field(..., ge=0)
+    source_id: str
+    status: ScheduleStatus | None = None
+
+
+class HealthScheduleRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    last_observation: ScheduleObservation | None = None
+    read_error: str | None = None
+    revision: int = Field(..., ge=0)
+
+
 class ConnectorHealth(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -105,6 +203,7 @@ class ConnectorHealth(BaseModel):
     connector: str
     last_sync: SyncFact | None = None
     schedule: AppliedSchedule | None = None
+    schedule_request: HealthScheduleRequest | None = None
     source_id: str | None = Field(None, description="The installation's own id within that tenant. Absent with `tenant_id`.")
     tenant_id: str | None = Field(None, description='Tenant of the installation this row is. Absent together with\n`source_id` on history recorded before the ledger carried the identity\nthat no single instance could be shown to own — unattributed, which is a\ndifferent answer from attributed to something named "".')
 
@@ -117,17 +216,5 @@ class ConnectorHealthResponse(BaseModel):
     checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
     connectors: list[ConnectorHealth]
     history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
+    schedule_read_error: str | None = None
     typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
-
-
-class IngestionIntensityResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    from_: str = Field(..., alias='from')
-    grain: Grain = Field(..., description='Echoed resolved, not as asked: the caller may have pinned neither bound.')
-    points: list[IngestionPoint]
-    scope: str | None = Field(None, description='The `source_database` the read was scoped to; absent when org-wide.')
-    series: Series
-    to: str
-    truncated: bool = Field(..., description='The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.')

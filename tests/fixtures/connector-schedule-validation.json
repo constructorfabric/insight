@@ -1,0 +1,560 @@
+[
+  {
+    "name": "valid expression 1",
+    "crons": [
+      "* * * * *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 2",
+    "crons": [
+      "0 0 1 1 0"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 3",
+    "crons": [
+      "59 23 31 12 6"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 4",
+    "crons": [
+      "*/15 0-23/2 * * MON-FRI"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 5",
+    "crons": [
+      "1,5-10/2,*/20 3,6 * JAN,jul,Dec SUN,tue-SAT/2"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 6",
+    "crons": [
+      "0 3 ? * MON"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 7",
+    "crons": [
+      "0 3 * * ?"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 8",
+    "crons": [
+      "0/2 0/3 1/4 1/2 0/2"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 9",
+    "crons": [
+      "0 3 * jan-dec sun-sat"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 10",
+    "crons": [
+      "0 0 ? * ?"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 11",
+    "crons": [
+      "  0\t  3 *  * *  "
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 12",
+    "crons": [
+      "0 6 29 FEB *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 13",
+    "crons": [
+      "0 6 29/2 FEB *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 14",
+    "crons": [
+      "0 6 31 FEB-MAR *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 15",
+    "crons": [
+      "0 6 31 2 MON"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 16",
+    "crons": [
+      "0 6 31 2 0-6"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 17",
+    "crons": [
+      "0 6 31 2 */2"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 18",
+    "crons": [
+      "0 6 31 2 */2,MON"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 19",
+    "crons": [
+      "0 6 */2 FEB MON"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 20",
+    "crons": [
+      "0 6 */1 FEB MON"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 21",
+    "crons": [
+      "*/4294967295 * * * *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "valid expression 22",
+    "crons": [
+      "0000 03 * * *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "invalid expression 1",
+    "crons": [
+      ""
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 2",
+    "crons": [
+      "0 0 * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 3",
+    "crons": [
+      "0 0 0 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 4",
+    "crons": [
+      "0 0 0 * * * 2026"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 5",
+    "crons": [
+      "@daily"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 6",
+    "crons": [
+      "@every 1h"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 7",
+    "crons": [
+      "TZ=UTC 0 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 8",
+    "crons": [
+      "CRON_TZ=UTC 0 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 9",
+    "crons": [
+      "0 3 L * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 10",
+    "crons": [
+      "0 3 1W * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 11",
+    "crons": [
+      "0 3 * * MON#2"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 12",
+    "crons": [
+      "60 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 13",
+    "crons": [
+      "0 25 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 14",
+    "crons": [
+      "0 3 0 * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 15",
+    "crons": [
+      "0 3 32 * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 16",
+    "crons": [
+      "0 3 * 0 *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 17",
+    "crons": [
+      "0 3 * 13 *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 18",
+    "crons": [
+      "0 3 * * 7"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 19",
+    "crons": [
+      "0 3 * FOO *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 20",
+    "crons": [
+      "0 3 * * FOO"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 21",
+    "crons": [
+      "0 3 * * FRI-MON"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 22",
+    "crons": [
+      "5-1 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 23",
+    "crons": [
+      "0 3 * * MON,"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 24",
+    "crons": [
+      "0,,1 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 25",
+    "crons": [
+      ",0 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 26",
+    "crons": [
+      "0 3 * * ?/2"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 27",
+    "crons": [
+      "0 3 *,? * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 28",
+    "crons": [
+      "? 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 29",
+    "crons": [
+      "*/0 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 30",
+    "crons": [
+      "*/-1 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 31",
+    "crons": [
+      "*/ 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 32",
+    "crons": [
+      "*/1/2 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 33",
+    "crons": [
+      "1-2-3 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 34",
+    "crons": [
+      "0 3 * * *\n"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 35",
+    "crons": [
+      "0\r 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 36",
+    "crons": [
+      "0\u0000 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 37",
+    "crons": [
+      "0\u007f 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 38",
+    "crons": [
+      "0\u0085 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 39",
+    "crons": [
+      "0\u00a03 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 40",
+    "crons": [
+      "+0 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 41",
+    "crons": [
+      "0 3 * * 99999999999999999999"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 42",
+    "crons": [
+      "*/4294967296 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 43",
+    "crons": [
+      "                                                                                                    0 3 * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 44",
+    "crons": [
+      "0 6 31 2 *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 45",
+    "crons": [
+      "0 6 30-31 FEB ?"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 46",
+    "crons": [
+      "0 6 31 APR,JUN,SEP,NOV */1"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 47",
+    "crons": [
+      "0 6 31 FEB *,MON"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 48",
+    "crons": [
+      "0 6 31 FEB MON,*/1"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 49",
+    "crons": [
+      "0 6 30/2 FEB *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid expression 50",
+    "crons": [
+      "0 3 * * \u017fun"
+    ],
+    "valid": false
+  },
+  {
+    "name": "ten expressions",
+    "crons": [
+      "0 * * * *",
+      "1 * * * *",
+      "2 * * * *",
+      "3 * * * *",
+      "4 * * * *",
+      "5 * * * *",
+      "6 * * * *",
+      "7 * * * *",
+      "8 * * * *",
+      "9 * * * *"
+    ],
+    "valid": true
+  },
+  {
+    "name": "eleven expressions",
+    "crons": [
+      "0 * * * *",
+      "1 * * * *",
+      "2 * * * *",
+      "3 * * * *",
+      "4 * * * *",
+      "5 * * * *",
+      "6 * * * *",
+      "7 * * * *",
+      "8 * * * *",
+      "9 * * * *",
+      "10 * * * *"
+    ],
+    "valid": false
+  },
+  {
+    "name": "empty list",
+    "crons": [],
+    "valid": false
+  },
+  {
+    "name": "normalized duplicate",
+    "crons": [
+      "0 6 * * *",
+      " 0\t6 * * * "
+    ],
+    "valid": false
+  },
+  {
+    "name": "case distinct expressions",
+    "crons": [
+      "0 6 * * MON",
+      "0 6 * * mon"
+    ],
+    "valid": true
+  }
+]

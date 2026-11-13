@@ -154,3 +154,22 @@ fn malformed_config_errors_never_echo_secrets() -> R {
     assert!(error.contains("invalid `gears.connectors.config`"));
     Ok(())
 }
+
+#[test]
+fn cluster_configuration_requires_identity() {
+    for (key, value) in [
+        ("namespace", serde_json::json!("")),
+        ("tenant_id", serde_json::json!("")),
+        ("namespace", serde_json::json!("INVALID")),
+    ] {
+        let mut raw = valid_config();
+        raw["cluster"] = serde_json::json!({"enabled": true});
+        raw["namespace"] = serde_json::json!("example");
+        raw["tenant_id"] = serde_json::json!("tenant01");
+        raw[key] = value;
+        assert!(
+            crate::gear::check_config(&app(raw)).is_err(),
+            "should reject {key}"
+        );
+    }
+}

@@ -33,6 +33,8 @@ data:
     gears:
       api-gateway:
         config:
+          defaults:
+            request_timeout: 60s
           metrics:
             prefix: "host"
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
@@ -108,6 +110,14 @@ data:
           priority: 20
 
       connectors:
-        config: {}
+        config:
+          cluster:
+            enabled: {{ .Values.cluster.enabled }}
+          namespace: {{ .Release.Namespace | quote }}
+          {{- if .Values.cluster.enabled }}
+          tenant_id: {{ required "tenantId is required" .Values.tenantId | quote }}
+          {{- end }}
 {{- end }}
+{{- if not .Values.infraFromUmbrella }}
 {{ include "insight-connectors.configmap" . }}
+{{- end }}

@@ -17,6 +17,10 @@ pub(crate) struct GearConfig {
     pub(crate) clickhouse_user: String,
     pub(crate) clickhouse_password: SecretString,
     pub(crate) identity_url: String,
+    pub(crate) cluster: ClusterConfig,
+    pub(crate) namespace: String,
+    pub(crate) tenant_id: String,
+    pub(crate) reconcile_workflow_name: String,
 }
 
 impl Default for GearConfig {
@@ -33,6 +37,10 @@ impl Default for GearConfig {
             clickhouse_user: String::new(),
             clickhouse_password: SecretString::default(),
             identity_url: String::new(),
+            cluster: ClusterConfig::default(),
+            namespace: String::new(),
+            tenant_id: String::new(),
+            reconcile_workflow_name: String::new(),
         }
     }
 }
@@ -84,6 +92,20 @@ impl GearConfig {
 
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         self.database_url()?;
+        if self.cluster.enabled {
+            for (key, value) in [
+                ("namespace", &self.namespace),
+                ("tenant_id", &self.tenant_id),
+            ] {
+                if value.is_empty()
+                    || !value.bytes().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'.'
+                    })
+                {
+                    return Err(config_error(key, "must be a nonempty cluster identifier"));
+                }
+            }
+        }
         for (key, value) in [
             ("clickhouse_url", self.clickhouse_url.as_str()),
             ("identity_url", self.identity_url.as_str()),
@@ -143,3 +165,9 @@ pub(crate) fn redacted_yaml(config: &AppConfig) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct ClusterConfig {
+    pub(crate) enabled: bool,
+}

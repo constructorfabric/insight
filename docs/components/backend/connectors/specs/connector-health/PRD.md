@@ -139,7 +139,7 @@ a reported record count. Source the sweep reads; never read on the page's reques
 
 **ID**: `cpt-insightspec-connhealth-actor-analytics`
 
-**Role**: serves the read surface to the portal from the ledger alone.
+**Role**: serves recorded sync history and live schedule status to the portal.
 
 #### Portal
 
@@ -152,9 +152,9 @@ connector's recent syncs.
 
 Facts flow one way. On a fixed cadence the reconcile loop reads the mover's job history and
 records each sync's outcome into the sync ledger, alongside a snapshot of the connectors it
-manages. At read time the connectors service answers from the ledger alone — no call leaves
-the warehouse on the request path, and nothing the page shows depends on the mover being
-reachable.
+manages. At read time the service reads sync history from the ledger and enriches schedules
+from saved requests and live sync jobs. Mover availability does not affect these reads; a failed
+cluster read leaves history available and explicitly marks schedules unavailable.
 
 ### 3.1 Module-Specific Environment Constraints
 
@@ -295,24 +295,21 @@ most recent activity comes first.
 The surface is available only to the instance operator role and reports the whole install.
 A caller without that role is refused, and the refusal names the surface it was refused.
 
-#### FR-13 — The recorded applied schedule is visible
+#### FR-13 — The live applied schedule is visible
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-applied-schedule`
 
-Each connector instance shows the schedule the reconcile loop actually applied, with its
-timezone and whether the CronWorkflow is suspended, as recorded in the newest sealed
-configured set. The tooltip shows the recorded cron expressions without computing
-a cadence or claiming an intended schedule. Outside that set, or where the row records no
-cron expressions, the schedule is unknown. An empty recorded timezone means controller
-time. The API also serves the recorded schedule origin, which the page does not display;
-an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
-
-Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
-cron expressions read in UTC. A CronWorkflow applied before this change may have no
-timezone; its empty recorded value still means controller time.
+Each connector instance shows the live sync job's schedule, timezone and suspension at the time
+of the read. Saved requests and defaults use the schedule states defined in the
+[Connectors PRD](../PRD.md). Manual changes appear as Waiting for reconcile until the next pass
+restores the saved request. A paused sync job shows Paused regardless of its saved request,
+and its schedule strip shows no next runs. If one instance cannot be evaluated, its badge shows
+Unavailable with the reason while other instances keep their badges. If live jobs cannot be read,
+the API reports that failure explicitly.
+The sync history and last-checked stamp continue to describe the recorded sweep facts.
 
 The Next sync column shows approximately how long until the earliest next scheduled start,
-computed from the recorded cron expressions and timezone against the viewer's clock when
+computed from the live cron expressions and timezone against the viewer's clock when
 the row renders. It has no live timer and does not refresh when its tooltip opens. It rounds
 to the nearest whole minute below an hour, hour below a day, or day otherwise, marking the
 interval approximate (`in ~2 h`); below one minute it reads `in < 1 min`.
@@ -337,14 +334,13 @@ Before the first controller cadence, or on stands where nothing records, the pag
 plainly that nothing has been read from the mover yet. It does not error and does not imply
 health.
 
-#### FR-11 — The read path depends on nothing external
+#### FR-11 — Recorded history and live schedules
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-no-external-reads`
 
-Serving the page requires only the recorded facts. No mover, cluster API, or other external
-call is made on the request path, and the reader holds no access to raw connector data in any
-form; unavailability upstream cannot degrade the page beyond the staleness of the last
-recorded facts.
+Sync history reads only the recorded ledger and requires no mover call or raw connector data.
+Schedules are compared with live sync jobs when requested, as defined by the Connectors PRD.
+A cluster read failure is reported explicitly instead of serving a guessed schedule status.
 
 #### FR-12 — A stopped recorder is visible
 
@@ -352,12 +348,12 @@ recorded facts.
 
 Recording failures are swallowed so they cannot disturb reconciliation (NFR-2), which means a
 recorder that stops leaves the page showing its last picture indefinitely. So the page states
-when the mover was last read, dating everything below it; and when that read is far older
+when the mover was last read, dating the sync history; and when that read is far older
 than the interval between the reads before it, the page says recording appears to have
 stopped and the connector states shown may no longer be current.
 
 Both the age and the interval are recorded facts about the recorder, independent of the
-connector's recorded applied schedule (FR-13). Where too few reads establish an interval,
+connector's sync history. Live schedule observations carry their own read time (FR-13). Where too few reads establish an interval,
 the page shows the age and says the cadence is unmeasured — it does not conclude that
 recording stopped, because with no cadence recorded there is nothing for the age to be late
 against.
@@ -473,15 +469,15 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - [ ] A connector present in the snapshot with no syncs renders as configured and never ran;
       removed from configuration, it stops rendering configured within one controller cadence;
       one that has left no record at all is not listed, because the reader holds one relation
-      and nothing else (FR-4, FR-11).
+      with live schedule enrichment (FR-4, FR-11).
 - [ ] A tick whose inputs are unreadable records nothing rather than recording an empty
       configured set (FR-4).
 - [ ] Deleting a connection in the mover does not remove already-recorded history (FR-2).
 - [ ] On a ledger-less install the first sweep populates history from the mover's retained
       jobs (FR-3).
 - [ ] The page renders one row per connector with the fields of FR-5, expandable per FR-6.
-- [ ] Each instance shows its recorded applied schedule, timezone and suspension
-      from the newest sealed configured set in a tooltip; an unrecorded schedule renders as
+- [ ] Each instance shows its live applied schedule, timezone and suspension
+      in a tooltip; an absent schedule renders as
       `—` without a tooltip. The Next sync column shows an approximate interval until the
       earliest next start, computed against the viewer's clock when the row renders with no
       live updates or refresh on tooltip opening, never a
@@ -532,7 +528,7 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - ~~Per-stream moved-record counters from the mover's job detail~~ — deferred: the sweep
   consumes the public listing only, so nothing depends on an API that is not
   contract-stable across mover upgrades.
-- ~~Naming of the replacement pane~~ — settled as Connector health.
+- ~~Naming of the replacement pane~~ — settled as the Connectors page.
 - Whether the sync history needs paging beyond its bounded window. UC-1 is served by the
   window; dating the first failure of a long series is not, and would need a cursor on the
   read surface. **Owner**: this spec's author, to settle after the page has been used for
@@ -542,7 +538,7 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 
 - **The sweep reads the mover's API across versions.** Mitigation: consume only its stable
   public listing for outcomes; treat any richer detail as optional enrichment that may
-  degrade without degrading the page (FR-11 keeps the read path independent).
+  degrade without degrading the page (FR-11 keeps sync history independent).
 - **The mover's account is uncorroborated.** A sync it calls successful may have delivered
   nothing to storage, and this surface cannot tell. Mitigation is honesty rather than
   detection: the page reports the count as reported, and no state on it says "delivering".

@@ -1,4 +1,6 @@
 replicaCount: 1
+cluster:
+  enabled: true
 infraFromUmbrella: false
 podAnnotations: {}
 image:
@@ -45,3 +47,5 @@ readinessProbe:
   httpGet: {path: /health, port: http}
   initialDelaySeconds: 5
   periodSeconds: 5
+
+tenantId: "00000000-0000-0000-0000-000000000000"
