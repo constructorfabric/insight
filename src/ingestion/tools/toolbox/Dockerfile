@@ -30,7 +30,9 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
 COPY scripts/bootstrap-db/pins.env /tmp/pins.env
 RUN . /tmp/pins.env && \
     pip install --no-cache-dir "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" "dbt-core==${DBT_CORE_VERSION}" "certifi==2026.10.19" && \
-    rm /tmp/pins.env
+    printf 'PyMySQL==%s --hash=sha256:%s\n' "$PYMYSQL_VERSION" "$PYMYSQL_WHEEL_SHA256" > /tmp/schedule-requirements.txt && \
+    pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /tmp/schedule-requirements.txt && \
+    rm /tmp/pins.env /tmp/schedule-requirements.txt
 
 # Copy the ingestion project, minus the sample-data seeder: this image runs
 # migrations against real stands, and a demo-data generator does not belong on

@@ -176,9 +176,52 @@ jobs:
       - name: Connector wiring invariants
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/connector_wiring.py
+      - name: Install pinned PyMySQL
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          printf 'PyMySQL==%s --hash=sha256:%s\n' "$PYMYSQL_VERSION" "$PYMYSQL_WHEEL_SHA256" > "$RUNNER_TEMP/schedule-requirements.txt"
+          python3 -m pip install --quiet --require-hashes --only-binary :all: --no-deps -r "$RUNNER_TEMP/schedule-requirements.txt"
+      - name: Start MariaDB for schedule grants
+        if: ${{ !cancelled() }}
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$MARIADB_ROOT_PASSWORD" > "$RUNNER_TEMP/schedule-grants-root-password"
+          docker run -d --name insight-schedule-maria \
+            -e MARIADB_ROOT_PASSWORD \
+            -p 127.0.0.1:3306:3306 mariadb:11.4
+          for i in $(seq 1 60); do
+            if docker exec insight-schedule-maria healthcheck.sh --connect --innodb_initialized 2>/dev/null; then
+              echo "MariaDB ready"
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "MariaDB never became healthy"
+              docker logs insight-schedule-maria
+              exit 1
+            fi
+            sleep 2
+          done
       - name: Reconcile renderer contract
         if: ${{ !cancelled() }}
-        run: python3 -m pytest src/ingestion/reconcile-connectors/tests -q
+        env:
+          SCHEDULE_GRANTS_LIVE: "1"
+          CONNECTOR_SCHEDULES_DB_HOST: 127.0.0.1
+          CONNECTOR_SCHEDULES_DB_PORT: "3306"
+          CONNECTOR_SCHEDULES_DB_USER: root
+          CONNECTOR_SCHEDULES_DB_PASSWORD_FILE: ${{ runner.temp }}/schedule-grants-root-password
+          CONNECTOR_SCHEDULES_DB_NAME: mysql
+        run: |
+          set -euo pipefail
+          python3 -m pytest src/ingestion/reconcile-connectors/tests -q -rs | tee "$RUNNER_TEMP/schedule-grants-pytest.log"
+          if grep -E 'SKIPPED.*test_schedule_account[.]py' "$RUNNER_TEMP/schedule-grants-pytest.log"; then
+            echo "Schedule account grant test must run in CI"
+            exit 1
+          fi
 
       # A table-wide max(_version) boundary lets one producer's newest row hide
       # another producer's rows from a silver class for good (#2927).

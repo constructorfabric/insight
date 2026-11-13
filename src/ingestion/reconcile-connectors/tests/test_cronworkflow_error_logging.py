@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REASON = "example renderer refused the schedule"
 
 STUBS = """
+reconcile_resolve_deployment_schedule() { printf 'default\n0 0 * * *'; }
 disc_instances_of() { printf 'main\texample-secret\thash\n'; }
 valsec_check_secret() { return 0; }
 reconcile_definitions() { printf 'noop\tnone\texample-definition\n'; }
@@ -111,3 +112,28 @@ def test_apply_status_keeps_its_meaning_and_stdout_is_discarded(caller: str, app
         assert "failed to create/update Argo CronWorkflow" in errors[0]
     else:
         assert "failed to remove legacy CronWorkflow" in errors[0]
+
+
+@pytest.mark.parametrize("caller", ["reconcile", "adopt"])
+def test_successful_apply_logs_a_release_failure_without_failing(caller: str, tmp_path: Path) -> None:
+    helper = tmp_path / "apply_connector_schedule.py"
+    helper.write_text(
+        "import sys\n"
+        "sys.stdin.read()\n"
+        "print('example apply stdout that is not JSON')\n"
+        "print('schedule lock release failed: ScheduleReadError', file=sys.stderr)\n"
+    )
+    overrides = f"""
+    export CONNECTOR_SCHEDULES_DB_NAME=example
+    ARGO_PY_DIR={shlex.quote(str(tmp_path))}
+    argo_render_cronworkflow() {{ printf 'example rendered workflow'; }}
+    argo_delete_former_tenant_cronworkflows() {{ return 0; }}
+    _argo_delete_cronworkflow_named() {{ return 0; }}
+    """
+    result = run_caller(caller, tmp_path, overrides)
+    assert result.returncode == 0, result.stdout + result.stderr
+    logs = [json.loads(line) for line in result.stdout.splitlines()]
+    warnings = [entry["msg"] for entry in logs if entry["level"] == "warn"]
+    assert warnings == ["example-connector: schedule lock release failed: ScheduleReadError"]
+    assert not any(entry["level"] == "error" for entry in logs)
+    assert result.stderr == ""

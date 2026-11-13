@@ -15,6 +15,7 @@ Run: pytest src/ingestion/reconcile-connectors/tests
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,7 @@ log_line()          { printf '%s\\n' "$*" >&2; }
 log_event()         { :; }
 adopt_warn_orphan() { printf '%s\\n' "$*" >&2; }
 reconcile_compute_connection_name() { printf 'conn-name'; }
+reconcile_resolve_deployment_schedule() { reconcile_resolve_schedule; }
 reconcile_resolve_schedule()        { printf 'descriptor\\n0 4 * * *\\n0 16 * * *'; }
 reconcile_compute_tenant()          { printf 'example-tenant'; }
 adopt_match_definition() { printf 'DEFINITION %s\\n' "$1" >> "$CALLS"; }
@@ -68,7 +70,13 @@ def adopt(secret_rows: list[str], tmp_path: Path) -> tuple[int, list[str], str]:
     _adopt_one_connector "{CONNECTOR}" dir 1 nocode "" "" \
       0 "" workspace-1 {json.dumps(DEFINITIONS)} {json.dumps(SOURCES)} {json.dumps(CONNECTIONS)}
     """
-    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        env={key: value for key, value in os.environ.items() if not key.startswith("CONNECTOR_SCHEDULES_DB_")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result.returncode, recorded, result.stderr
 

@@ -16,7 +16,7 @@ CLI:
 Stdout: rendered YAML.
 Exit:   0 success, 2 missing template variables or empty --schedule.
 
-Schedule precedence is resolved by the caller (Secret annotation >
+Schedule precedence is resolved by the caller (API > Secret annotation >
 descriptor.schedule > default), which may hold one cron or several — a list
 prints newline-separated and travels verbatim.
 
@@ -43,7 +43,9 @@ def main() -> int:
     p.add_argument("--connector", required=True)
     p.add_argument("--connection-name", required=True)
     p.add_argument("--schedule", required=True)
-    p.add_argument("--schedule-origin", choices=("annotation", "descriptor", "default"), required=True)
+    p.add_argument("--schedule-origin", choices=("api", "annotation", "descriptor", "default"), required=True)
+    p.add_argument("--deployment-schedule")
+    p.add_argument("--deployment-schedule-origin", choices=("annotation", "descriptor", "default"))
     p.add_argument("--tenant", required=True)
     p.add_argument("--cron-name", required=True)
     p.add_argument("--insight-source-id", required=True)
@@ -72,11 +74,19 @@ def main() -> int:
     # its own header comment too, where a multi-line value would break out.
     schedules_flow = json.dumps(schedules)
 
+    deployment_origin = args.deployment_schedule_origin or args.schedule_origin
+    deployment_schedule = args.deployment_schedule if args.deployment_schedule is not None else args.schedule
+    deployment_crons = [line.strip() for line in deployment_schedule.splitlines() if line.strip()]
+    if deployment_origin == "api" or not deployment_crons:
+        p.error("a deployment schedule with annotation, descriptor or default origin is required")
+    deployment = json.dumps({"origin": deployment_origin, "crons": deployment_crons})
+
     env = {
         "CONNECTOR": args.connector,
         "CONNECTION_NAME": args.connection_name,
         "SCHEDULES": schedules_flow,
         "SCHEDULE_ORIGIN": args.schedule_origin,
+        "DEPLOYMENT_SCHEDULE": json.dumps(deployment),
         "TENANT": args.tenant,
         "CRON_NAME": args.cron_name,
         "INSIGHT_SOURCE_ID": args.insight_source_id,

@@ -78,7 +78,10 @@ def _renderer_args(schedule: str, origin: str) -> list[str]:
 
 
 def _render(schedule: str, *, origin: str = "default") -> subprocess.CompletedProcess[str]:
-    return _run(_renderer_args(schedule, origin))
+    argv = _renderer_args(schedule, origin)
+    if origin == "api":
+        argv.extend(["--deployment-schedule", "0 4 * * *", "--deployment-schedule-origin", "descriptor"])
+    return _run(argv)
 
 
 def _rendered_schedules(document: str) -> list[str]:
@@ -176,7 +179,7 @@ printf 'ok\\n'
         )
         kubectl.chmod(0o755)
         self.env = {
-            **CHILD_ENV,
+            **{key: value for key, value in CHILD_ENV.items() if not key.startswith("CONNECTOR_SCHEDULES_DB_")},
             "ARGO_SCRIPT": str(ARGO),
             "FAKE_KUBECTL_LOG": str(self.kubectl_log),
             "PATH": f"{self.tmp_path}{os.pathsep}{os.environ['PATH']}",

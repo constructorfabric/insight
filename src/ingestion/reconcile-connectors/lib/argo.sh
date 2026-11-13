@@ -153,9 +153,14 @@ _argo_delete_cronworkflow_named() {
 
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
-  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (annotation, descriptor or default)}"
+  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (api, annotation, descriptor or default)}"
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"
+  local deployment_origin="$schedule_origin" deployment_schedule="$schedule"
+  if [[ "$#" -ge 8 && -n "$8" ]]; then
+    deployment_origin="${8%%$'\n'*}"
+    deployment_schedule="${8#*$'\n'}"
+  fi
   local cron_name
   cron_name="$(argo_cron_workflow_name "$connector" "$tenant" "$insight_source_id")" || return 1
   python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
@@ -163,6 +168,8 @@ argo_render_cronworkflow() {
     --connection-name "$connection_name" \
     --schedule "$schedule" \
     --schedule-origin "$schedule_origin" \
+    --deployment-schedule "$deployment_schedule" \
+    --deployment-schedule-origin "$deployment_origin" \
     --tenant "$tenant" \
     --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
@@ -175,8 +182,15 @@ argo_error_reason() {
   printf '%s' "$1" | awk 'BEGIN { RS = "[[:space:]]+" } NF { printf "%s%s", separator, $0; separator = " " }'
 }
 
+argo_log_schedule_release_failure() {
+  local connector="$1" apply_rc="$2" reason="$3"
+  if [[ "${apply_rc}" -eq 0 && "${reason}" == *"schedule lock release failed:"* ]]; then
+    log_line WARN "${connector}: ${reason}"
+  fi
+}
+
 argo_apply_cronworkflow() {
-  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (annotation, descriptor or default)}"
+  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (api, annotation, descriptor or default)}"
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"
 
@@ -188,15 +202,26 @@ argo_apply_cronworkflow() {
   current_name="$(argo_cron_workflow_name "$connector" "$tenant" "$insight_source_id")" || return 1
 
   local rendered apply_out
+  if [[ -n "${CONNECTOR_SCHEDULES_DB_NAME+x}${CONNECTOR_SCHEDULES_DB_NAME_FILE+x}" ]]; then
+    schedule_origin="${8%%$'\n'*}"
+    schedule="${8#*$'\n'}"
+  fi
   rendered="$(argo_render_cronworkflow "$connector" "$connection_name" \
                 "$schedule" "$tenant" "$insight_source_id" \
-                "$dbt_select" "$schedule_origin")" || return 1
-  if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
+                "$dbt_select" "$schedule_origin" "${@:8:1}")" || return 1
+  local apply_command=(kubectl apply -f -)
+  if [[ -n "${CONNECTOR_SCHEDULES_DB_NAME+x}${CONNECTOR_SCHEDULES_DB_NAME_FILE+x}" ]]; then
+    apply_command=(python3 "${ARGO_PY_DIR}/apply_connector_schedule.py" --connector "$connector" --source-id "$insight_source_id")
+  fi
+  if ! apply_out="$(printf '%s' "$rendered" | "${apply_command[@]}" 2>&1)"; then
     printf '%s: kubectl apply failed: %s\n' \
       "$connector" "$apply_out" >&2
     return 1
   fi
   printf '%s\n' "$apply_out"
+  if [[ "$apply_out" == *"schedule lock release failed:"* ]]; then
+    printf '%s\n' "$apply_out" | awk '/schedule lock release failed:/' >&2
+  fi
 
   # INVARIANT: exit 2 means the apply succeeded but a superseded CronWorkflow
   # was not removed — both schedule the sync until it is gone.

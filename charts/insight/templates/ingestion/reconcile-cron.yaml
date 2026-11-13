@@ -57,6 +57,7 @@ spec:
             - "-c"
             - "bash /ingestion/reconcile-connectors/main.sh"
           env:
+            {{- include "insight.connectorSchedulesEnv" . | nindent 12 }}
             # Correlation id stamped on every JSON log line (lib/log.sh):
             # one tick's lines group in Loki via `| json | run_id="..."`.
             - name: RECONCILE_RUN_ID

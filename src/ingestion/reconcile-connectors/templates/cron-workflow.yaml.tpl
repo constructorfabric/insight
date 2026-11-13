@@ -6,7 +6,7 @@
 #                              {connector}-{source_id}-{tenant}-conn
 #   ${SCHEDULES}            — YAML flow array of cron strings, one per
 #                              schedule; precedence resolved by caller
-#                              (Secret annotation > descriptor.schedule > default)
+#                              (API > Secret annotation > descriptor.schedule > default)
 #   ${TENANT}               — tenant slug
 #   ${CRON_NAME}            — object name, from lib/argo.sh:argo_cron_workflow_name
 #                              (Argo caps a CronWorkflow name at 52 characters)
@@ -33,6 +33,7 @@ metadata:
   namespace: ${INSIGHT_NAMESPACE}
   annotations:
     insight.cyberfabric.com/schedule-origin: ${SCHEDULE_ORIGIN}
+    insight.cyberfabric.com/deployment-schedule: ${DEPLOYMENT_SCHEDULE}
   labels:
     app.kubernetes.io/name: insight-reconcile
     app.kubernetes.io/component: connector-sync

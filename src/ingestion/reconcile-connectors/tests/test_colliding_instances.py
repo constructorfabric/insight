@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: The real plan reader, naming, and guard; everything else answers harmlessly.
 STUBS = """
+connector_schedules_read() { _CONNECTOR_SCHEDULES_STATUS=ok; _CONNECTOR_SCHEDULES_RESULT='{"schedules":[]}'; }
 log_init()          { :; }
 log_close()         { :; }
 log_run_summary()   { :; }
@@ -34,6 +35,7 @@ sweep_run()         { :; }
 reconcile_compute_tenant() { printf 'example-tenant'; }
 reconcile_gc_orphans()              { printf 'GC\\n' >> "$CALLS"; }
 reconcile_prune_removed_instances() { printf 'PRUNE\\n' >> "$CALLS"; }
+reconcile_sweep_orphan_schedules()   { :; }
 _reconcile_one_connector()          { printf 'RECONCILE %s %s\\n' "$1" "$8" >> "$CALLS"; }
 """
 
