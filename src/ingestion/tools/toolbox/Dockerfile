@@ -1,4 +1,33 @@
-FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 AS base
+
+# The Python packages install on the build platform into a copy of the target's
+# /usr/local, from target-arch wheels only, so no step here runs under QEMU.
+FROM --platform=$BUILDPLATFORM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 AS deps
+COPY --from=ghcr.io/astral-sh/uv:0.12.0@sha256:606e70c71c852d03f611b1e56a195d08648507018a7057fab82c4974c4eae105 /uv /bin/
+COPY --from=base /usr/local /prefix
+ARG TARGETARCH
+ENV UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
+    UV_NO_CONFIG=1
+
+# dbt at the pin every dbt step reads (scripts/bootstrap-db/pins.env), so the
+# adapter the cluster rig proves is the one the migrate hook runs. certifi is
+# pinned beside it: this layer is served from the registry build cache until
+# the pins or the line change, so a certifi advisory (GHSA-6q48-6c7w-9gw2)
+# only reaches the image through an explicit pin.
+COPY scripts/bootstrap-db/pins.env /tmp/pins.env
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) platform=x86_64-manylinux_2_39 ;; \
+      arm64) platform=aarch64-manylinux_2_39 ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    . /tmp/pins.env; \
+    uv pip install --prefix /prefix --python /usr/local/bin/python3 --python-platform "${platform}" \
+      --only-binary :all: --compile-bytecode --upgrade \
+      "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" "dbt-core==${DBT_CORE_VERSION}" "certifi==2026.10.19"
+
+FROM base
 
 # System tools
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
@@ -22,15 +51,8 @@ RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linu
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$(dpkg --print-architecture)/kubectl" \
     -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
 
-# dbt at the pin every dbt step reads (scripts/bootstrap-db/pins.env), so the
-# adapter the cluster rig proves is the one the migrate hook runs. certifi is
-# pinned beside it: this layer is served from the registry build cache until
-# the pins or the line change, so a certifi advisory (GHSA-6q48-6c7w-9gw2)
-# only reaches the image through an explicit pin.
-COPY scripts/bootstrap-db/pins.env /tmp/pins.env
-RUN . /tmp/pins.env && \
-    pip install --no-cache-dir "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" "dbt-core==${DBT_CORE_VERSION}" "certifi==2026.10.19" && \
-    rm /tmp/pins.env
+COPY --from=deps /prefix/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=deps /prefix/bin /usr/local/bin
 
 # Copy the ingestion project, minus the sample-data seeder: this image runs
 # migrations against real stands, and a demo-data generator does not belong on
