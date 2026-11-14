@@ -38,20 +38,14 @@ fails *before* merge (the `Guards` job in CI):
 python3 scripts/ci/connector_wiring.py
 ```
 
-Worked example of getting the first three wrong at once: issue
-[#2048](https://github.com/constructorfabric/insight/issues/2048) (active-directory).
 Details and fixes in [create.md](workflows/create.md) §3.8, which also carries
 the two data-check catalogs (`data_quality` vs `connector_quality`) and how to
 verify a check's selector resolves.
 
-NEVER regenerate `connectors-config.yaml` wholesale — it overwrites the
-`env:` credential references (HubSpot/Salesforce) with fake `value:` entries.
-Generate one fragment:
+Do not regenerate `connectors-config.yaml` wholesale — it replaces the
+hand-set values in every other connector's entry (URLs, UUIDs, list fields)
+with generated placeholders. Generate one fragment:
 `cd src/ingestion/scripts/bootstrap-db && ./generate-connectors-config.sh '<category>/<name>'`.
-
-NEVER "fix" a legacy non-semver version on a connector that declares no
-`images:` block (`ai/openai`, `collaboration/slack` — both `2026.05.04`). ADR-0015 §"Legacy non-semver values" tolerates them by
-design; they never reach `bump-descriptors`.
 
 ## Command Routing
 
@@ -63,23 +57,23 @@ Parse the user's command and route to the appropriate workflow:
 | `/connector test <name>` | [test.md](workflows/test.md) | Test connector (mock tests, check, discover, read) |
 | `/connector schema <name>` | [schema.md](workflows/schema.md) | Generate JSON schema from real data |
 | `/connector validate <name>` | [validate.md](workflows/validate.md) | Validate package against spec |
-| `/connector build <name>` | Direct | Build CDK connector (Docker → registry/Kind → Airbyte definition) |
+| `/connector build <name>` | Direct | Build the CDK image and register/update its Airbyte source definition; reconcile wires source and connection |
 | `/connector deploy <name>` | [deploy.md](workflows/deploy.md) | Deploy to Airbyte + Argo |
-| `/connector reset <name> <tenant>` | Direct | Delete connection/source/definition, drop Bronze tables, clean state |
+| `/connector reset <name> <tenant>` | Direct | Drop and recreate the connector's Airbyte source through reconcile |
 | `/connector workflow <name>` | [workflow.md](workflows/workflow.md) | Create/customize Argo workflow templates |
 | `/connector logs [job-id\|latest]` | Direct | Show Airbyte job or Argo workflow logs |
 
 ## CDK Build
 
-For `/connector build <name>`, run `{INGESTION_DIR}/airbyte-toolkit/build-connector.sh {CONNECTOR_PATH}`. This builds the Docker image, pushes to registry (or loads into Kind for local dev), and registers/updates the Airbyte source definition. Only for `type: cdk` connectors. Use `--push` and `IMAGE_REGISTRY` env var for remote clusters.
+For `/connector build <name>`, run `{INGESTION_DIR}/reconcile-connectors/lib/cdk-build.sh {CONNECTOR_PATH}`. It builds the image named in `descriptor.yaml` `images.cdk.image`, pushes it with `--push` or else loads it into the Kind cluster `${CLUSTER_NAME:-insight}` when one exists, and registers or updates the Airbyte source definition. Then run `./reconcile-connectors.sh --connector {CONNECTOR_NAME}` to wire the source and connection. Only for `type: cdk` connectors.
 
 ## Connector Reset
 
-For `/connector reset <name> <tenant>`, run `{INGESTION_DIR}/airbyte-toolkit/reset-connector.sh {CONNECTOR_NAME} <tenant>`. This deletes the Airbyte connection, source, and definition, drops the Bronze database in ClickHouse, and cleans state files. Use when schema has breaking changes or a full re-sync is needed.
+For `/connector reset <name> <tenant>` (breaking schema change, full re-sync): delete the connector's K8s Secret (`kubectl delete secret insight-<name>-<source-id> -n insight`), re-apply it with `./secrets/apply.sh`, then run `./reconcile-connectors.sh` — reconcile drops and recreates the source.
 
 ## Airbyte Logs
 
-ALWAYS use `{INGESTION_DIR}/logs.sh` to read Airbyte job logs or Argo workflow logs. NEVER call Airbyte REST API directly for log retrieval.
+Read Airbyte job logs and Argo workflow logs with `{INGESTION_DIR}/logs.sh`, not the Airbyte REST API.
 
 | Use case | Command |
 |----------|---------|
@@ -90,12 +84,12 @@ ALWAYS use `{INGESTION_DIR}/logs.sh` to read Airbyte job logs or Argo workflow l
 | Only dbt step | `./logs.sh <workflow\|latest> dbt` |
 | Follow live | `./logs.sh -f <workflow\|latest>` |
 
-ALWAYS run `logs.sh` from `{INGESTION_DIR}` directory with `KUBECONFIG="${KUBECONFIG:-$HOME/.kube/kind-ingestion}"`.
+Run `logs.sh` from `{INGESTION_DIR}` with `KUBECONFIG` and `INSIGHT_NAMESPACE` set — the script exits when either is unset.
 
-ALWAYS check logs when a sync fails. Workflow failure → check Argo workflow logs first (`./logs.sh <workflow|latest>`), then Airbyte job logs (`./logs.sh airbyte <job-id>`). Common causes: expired credentials in K8s Secret, source API errors, ClickHouse destination unreachable.
+When a sync fails, read the Argo workflow logs first (`./logs.sh <workflow|latest>`), then the Airbyte job logs (`./logs.sh airbyte <job-id>`). Common causes: expired credentials in K8s Secret, source API errors, ClickHouse destination unreachable.
 
 NEVER trust the Airbyte job status alone — it lies in both directions:
-- A job can report `succeeded` with **0 records committed** while the replication workload actually FAILED (e.g. replication pod unschedulable — `FailedScheduling: Insufficient cpu` — or the orchestrator OOM-killed mid-stream). "Green-but-empty" syncs look healthy for days.
+- A job can report `succeeded` with **0 records committed** while the replication workload actually FAILED (e.g. replication pod unschedulable — `FailedScheduling: Insufficient cpu` — or the orchestrator OOM-killed mid-stream).
 - A job can stay `running` forever while the source is silently stalled (e.g. SQLite requests-cache explosion on a heavy substream parent); the Argo `poll` step times out (`Failed`) but the orphaned Airbyte job and replication pod keep spinning — cancel the job AND delete the pod.
 
 The real health signal is per-job `aggregatedStats.recordsCommitted` (jobs API) and bronze freshness (`max(_airbyte_extracted_at)` per table) — check those, not the status column. A sync that commits only the first stream (e.g. bitbucket `repositories`) while later substreams show stale `_airbyte_extracted_at` means the replication died mid-job despite the green status.
@@ -104,11 +98,11 @@ The real health signal is per-job `aggregatedStats.recordsCommitted` (jobs API) 
 
 E2E (end-to-end) sync means running the full pipeline through Argo, not just triggering an Airbyte sync via API. The Argo pipeline includes: Airbyte sync → dbt transformations (Bronze → Silver). Without Argo, dbt models are not executed and Silver tables are not populated.
 
-ALWAYS use `{INGESTION_DIR}/run-sync.sh <connector> <tenant>` for e2e sync. This submits an Argo workflow that runs the complete ingestion pipeline.
+Run an e2e sync with `{INGESTION_DIR}/run-sync.sh <connector> <tenant>`: it submits an Argo workflow that runs the complete ingestion pipeline.
 
-ALWAYS use `./logs.sh -f latest` or `./logs.sh latest` to monitor the Argo workflow (which includes both sync and dbt steps).
+Monitor it with `./logs.sh -f latest` or `./logs.sh latest` — the Argo workflow carries both the sync and the dbt steps.
 
-NEVER consider a raw Airbyte API sync (`/api/v1/connections/sync`) as e2e — it only populates Bronze tables.
+A raw Airbyte API sync (`/api/v1/connections/sync`) is not e2e: it only populates Bronze tables.
 
 | Step | What it does | Tool |
 |------|-------------|------|
@@ -120,7 +114,7 @@ NEVER consider a raw Airbyte API sync (`/api/v1/connections/sync`) as e2e — it
 
 ### Shared Destination
 
-ALWAYS use a single shared ClickHouse destination for all connectors. Do NOT create per-connector destinations.
+All connectors share one ClickHouse destination; do not create per-connector destinations.
 
 Each connection controls its own Bronze namespace via the `namespaceDefinition` and `namespaceFormat` fields:
 
@@ -151,9 +145,9 @@ stringData:
   {field}: {value}                             # fields from connector.yaml connection_specification
 ```
 
-**Discovery**: `connect.sh` discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads connector type from annotation `insight.cyberfabric.com/connector`.
+**Discovery**: reconcile (`reconcile-connectors.sh`) discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads connector type from annotation `insight.cyberfabric.com/connector`.
 
-**Tenant YAML**: Contains only `tenant_id`. No connector config, no credentials — everything comes from K8s Secrets. `insight_tenant_id` is set from tenant YAML `tenant_id`. `insight_source_id` is set from Secret annotation `insight.cyberfabric.com/source-id`.
+**Tenant**: reconcile sets `insight_tenant_id` from `INSIGHT_TENANT_ID`, which the chart's reconcile CronJob fills from `ingestion.reconcile.tenantId`; without it, reconcile falls back to `tenant_id` in the `insight-config` ConfigMap. The local runner's `connections/<tenant>.yaml` holds only `tenant_id` — no connector config, no credentials. `insight_source_id` is set from Secret annotation `insight.cyberfabric.com/source-id`.
 
 **Multi-instance**: Multiple Secrets with the same `connector` annotation create separate Airbyte sources (e.g., two M365 tenants).
 
@@ -165,42 +159,33 @@ stringData:
 
 ### Airbyte Resource Identity
 
-Scripts identify Airbyte resources (definitions, sources, connections) by UUID from the state file — NEVER by name. Name matching is prohibited.
-
-- ID not in state → create resource, save ID to state
-- ID in state but Airbyte returns 404 → delete stale ID, recreate, save new ID
-- Never search by name — multiple resources can share the same name
-- Existing resources: always update config (credentials may have changed since creation)
+State lives in Airbyte itself; there is no local state file. Reconcile finds its definitions, sources and connections by the `insight` connection tag and the `app.kubernetes.io/part-of=insight` Secret label, and looks IDs up at runtime through the Airbyte API. When you look a resource up yourself, go by ID or tag, never by name — several resources can share one name.
 
 ### Password Rotation
 
-When rotating ClickHouse password:
-1. Update K8s Secret → `./secrets/apply.sh --infra-only`
-2. Restart ClickHouse → `kubectl rollout restart deployment/clickhouse -n data` (strategy: Recreate — avoids PVC conflicts)
-3. Sync Airbyte destination → `./scripts/connect.sh <tenant>` (updates destination password from Secret)
+The ClickHouse password is `clickhouse-password` in the `insight-db-creds` Secret of the release namespace (chart value `clickhouse.passwordSecret`). Reconcile writes it into the Bronze destination only when it creates or reconfigures that destination; a changed password alone is not detected (`ab_ensure_destination` skips masked keys), so after a rotation also set the new password on the `clickhouse-bronze` destination in Airbyte.
 
 ## Service Credentials
 
-ALWAYS obtain credentials from K8s Secrets, not from hardcoded values or ConfigMaps.
+Credentials come from K8s Secrets, not from hardcoded values or ConfigMaps.
 
 ### ClickHouse
 
 | Environment | How to get credentials |
 |-------------|----------------------|
-| Any cluster | `kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' \| base64 -d` |
-| Tenant config | `yq '.destination' {INGESTION_DIR}/connections/<tenant>.yaml` |
+| Any cluster | `kubectl get secret insight-db-creds -n insight -o jsonpath='{.data.clickhouse-password}' \| base64 -d` |
 
-Quick test: `kubectl exec -n data deploy/clickhouse -- clickhouse-client --password <password> --query "SELECT currentUser()"`
+ClickHouse is not part of the umbrella chart; the chart value `clickhouse.host` names it. Quick test: `clickhouse-client --host <clickhouse.host> --user <clickhouse.username> --password <password> --query "SELECT currentUser()"`
 
 ### Airbyte
 
 | Environment | How to get credentials |
 |-------------|----------------------|
-| Local (Kind) | API at `http://localhost:8001`, token via `{INGESTION_DIR}/airbyte-toolkit/lib/env.sh` |
+| Local (Kind) | API at `http://localhost:8001` (port-forward) |
 | In-cluster | API at `http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001` |
-| Any cluster | `source {INGESTION_DIR}/airbyte-toolkit/lib/env.sh` → sets `AIRBYTE_API`, `AIRBYTE_TOKEN`, `WORKSPACE_ID` |
+| Any cluster | `export AIRBYTE_URL=<api-url> INSIGHT_NAMESPACE=insight; source {INGESTION_DIR}/reconcile-connectors/lib/airbyte.sh` → `ab_get_token` prints a bearer token, `ab_workspace_id` the workspace ID (set `AIRBYTE_AUTH_SECRET_NAMESPACE` when Airbyte runs in its own namespace) |
 
-Quick test: `curl -s -H "Authorization: Bearer $AIRBYTE_TOKEN" "$AIRBYTE_API/api/v1/health"`
+Quick test: `curl -s -H "Authorization: Bearer $(ab_get_token)" "$AIRBYTE_URL/api/v1/health"`
 
 ### Argo
 
@@ -222,7 +207,7 @@ Quick test: `kubectl get workflows -n argo --no-headers | tail -5`
 
 If `<name>` is not a path, search `src/ingestion/connectors/` for it.
 
-ALWAYS use the full relative path (e.g. `collaboration/m365`, not just `m365`) when calling `register.sh` directly — it resolves `connectors/{path}/connector.yaml`.
+Pass the full relative path (e.g. `collaboration/m365`, not just `m365`) to `tools/declarative-connector/source.sh` — it resolves `connectors/{path}/connector.yaml`.
 
 If `<command>` is omitted, show available commands and existing connectors.
 

@@ -52,7 +52,7 @@ If `validate-strict` passed, these are already satisfied automatically — but e
 - [ ] No `format_datetime(...)` call inside an `AddedFieldDefinition.value` used as a cursor source. That Jinja expression may not render, leaving the literal template as the cursor value. Use native `%ms` / `%s` / `%s_as_float` / `%epoch_microseconds` in `cursor_datetime_formats` to parse epoch values directly from the source field.
 - [ ] Every `record.get('X', {}).get('Y')` chain is replaced with `(record.get('X') or {}).get('Y')`. The `.get(key, default)` default only applies when the key is **missing**; it does NOT apply when the key is present with `null` value, and `None.get(...)` crashes the whole slice.
 - [ ] Source API query syntax has been verified against a real tenant via `source.sh check`. YouTrack, Jira JQL, Salesforce SOQL each have distinct datetime and operator dialects — template substitution can produce syntactically valid but semantically wrong queries that `validate-strict` cannot detect.
-- [ ] No `SubstreamPartitionRouter` parent is a heavy stream (e.g. `fields=*all` / multi-MB responses). The CDK auto-caches parent HTTP responses in SQLite; a heavy parent balloons the cache (observed: 226 MB → silent permanent stall, job "running" with 0 records). Parents must request a minimal field set (pattern: dedicated key-enumeration stream like jira's `jira_issue_keys`, or an inline parent like `_scrum_boards`).
+- [ ] No `SubstreamPartitionRouter` parent is a heavy stream (e.g. `fields=*all` / multi-MB responses). The CDK auto-caches parent HTTP responses in SQLite; a heavy parent balloons the cache until the read stalls silently (job "running" with 0 records). Parents must request a minimal field set (pattern: dedicated key-enumeration stream like jira's `jira_issue_keys`, or an inline parent like `_scrum_boards`).
 - [ ] Every `DatetimeBasedCursor.cursor_field` exists at the **top level** of the emitted record. If the API nests it (Jira `fields.updated`), an `AddFields` hoist is present — otherwise state never advances and every sync silently re-reads the full window (detectable: resume read returns the same count as the first read).
 
 ## Step 2c: Per-stream `read` smoke test (MANDATORY)
@@ -74,9 +74,9 @@ Read connector package files and verify each item:
 - [ ] `connector.yaml` exists (nocode) or `Dockerfile` + `source_<name>/source.py` exists (CDK)
 - [ ] `descriptor.yaml` exists with required fields (name, version, type, schedule, workflow, dbt_select, connection.namespace)
 - [ ] `README.md` exists with prerequisites, K8s Secret fields, streams table, and multi-instance example
-- [ ] K8s Secret example in `secrets/connectors/<name>.yaml.example` with `insight_source_id` annotation
+- [ ] K8s Secret example in `secrets/connectors/<name>.yaml.example` with `insight.cyberfabric.com/source-id` annotation
 - [ ] `dbt/` directory with at least one .sql model and schema.yml
-- [ ] `tests/` directory with `test_<stream>.py` per descriptor stream, `config.py`, and `fixtures/` (mock-server tests per `feature-connector-mock-tests`; fixtures contain NO real customer data)
+- [ ] `tests/` directory with `test_<stream>.py` per descriptor stream, `config.py`, and `fixtures/` (mock-server tests per `create.md` §5.7; fixtures contain NO real customer data)
 
 ### Manifest (nocode)
 - [ ] `version: 7.0.4` or compatible
@@ -93,7 +93,7 @@ Read connector package files and verify each item:
 - [ ] No `AddFields` re-projects a field the payload already carries (snake_case aliases of `emailAddress`, `displayName`, ...). Injected fields are limited to extraction-time values: config, `unique_key`, `stream_partition.*`, cursor hoists. Renames live in dbt.
 - [ ] Schema includes `tenant_id`, `source_id`, `unique_key` as string fields
 - [ ] Nullable types used only where API actually returns null (not all fields)
-- [ ] EVERY top-level stream — including lightweight substream parents added for cache hygiene — carries the full identity stamp (`tenant_id`, `source_id`, `unique_key`). Reconcile (ADR-0015) auto-selects every discovered stream, so "helper" top-level streams land as real bronze tables; the destination keys them on `unique_key` (append_dedup), so a stream without the stamp accumulates unbounded duplicates. Parent streams that must NOT become tables go inline inside `partition_router.parent_stream_configs[].stream` instead (invisible to discover).
+- [ ] EVERY top-level stream — including lightweight substream parents added for cache hygiene — carries the full identity stamp (`tenant_id`, `source_id`, `unique_key`). Reconcile auto-selects every discovered stream, so "helper" top-level streams land as real bronze tables; the destination keys them on `unique_key` (append_dedup), so a stream without the stamp accumulates unbounded duplicates. Parent streams that must NOT become tables go inline inside `partition_router.parent_stream_configs[].stream` instead (invisible to discover).
 
 ### CDK (Python)
 - [ ] `parse_response()` injects `tenant_id`, `source_id`, `unique_key`
@@ -118,7 +118,7 @@ Read connector package files and verify each item:
 
 **Severity**: FATAL — failing this rule means the connector image will silently never be rebuilt in CI, OR reconcile will fail to register the connector. Validate exits 2 on failure.
 
-**Check 1 — `descriptor.yaml.images:` is well-formed (map-style per ADR-0016)**
+**Check 1 — `descriptor.yaml.images:` is well-formed (map-style)**
 
 - `descriptor.yaml` MUST contain an `images:` block that is a YAML map (NOT a list).
 - The map MUST have at least one key. Keys are free-form identifiers; the reserved keys `cdk` and `enrich` have runtime semantics.
@@ -128,19 +128,11 @@ Read connector package files and verify each item:
 
 **Check 2 — No top-level legacy fields**
 
-- `descriptor.yaml` MUST NOT contain top-level `cdk_image:` or `enrich_image:` keys. These were SUPERSEDED by ADR-0016. `yq -r '.cdk_image, .enrich_image' <descriptor>` MUST return `null` on both.
+- `descriptor.yaml` MUST NOT contain top-level `cdk_image:` or `enrich_image:` keys. `yq -r '.cdk_image, .enrich_image' <descriptor>` MUST return `null` on both.
 
-**Check 3 — paths-filter exclusion in CI**
+**Check 3 — no per-connector CI entry**
 
-- `.github/workflows/build-images.yml` `changes` job's paths-filter MUST contain an entry for the connector's snake_case slug whose includes match the connector dir AND explicitly exclude `descriptor.yaml`:
-
-  ```yaml
-  <slug>:
-    - 'src/ingestion/connectors/<category>/<name>/**'
-    - '!src/ingestion/connectors/<category>/<name>/descriptor.yaml'
-  ```
-
-  Without the exclusion, the descriptor-bump commit re-triggers the image build and the workflow loops forever.
+- `.github/workflows/build-images.yml` needs no entry for the connector: its `discover-images` job reads every descriptor's `images:` map and ignores a change to `descriptor.yaml` alone, which keeps the bump-descriptors commit from re-triggering the build.
 
 **Check 4 — Reserved-key runtime requirements**
 
@@ -150,9 +142,9 @@ Read connector package files and verify each item:
 
 **Check 5 — Strict semver `version:` (CI bump precondition)**
 
-- Because the CI `bump-descriptors` job bumps `descriptor.version` by one minor every time an image rebuilds (per ADR-0016 + ADR-0015), the field MUST be on strict-semver form `MAJOR.MINOR.PATCH` from day one. The matcher is `.github/workflows/scripts/bump-descriptor-version.sh --descriptor <path> --print-only` succeeding (exit 0) — it prints the version it *would* write and leaves the file untouched.
+- Because the CI `bump-descriptors` job bumps `descriptor.version` by one minor every time an image rebuilds, the field MUST be on strict-semver form `MAJOR.MINOR.PATCH` from day one. The matcher is `.github/workflows/scripts/bump-descriptor-version.sh --descriptor <path> --print-only` succeeding (exit 0) — it prints the version it *would* write and leaves the file untouched.
 - `bump-descriptors` fires **only on the push to `main`**, so this check failing does NOT fail the PR on its own. Run Check 8 (the wiring guard), which does.
-- Applies to descriptors that declare an `images:` block. Descriptors without one never reach `bump-descriptors`; legacy non-semver values there (`ai/openai`, `collaboration/slack`) are tolerated per ADR-0015 §"Legacy non-semver values" — report as a warning, not a failure.
+- Applies to descriptors that declare an `images:` block; descriptors without one never reach `bump-descriptors`.
 - Each of MAJOR, MINOR, PATCH MUST be `0` or a non-zero digit followed by more digits (no leading zeros — semver.org §2).
 - NO `v` prefix, NO pre-release suffix, NO build metadata.
 - Examples that PASS: `1.0.0`, `0.1.0`, `10.20.30`, `100.0.0`.
@@ -160,11 +152,10 @@ Read connector package files and verify each item:
 
 **Output on failure** (one bullet per missing check):
 
-- `Connector <name>: missing descriptor.images: block (must be a map with at least one key) — see ADR-0016.`
-- `Connector <name>: top-level cdk_image:/enrich_image: still present — must be removed (ADR-0011/0014 SUPERSEDED).`
+- `Connector <name>: missing descriptor.images: block (must be a map with at least one key).`
+- `Connector <name>: top-level cdk_image:/enrich_image: still present — must be removed.`
 - `Connector <name>: images.<key> missing required field (name|dockerfile|context|image).`
 - `Connector <name>: images.<key>.dockerfile/<context> does not resolve to an existing file/directory.`
-- `Connector <name>: paths-filter for <slug> does not exclude descriptor.yaml; descriptor-bump commit will infinite-loop.`
 - `Connector <name>: images.enrich present but no chart workflow template references <connector>_enrich_image parameter.`
 - `Connector <name>: descriptor.version is not strict semver MAJOR.MINOR.PATCH — CI bump-descriptors will fail loud on next image rebuild. Got: '<value>'. Fix to e.g. "1.0.0".`
 
@@ -185,8 +176,8 @@ python3 scripts/ci/connector_wiring.py
 ```
 
 - MUST exit 0. Covers Check 5 (semver, for image-bearing descriptors), Check 6, Check 7, and the `class_<X>.sql` `depends_on` edge in one pass.
-- Warnings are acceptable and do not fail it: an empty `images.*.image` on a brand-new connector is expected (the first `main` build patches it), and legacy non-semver versions on image-less descriptors are tolerated by ADR-0015.
-- Runs in CI as the `connector-wiring-guard` job in `.github/workflows/ci.yml`. Checks 5–7 otherwise surface only *after* merge, so this is the one that actually blocks a bad PR.
+- Warnings are acceptable and do not fail it: an empty `images.*.image` on a brand-new connector is expected (the first `main` build patches it).
+- Runs in CI as a step of the `guards` job in `.github/workflows/ci.yml`. Checks 5–7 otherwise surface only *after* merge, so this is the one that actually blocks a bad PR.
 
 **Output on failure**:
 
@@ -249,8 +240,8 @@ evidence model reads its class, confirm the README says so and skip this section
 - [ ] A `/metric-test` fixture seeds bronze and asserts the connector's contribution through `/v1/metric-results`.
 
 ### Credentials Template
-- [ ] `credentials.yaml.example` lists all required fields
-- [ ] `insight_source_id` is included
+- [ ] `src/ingestion/secrets/connectors/<name>.yaml.example` lists every required `stringData` field
+- [ ] It carries the `insight.cyberfabric.com/source-id` annotation and no `insight_tenant_id` / `insight_source_id` key
 - [ ] No real credentials in any tracked file
 
 ### Repo-wide wiring (EVERY connector — Checks 6-8)

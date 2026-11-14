@@ -27,7 +27,7 @@ user, P2 one control with a workaround. Not screen prominence.
 
 | Scenario | Verdict | Basis |
 |---|---|---|
-| **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer, including the `peer` view and the `ai.cost` currency metric. Reach, honesty and suppression are assertable; **values are not** — the seed publishes no expected values |
+| **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer, including the `peer` view and the `ai.cost` currency metric. Reach, honesty and suppression are assertable; **values are not**, beyond the manifest's `golden_metrics` task totals that `test_golden_metrics.py` already asserts |
 | **S-2** Analysis and diagnosis | **No surface** | no conclusion, bottleneck, anomaly or forecast endpoint exists |
 | **S-3** Recommendations and validation | **No surface** | no recommendation object, no validation window |
 | **S-4** Dashboards and exploration | **Partial** | `/v1/queries` CRUD + run, `/v1/metric-drilldown` exist; saved/shared *views* are an Appendix C proposal, not a surface |
@@ -60,14 +60,13 @@ the next person to read the product doc will otherwise design them again.
 | Clause | Proved by |
 |---|---|
 | §S-1 / §1.1 ADMIN "never gains data visibility implicitly from administrative rights" | `test_operator_sees_nobody_in_the_org_chart` |
-| §1.1, the converse — seniority does **not** carry administrative rights | `test_admin_listing_is_403_for_a_realm_admin_without_the_grant` — *"Holding `insight-admin` in the realm is NOT administrative authority."* |
+| §1.1, the converse — seniority does **not** carry administrative rights | `test_every_admin_gated_operation_is_403_without_the_grant` — every admin-gated operation answers 403 to `realm_admin_session`, the CEO |
 | §S-9 LEAD "never sideways" | `test_two_leads_of_different_teams_see_different_people`, `test_subchart_of_someone_out_of_scope_is_404_not_403` |
 | §1.1 IC "How far they see: themselves" | `test_org_visibility_scope_differs_by_persona` (a plain member sees nobody in the org chart) |
 | §5 R5 "the boundary holds by construction" | `test_metric_results_403_for_a_person_out_of_scope`, `test_a_person_outside_the_callers_scope_is_404_not_403` |
 | §5 R5 tenant half | `test_only_the_people_the_caller_may_see_come_back`, `test_an_email_in_another_tenant_is_404` |
 | §S-8 IC "Be one person, not four" | `test_person_id_and_email_are_two_spellings_of_one_identity` |
 | §S-9 ADMIN "grants the five kinds of data one by one" (one of them) | `test_a_visibility_grant_changes_what_the_grantee_can_see` |
-| §5 R1 "never a zero for missing data" (UI half) | `test_the_personal_dashboard_renders_every_metric_domain`, `test_the_team_view_lists_every_report_the_roster_declares` |
 | §S-1 LEAD privacy of a mixed request | `test_one_hidden_person_refuses_the_whole_request` — a *partial* answer would disclose which ids are visible |
 
 **Appendix C, first open point** — "Administrative rights and data visibility …
@@ -146,9 +145,9 @@ partially covered · `[VERIFIED]`
 
 **Source** §5 R1, §S-7 "Not this". **Oracle** the contract.
 
-**R1-01 — an unmeasured metric answers `null`, never `0`.** The UI half is
-covered; the API half is not, and the two are indistinguishable on screen — a
-backend returning `0` and a frontend rendering `—` for falsy look identical.
+**R1-01 — an unmeasured metric answers `null`, never `0`.** The two halves are
+indistinguishable on screen — a backend returning `0` and a frontend rendering
+`—` for falsy look identical.
 API `POST /v1/metric-results` · P1 · new · `[VERIFIED]`
 
 **R11-01 — every metric definition carries a `schema_status`, and one in
@@ -179,10 +178,10 @@ two `/v1/metric-results` reads · P1 · new · `[SUPPORTED]`
 **R12-01 — `n` reflects the cohort, not the request: asking about one person
 and about five returns the same `n` for that person.** The obvious claim — the
 same cohort at team scope versus organization scope — **cannot be requested**:
-a peer request carries only `cohort_key`, every one of the 60 definitions
+a peer request carries only `cohort_key`, every definition that declares one
 declares `org_unit` and validation refuses any other value, and the cohort CTE
 selects on the *target's* `cohort_id` independently of `entity.ids`
-(`analytics/src/domain/metric_results/compiler.rs:540-546`). What survives is narrower and still worth having,
+(the `cohort` CTE in `analytics/src/domain/metric_results/compiler.rs`). What survives is narrower and still worth having,
 because counting the requested entities is exactly how a naive implementation
 gets this wrong. API `POST /v1/metric-results` · P1 · new · `[VERIFIED]`
 
@@ -200,14 +199,13 @@ seeded roster without a seed change; check before assuming otherwise. API
 **S1-I-03 — an IC asking for `ai.cost` about a colleague is refused.** There is
 no cost *endpoint*, which is why this looked unreachable at first; `ai.cost` is
 an ordinary currency metric on the ordinary routes
-(`registry.yaml:230-242`). API `POST /v1/metric-results` · P0 · new ·
+(`ai.cost` in `registry.yaml`). API `POST /v1/metric-results` · P0 · new ·
 `[VERIFIED]`
 
 **R6-01 — the `ai.cost` definition states the seat/usage separation rather than
 presenting one blended figure.** Its `explanation` already carries the wording —
-*"Includes usage a seat or subscription already covered, and excludes seat and
-subscription fees, so it is not the amount invoiced"* — so the claim is that it
-survives, not that it appears. API `GET /v1/metric-definitions` · P2 · new ·
+*"It includes usage a seat already covered and excludes seat fees, so it is not
+the invoiced amount"* — so the claim is that it survives, not that it appears. API `GET /v1/metric-definitions` · P2 · new ·
 `[VERIFIED]`
 
 ### No default ranking
@@ -215,8 +213,8 @@ survives, not that it appears. API `GET /v1/metric-definitions` · P2 · new ·
 **Source** §5 R4.
 
 **R4-01 — the team view does not arrive sorted by any metric value and exposes
-no composite score.** An absence claim, so weak alone: pair it with the
-existing positive that every report is named, so the two together distinguish
+no composite score.** An absence claim, so weak alone: pair it with a
+positive claim that every report is named, so the two together distinguish
 "correctly not ranking" from "rendered nothing". UI · P2 · new · `[SUPPORTED]`
 
 ---
@@ -231,14 +229,13 @@ enforcement points:
 
 | Where | Constant | Value | Below it |
 |---|---|---|---|
-| Backend | `MIN_PEER_N` — `analytics/src/domain/metric_results/compiler.rs:25` | **5** | `n` is still reported; `p25`/`median`/`p75`/`min`/`max` come back `NULL` |
+| Backend | `MIN_PEER_N` — `analytics/src/domain/metric_results/compiler.rs` | **5** | `n` is still reported; `p25`/`median`/`p75`/`min`/`max` come back `NULL` |
 | Frontend | `MIN_COHORT` — `src/frontend/src/lib/insight/within-team-peer.ts:17` | **4** | the client-synthesised peer view yields no stats |
 
 The backend one is compiled into the peer SQL for every percentile
-(`analytics/src/domain/metric_results/compiler.rs:606-610`, `:1518`), and its comment is explicit that the placement
+(`analytics/src/domain/metric_results/compiler.rs`), and its comment is explicit that the placement
 is the point: *"Enforced here, server-side, so every consumer inherits it."* So
-§5 rule 5 ("by construction, not as a filter a screen applies") **is** satisfied
-— contrary to an earlier reading of this file.
+§5 rule 5 ("by construction, not as a filter a screen applies") **is** satisfied.
 
 The live question is the number. A cohort of exactly four measured members gets
 client-side statistics and `NULL` API statistics: the same person sees a median
@@ -271,7 +268,7 @@ correction surviving the next sync" needs a sync to run, and this stand declares
 | Possibly nothing | the negative case for §5 R10 | `MIN_PEER_N` counts *measured* members per metric, not headcount, so a sparsely-recorded metric may already fall below 5. Check before changing the seed |
 | `other_tenant_lead` has no activity and no org edge | any cross-tenant claim about *data* rather than *identity* | deliberate — they exist only so refusal has a caller |
 | `ingestion: no` | S-7 readiness, R3 lineage, R7 read-only-towards-sources, identity-correction survival | compose seeds silver/gold directly |
-| No expected metric values | every value assertion, in every scenario | deliberate; an expectation must be computable from the seed inputs, not read back out of the gold layer |
+| Expected metric values cover only the `golden_metrics` task totals | every other value assertion, in every scenario | an expectation must be computable from the seed inputs, not read back out of the gold layer; `golden_metrics` is the one set the seeder computes |
 | Which of the five grant kinds have distinct enforcement points | S9-E-02 | read the access model |
 
 ---

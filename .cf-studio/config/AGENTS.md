@@ -6,7 +6,6 @@ These rules are loaded alongside the generated rules in `{cf-studio-path}/.gen/A
 ## Project Documentation (auto-configured)
 
 <!-- auto-config:docs:start -->
-ALWAYS open and follow `docs/CONNECTORS_REFERENCE.md` WHEN writing or reviewing connector specifications, data schemas, or Bronze/Silver/Gold pipeline tables
 <!-- auto-config:docs:end -->
 
 ## Project Rules (auto-configured)

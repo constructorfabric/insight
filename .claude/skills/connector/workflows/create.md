@@ -72,7 +72,7 @@ streams:
 
 concurrency_level:
   type: ConcurrencyLevel
-  default_concurrency: 1
+  default_concurrency: 4
 
 spec:
   ...
@@ -201,15 +201,15 @@ MUST NOT:
 - Put template strings in request params that collide with API datetime dialects. YouTrack `updated: ` expects ISO 8601 with `T` separator, no braces, no spaces. Jira JQL expects `"YYYY-MM-DD HH:MM"` with space, no T. Always run `source.sh check <tenant>` against a real instance to confirm.
 - Convert epoch-millisecond cursor fields via a transformation like `"{{ format_datetime(record['updated'] / 1000, '%Y-%m-%dT%H:%M:%S') }}"` in `AddedFieldDefinition.value`. The value does not reliably interpolate before `cursor.observe()` sees it, and you'll get a runtime error with the literal Jinja template as the cursor value. Use Airbyte's native `%ms` (or `%s`, `%s_as_float`, `%epoch_microseconds`) token in `DatetimeBasedCursor.cursor_datetime_formats` instead. See `src/ingestion/tools/declarative-connector/README.md` §"Epoch millisecond cursors" for the exact pattern.
 - Route substreams through nullable parent fields (e.g. `parent_key: id_readable` / `record.get('idReadable')`). Use the parent's stable internal id (`record['id']`, surfaced as `youtrack_id` etc.). A `null` from the API silently routes to `.../None/<endpoint>` which 404s and drops the entire partition.
-- Use a heavy stream (large per-record payloads, e.g. Jira `fields=*all` + `expand=names` ≈ 2 MB/response on ~1000-field instances) as a `SubstreamPartitionRouter` parent. The CDK **auto-caches every parent's HTTP responses in a SQLite requests-cache**; with multi-MB responses the cache balloons (observed: 226 MB after ~108 responses) and the read stalls silently — job stays "running", CPU busy, **0 records emitted, forever**. Instead, split roles: add a dedicated lightweight key-enumeration parent stream that requests a minimal field set (e.g. `fields: updated` — id/key arrive top-level for free) and point all children at it; keep the full-payload stream as a plain emitter (non-parent streams are not cached). This mirrors the official `source-jira` (`board_issues` parent uses `fields: ['key','created','updated']`; only the terminal `issues` emitter uses `*all`). Reference implementation: `jira_issue_keys` in `task-tracking/jira/connector.yaml`.
+- Use a heavy stream (large per-record payloads, e.g. Jira `fields=*all` + `expand=names`) as a `SubstreamPartitionRouter` parent. The CDK **auto-caches every parent's HTTP responses in a SQLite requests-cache**; with multi-MB responses the cache balloons and the read stalls silently — job stays "running", CPU busy, **0 records emitted, forever**. Instead, split roles: add a dedicated lightweight key-enumeration parent stream that requests a minimal field set (e.g. `fields: updated` — id/key arrive top-level for free) and point all children at it; keep the full-payload stream as a plain emitter (non-parent streams are not cached). This mirrors the official `source-jira` (`board_issues` parent uses `fields: ['key','created','updated']`; only the terminal `issues` emitter uses `*all`). Reference implementation: `jira_issue_keys` in `task-tracking/jira/connector.yaml`.
 
-- Set `concurrency_level.default_concurrency: 1`. With a single worker the concurrent CDK **self-deadlocks** once one sync generates ≥ ~10k partitions (the CDK futures limit): the only worker thread runs `generate_partitions` and throttles on "futures limit reached" (`partition_enqueuer.py`), while the partition-read futures it waits on have no other worker to run them. Symptom: CPU-busy spin, zero I/O, zero records, forever — and the records counter freezing at exactly 10000 is the fingerprint. Hit in production by jira (`jira_issue_history` full-window fan-out) and confluence (`wiki_page_versions`). Use `default_concurrency: 4` (verified: the same full-window run that deadlocked at 1 emitted 4208 records in 75 s at 4).
+- Set `concurrency_level.default_concurrency: 1`. With a single worker the concurrent CDK **self-deadlocks** once one sync generates ≥ ~10k partitions (the CDK futures limit): the only worker thread runs `generate_partitions` and throttles on "futures limit reached" (`partition_enqueuer.py`), while the partition-read futures it waits on have no other worker to run them. Symptom: CPU-busy spin, zero I/O, zero records, forever — and the records counter freezing at exactly 10000 is the fingerprint. Full-window fan-out streams (e.g. `jira_issue_history`, `wiki_page_versions`) can reach that partition count. Use `default_concurrency: 4`.
 
-Substream-parent rules (each one was a production incident):
-- Reconcile auto-selects **every** discovered stream (ADR-0015) — there is no "helper, don't sync it" escape for top-level streams. A lightweight parent defined at top level WILL land as a bronze table, so it MUST carry the standard `tenant_id`/`source_id`/`unique_key` stamp like every other stream (catalog normalization fails on a keyless stream). Alternative: define the parent **inline inside `partition_router.parent_stream_configs[].stream`** (see `_scrum_boards` inside jira's `jira_sprints`) — inline parents are invisible to `discover`, so no table appears; they are still response-cached, so keep them lightweight too.
+Substream-parent rules:
+- Reconcile auto-selects **every** discovered stream — there is no "helper, don't sync it" escape for top-level streams. A lightweight parent defined at top level WILL land as a bronze table, so it MUST carry the standard `tenant_id`/`source_id`/`unique_key` stamp like every other stream (catalog normalization fails on a keyless stream). Alternative: define the parent **inline inside `partition_router.parent_stream_configs[].stream`** (see `_scrum_boards` inside jira's `jira_sprints`) — inline parents are invisible to `discover`, so no table appears; they are still response-cached, so keep them lightweight too.
 - The `cursor_field` of `DatetimeBasedCursor` is read from the **top level** of the emitted record. If the API nests it (Jira `/search/jql` returns `fields.updated`), hoist it via `AddFields` (`value: "{{ (record.get('fields') or {}).get('updated') }}"`) — otherwise the cursor never observes values and state never advances, silently re-reading the full window every sync.
 
-NOTE on integer-typed slots: Airbyte declarative CDK accepts BOTH integers AND Jinja-interpolated strings for `OffsetIncrement.page_size`, `CursorPagination.page_size`, and similar slots — `page_size: "{{ config.get('x_page_size', 100) }}"` is valid and recommended for config-driven pagination. (Earlier guidance in this file was wrong; the strict validator's "literal integer" rejection in our YouTrack work was a downstream symptom of a different `$ref` issue, not of templated page_size.)
+NOTE on integer-typed slots: Airbyte declarative CDK accepts BOTH integers AND Jinja-interpolated strings for `OffsetIncrement.page_size`, `CursorPagination.page_size`, and similar slots — `page_size: "{{ config.get('x_page_size', 100) }}"` is valid and recommended for config-driven pagination.
 
 See `src/ingestion/tools/declarative-connector/README.md` for the full Builder-UI rules list and datetime pitfalls.
 
@@ -232,12 +232,9 @@ connection:
 > such descriptors to `bump-descriptor-version.sh`, which hard-fails on them.
 >
 > That job runs **only on the push to `main`, never on the PR** — so a bad
-> version passes review green and breaks *after* merge, where nobody is
-> watching. This is exactly how issue #2048 happened: the active-directory
-> connector shipped `version: "1.0"` copied from an older revision of this very
-> template, `bump-descriptors` aborted post-merge, `images.cdk.image` was never
-> patched, and the connector stayed undeployable. A PR that is green is NOT
-> evidence your descriptor is on-spec — run the local guard in §3.8.
+> version passes review green and breaks *after* merge: `bump-descriptors`
+> aborts, `images.cdk.image` is never patched, and the connector stays
+> undeployable. Run the local guard in §3.8 before opening the PR.
 
 All streams from the manifest are synced. Sync mode is auto-detected by Airbyte discover (`incremental` if supported, otherwise `full_refresh`).
 
@@ -268,7 +265,7 @@ Rules:
 - Labels: `app.kubernetes.io/part-of: insight`
 - Annotations: `insight.cyberfabric.com/connector: <name>`, `insight.cyberfabric.com/source-id: <name>-main`
 - `stringData` keys MUST match `spec.connection_specification` property names (with source-specific prefixes)
-- Do NOT include `insight_tenant_id` or `insight_source_id` — these are injected by `connect.sh`
+- Do NOT include `insight_tenant_id` or `insight_source_id` — reconcile injects these
 - Do NOT include `username`/`password` if using `BasicHttpAuthenticator` — these are Builder artifacts
 
 #### 3.4 `README.md` — Connector documentation
@@ -349,7 +346,7 @@ SELECT
     unique_key,
     -- source-specific field mappings
     '<connector_name>' AS source
-FROM {{ source('<connector_name>', '<stream_name>') }}
+FROM {{ source('bronze_<snake>', '<stream_name>') }}
 {% if is_incremental() %}
 WHERE <cursor_field> > (SELECT max(<mapped_field>) FROM {{ this }})
 {% endif %}
@@ -493,8 +490,7 @@ counts in a measure only when that branch accepts its rows.
   2. **The `depends_on` is hard.** Once added, the class model cannot build
      unless your staging model does — and your staging model cannot build
      unless your bronze database exists, which requires the
-     `connectors-config.yaml` entry from §3.8 step 1. Adding this edge without
-     that entry is precisely the #2048 failure.
+     `connectors-config.yaml` entry from §3.8 step 1.
 - **Layer A — gold evidence.** In `src/ingestion/gold/<family>_metric_evidence.sql`:
   - **Existing measure:** read the branch that emits each measure the connector
     should feed and confirm its filters and joins accept the connector's rows
@@ -597,26 +593,11 @@ images:
 - `context` — build context path, RELATIVE to connector directory, with leading `./` (`./` alone means connector root).
 - `image` — full image reference. CI patches this field on every successful push. Empty string `""` is allowed for not-yet-published images.
 
-**No top-level `cdk_image:` or `enrich_image:` fields.** ADR-0011 and ADR-0014 are SUPERSEDED; CI rejects any descriptor that carries these legacy fields.
+**No top-level `cdk_image:` or `enrich_image:` fields.** CI rejects any descriptor that carries these legacy fields.
 
-### 2. CI build wiring (paths-trigger only — NO per-image job)
+### 2. CI build wiring (none — discovery is automatic)
 
-Build identity (`name`, `dockerfile`, `context`) is read from your descriptor at job time. You do NOT add a per-image job to `.github/workflows/build-images.yml` — the workflow's `discover` step finds your connector automatically.
-
-What you DO need to add:
-
-- In the workflow's `on.push.paths` and `on.pull_request.paths` lists, ensure `src/ingestion/connectors/<category>/<name>/**` is covered (typically already covered by `src/ingestion/**`).
-- In the `changes` job's paths-filter, add a per-connector flag that ALSO excludes `descriptor.yaml` (recursion prevention — the bump-descriptors commit patches descriptor.yaml and the flag must NOT re-fire on it):
-
-  ```yaml
-  <slug>:
-    - 'src/ingestion/connectors/<category>/<name>/**'
-    - '!src/ingestion/connectors/<category>/<name>/descriptor.yaml'
-  ```
-
-  The `<slug>` is the connector's snake_case identifier.
-
-- In the `discover` step's filter logic, ensure your connector's `images[].context` paths are evaluated against the changed-file list — `discover` builds the matrix only for entries whose `context` directory had changes.
+Build identity (`name`, `dockerfile`, `context`) is read from your descriptor at job time. `.github/workflows/build-images.yml` needs no per-connector edit: its `discover-images` job scans every descriptor's `images:` map, builds an entry when a changed path lives under `<connector_dir>/<context>/`, and ignores a change to `descriptor.yaml` alone — that exclusion stops the bump-descriptors commit from re-triggering the build. The workflow's `on.push.paths` already covers `src/ingestion/**`.
 
 If a connector has both `images.cdk` (`context: .`) and `images.enrich` (`context: ./enrich`), a change inside `enrich/**` rebuilds only the enrich image; a change elsewhere in the connector dir rebuilds only the cdk image; a change touching both areas rebuilds both. `discover` handles this with no per-connector code.
 
@@ -637,13 +618,11 @@ for connector_dir in unique(discover.matrix[].connector_dir):
     --descriptor "${connector_dir}/descriptor.yaml"
 ```
 
-The minor version bump makes reconcile classify the diff as `bump_kind: minor` per ADR-0015 → catalog re-discovery on the next deploy, no `dbt --full-refresh`.
+The minor version bump makes reconcile classify the diff as `bump_kind: minor` → catalog re-discovery on the next deploy, no `dbt --full-refresh`.
 
 **Strict-semver gate (FATAL)**: `bump-descriptor-version.sh` rejects values that aren't strict semver `MAJOR.MINOR.PATCH` — no leading zeros, no `v` prefix, no pre-release suffix, no two-segment forms. Date-style legacy values like `2026.05.04` and two-segment like `1.0` fail loud, halting the CI job.
 
-Because that job runs **only on the push to `main`**, a bad version does not fail your PR — it fails after merge and leaves `images.<key>.image` empty, so reconcile WARN+skips the connector and it never deploys (issue #2048). Verify locally before merge with the guard in §3.8; do NOT rely on a green PR.
-
-Existing descriptors that carry legacy non-semver values (`ai/openai`, `collaboration/slack` — both `2026.05.04`) are tolerated in place per ADR-0015 §"Legacy non-semver values": they declare no `images:` block, so `bump-descriptors` never sees them. Do NOT "fix" them as drive-by work — reconcile classifies legacy→semver as `bump_kind: migration`, and churning a live connector's version buys nothing.
+Because that job runs **only on the push to `main`**, a bad version does not fail your PR — it fails after merge and leaves `images.<key>.image` empty, so reconcile WARN+skips the connector and it never deploys. Verify locally before merge with the guard in §3.8; do NOT rely on a green PR.
 
 No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` plus a strict-semver `version:` IS your wiring.
 
@@ -657,15 +636,14 @@ yq '.images' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # conf
 yq '.cdk_image, .enrich_image' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # MUST return null (no top-level legacy fields)
 ```
 
-`connector-images-triad` is the *named intent* in ADR-0016 for checking the descriptor and paths-filter together; it is documented in `workflows/validate.md` but has no standalone implementation. The executable gate is `scripts/ci/connector_wiring.py` (§3.8) — use that, and treat the triad wording as the spec it enforces.
+`workflows/validate.md` Rule `connector-images-block` lists the descriptor checks. The executable pre-merge gate is `scripts/ci/connector_wiring.py` (§3.8).
 
 ## Phase 3.8: Repo-wide wiring (EVERY connector, nocode and cdk)
 
 A connector package can be complete and still be *half-landed*: correct on its
 own, but not registered in the repo-wide files that other machinery iterates.
-Issue #2048 is the worked example — the package was fine, two registry edits
-were missing, and the result was a broken `bootstrap-db.sh` for every developer
-plus an undeployable connector.
+A missing registry edit breaks `bootstrap-db.sh` for every developer and leaves
+the connector undeployable.
 
 ### 1. Register in `connectors-config.yaml` (REQUIRED — no exceptions)
 
@@ -704,10 +682,9 @@ siblings use:
 grep -rn '<col>' src/ingestion/connectors/*/*/dbt/*__<class>.sql
 ```
 
-In #2048 active-directory used `CAST(NULL AS Nullable(UUID)) AS manager_person_id`
-while ms-entra used `Nullable(String)` — `silver.class_people` failed to build at
-all. Note that agreement is per column: `org_unit_id` legitimately IS
-`Nullable(UUID)` in all four HR sources.
+Agreement is per column: one source's `CAST(NULL AS Nullable(UUID)) AS <col>`
+against a sibling's `Nullable(String)` breaks the class, while a column that is
+`Nullable(UUID)` in every source is fine.
 
 ### 3. Give the connector its own data checks (`connector_quality`)
 
@@ -729,7 +706,7 @@ table.
 The file goes in `src/ingestion/dbt/tests/<domain>/assert_<subject>_<rule>.sql`
 next to the other checks of that domain (the connector's own directory when it
 has one, e.g. `tests/jira/`, otherwise the domain's — `tests/task/`,
-`tests/git/`, `tests/collab/`). Write the check with BOTH tags — the second is
+`tests/git/`, `tests/collaboration/`). Write the check with BOTH tags — the second is
 the connector's slug:
 
 ```jinja
@@ -799,14 +776,8 @@ dbt ls --profiles-dir . --select "tag:connector_quality,tag:<connector-name>"
 dbt ls --profiles-dir . --select "tag:connector_quality,tag:<other-connector>"
 ```
 
-Worked example of getting this wrong: the github connector's
-`assert_issue_link_sets_are_complete` was written, left untagged, and therefore
-ran nowhere — a check that cannot report is indistinguishable from one that
-finds nothing. PR
-[#3352](https://github.com/constructorfabric/insight/pull/3352) introduced the
-`connector_quality` catalog, and commit `82552ac9` fixed the selector from a
-space-separated list (a UNION, which ran every connector's checks on every
-connector's sync) to the intersection above.
+A space-separated selector is a UNION, not an intersection: it runs every
+connector's checks on every connector's sync.
 
 ### 4. Run the wiring guard before you open the PR
 
@@ -873,7 +844,7 @@ If `validate-strict` passes but `validate` fails, there is a runtime problem —
 
 ```bash
 ./tools/declarative-connector/source.sh discover <category>/<name> <tenant>
-./airbyte-toolkit/generate-schema.sh <name>
+./tools/declarative-connector/generate-schema.sh <name> <tenant>
 ```
 
 This saves real JSON schemas to `connectors/<category>/<name>/schemas/`.
@@ -1016,7 +987,7 @@ Shared harness: `src/ingestion/tests/connectors/` (`get_source`, `read_stream`, 
 
 **Fixture rules**: every response body lives in `fixtures/*.json` — no inline bodies, regardless of size; tests load them with `load_fixture(__file__, "name.json", **overrides)` and override only the fields the case exercises. Take the response *shape* from the real payloads captured in the §5.6 read logs; replace every value (ids, emails, hostnames, tokens) with synthetic ones. NEVER commit real customer data.
 
-For every stream, cover each row of the coverage matrix whose precondition the manifest satisfies (full matrix in the spec, §"Stream Coverage Matrix"):
+For every stream, cover each row of the coverage matrix whose precondition the manifest satisfies:
 
 | Case | Required when |
 |---|---|
@@ -1095,13 +1066,11 @@ Completed:
   ✓ Data read locally — all mandatory fields present
   ✓ Mock-server tests written in tests/ and green (coverage matrix satisfied)
 
-Repo-wide wiring (EVERY connector — per Phase 3.8; skipping these is how
-issue #2048 broke bootstrap-db for everyone):
+Repo-wide wiring (EVERY connector — per Phase 3.8):
   ✓ `descriptor.yaml` `version:` is strict semver MAJOR.MINOR.PATCH
        (three components — "1.0" is FATAL and only fails AFTER merge)
   ✓ Entry added to scripts/bootstrap-db/connectors-config.yaml via
-       `./generate-connectors-config.sh '<category>/<name>'` (fragment only —
-       never regenerate the whole file, it clobbers the env: credential refs)
+       `./generate-connectors-config.sh '<category>/<name>'` (fragment only)
   ✓ If contributing a `silver:class_<X>` model: column types identical to the
        sibling sources (Code 386 NO_COMMON_TYPE otherwise) AND the
        `-- depends_on:` edge added to class_<X>.sql
@@ -1113,16 +1082,12 @@ issue #2048 broke bootstrap-db for everyone):
   ✓ `python3 scripts/ci/connector_wiring.py` exits 0
 
 If your connector ships a Dockerfile (CDK or enrich sidecar), also verify
-the descriptor + CI wiring (per Phase 3.7 and ADR-0016):
+the descriptor wiring (per Phase 3.7):
   ✓ `images:` map-style block added to descriptor.yaml (key per Dockerfile,
        4 fields each: name/dockerfile/context/image)
   ✓ NO top-level `cdk_image:` or `enrich_image:` fields in descriptor.yaml
-       (these were removed by ADR-0016 superseding ADR-0011 and ADR-0014)
-  ✓ paths-filter for the connector slug in .github/workflows/build-images.yml
-       excludes `descriptor.yaml` (recursion prevention)
-  ✓ Build, push, bump, chart-publish all done by the workflow's shared
-       discover/build/bump-descriptors jobs — NO per-connector job edits
-       in the workflow YAML
+  ✓ No edit to .github/workflows/build-images.yml — its `discover-images`,
+       `build-image` and `bump-descriptors` jobs pick the connector up from `images:`
 
 Next: /connector deploy <name>
 ```

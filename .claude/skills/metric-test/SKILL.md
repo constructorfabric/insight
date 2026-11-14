@@ -114,7 +114,7 @@ description: >
 - Describe the *transformation* in human terms; do NOT name staging models or silver
   columns (`m365__collab_*`, `*_count`) — the **layer flow** is the point, not the
   artifacts. (To trace the real artifacts, read the staging dbt models + the gold
-  migration; see "Source of truth".)
+  model under `src/ingestion/gold/`.)
 - Keep the **Team** line concrete (seeded member values → the resulting
   median/range) so a reviewer can verify the `equals(...)` numbers without reading
   every case. For date-windowed metrics (no single Team), drop the Team line and let
@@ -394,8 +394,9 @@ Every builtin metric owes `period` and `timeseries`; `peer` when it has a peer c
 metric with no spec fails the required check. In CI (`.github/workflows/e2e-bronze-to-api.yml`)
 the job `e2e-datapath` runs one leg per shard (`ai`, `git`, `tasks`, `rest`, `identity`), each
 raising a minimal stand on its runner; `metric-coverage-gate` unions the legs' ledgers, and
-the umbrella `Run E2E suite` is the required check. It runs on `merge_group` and
-`workflow_dispatch`.
+the umbrella `Run E2E suite` is the required check. The legs run on `workflow_dispatch` and
+when `release-helm.yml` calls the workflow with a candidate; on pull requests and in the merge
+queue they report as skipped.
 
 To create a new test, use `/metric-test create` or hand-author `<class>/<name>.test.yaml`
 and `<class>/test_<name>.py` as above.

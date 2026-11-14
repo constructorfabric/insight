@@ -27,12 +27,6 @@ Enforced at: the API returns `null` rather than `0` for an unmeasured value
 (`PeerValueDto` and the period view both type the value as nullable); the SPA
 renders `—` / "not recorded" / an explicit empty card.
 
-Partially covered: `test_the_personal_dashboard_renders_every_metric_domain`
-asserts that populated KPI tiles are `not_to_have_text("—")`, and
-`test_the_team_view_lists_every_report_the_roster_declares` asserts that every
-member's cell renders for every column — recorded or an honest "not recorded" —
-without demanding a value.
-
 Gaps worth a claim: every metric domain is seeded now, so no view on this stand
 asserts the empty state itself — that a domain with no data renders its explicit
 empty card, and that an unmeasured cell reads "not recorded" rather than `0`.
@@ -109,15 +103,16 @@ either leaks a different thing, so name both.
 **Verdict: Partial — there is no cost *endpoint*, but there is a cost
 *metric*, and the rule is about figures.**
 
-`registry.yaml:230-242` defines `ai.cost` ("AI usage cost", `format: currency`,
-`entity_type: person`), served by `/v1/metric-definitions` and
-`/v1/metric-results` like any other metric.
+`registry.yaml` defines `ai.cost` ("AI potential cost", `format: currency`,
+`entity_type: person`) and, separately, `ai.seat_cost` ("AI seat cost"), both
+served by `/v1/metric-definitions` and `/v1/metric-results` like any other
+metric.
 
-Its `explanation` states the separation this rule demands, in the product's own
-words: *"Includes usage a seat or subscription already covered, and excludes
-seat and subscription fees, so it is not the amount invoiced."* So the claim is
-assertable at `GET /v1/metric-definitions` today — the definition must carry
-that qualification rather than presenting a single blended figure.
+The `ai.cost` `explanation` states the separation this rule demands: *"It
+includes usage a seat already covered and excludes seat fees, so it is not the
+invoiced amount"*. So the claim is assertable at `GET /v1/metric-definitions`
+today — the definition must carry that qualification rather than presenting a
+single blended figure.
 
 The onward half — cost *movement* preserved as a shift across teams — has no
 surface.
@@ -169,12 +164,12 @@ There are two thresholds in the product, not one:
 
 | Where | Constant | Value | Behaviour below it |
 |---|---|---|---|
-| Backend | `MIN_PEER_N` (`analytics/src/domain/metric_results/compiler.rs:25`) | **5** | the peer view still reports `n`, but `p25`/`median`/`p75`/`min`/`max` come back `NULL` |
+| Backend | `MIN_PEER_N` (`analytics/src/domain/metric_results/compiler.rs`) | **5** | the peer view still reports `n`, but `p25`/`median`/`p75`/`min`/`max` come back `NULL` |
 | Frontend | `MIN_COHORT` (`src/frontend/src/lib/insight/within-team-peer.ts:17`) | **4** | the client-synthesised within-cohort peer view yields no stats (neutral cells) |
 
 The backend one is compiled into the peer SQL as
-`if({pool} >= {min_peer_n}, …, NULL)` over every percentile
-(`analytics/src/domain/metric_results/compiler.rs:606-610`, `:1518`), where `{pool}` counts entities with a
+`if({pool} >= {min_peer_n}, …, NULL)` over every percentile in
+`analytics/src/domain/metric_results/compiler.rs`, where `{pool}` counts entities with a
 non-null value. Its comment is explicit that this is deliberate placement:
 *"Enforced here, server-side, so every consumer inherits it."*
 
@@ -242,13 +237,15 @@ The tempting oracle is "ask for the same metric and cohort at team scope and at
 organization scope; `n` must differ". Three things block it:
 
 - **There is no scope selector.** A peer request carries exactly one field
-  besides `view`: `cohort_key` (`MetricViewRequest2`).
-- **There is one cohort key.** All 60 definitions in `registry.yaml` declare
-  `peer_cohort_key: org_unit`, and validation refuses any value the definition
-  does not declare (`analytics/src/domain/metric_results/validation.rs:330`).
+  besides `view`: `cohort_key` (`MetricViewRequest::Peer` in
+  `analytics/src/domain/metric_results/dto.rs`).
+- **There is one cohort key.** Every definition in `registry.yaml` that
+  declares a `peer_cohort_key` declares `org_unit`, and validation refuses any
+  value the definition does not declare
+  (`analytics/src/domain/metric_results/validation.rs`).
 - **Cohort membership is independent of what you asked for.** The cohort CTE
   selects everyone sharing the *target's* `cohort_id`
-  (`analytics/src/domain/metric_results/compiler.rs:540-546`), so `n` for a given person and metric is the same
+  (the `cohort` CTE in `analytics/src/domain/metric_results/compiler.rs`), so `n` for a given person and metric is the same
   number however many entities the request names.
 
 A test written to that oracle would fail for a reason unrelated to R12. What
@@ -264,7 +261,7 @@ requested entities.
 
 | Rule | Verdict | Layer for new claims |
 |---|---|---|
-| R1 evidence gaps shown | Built | API (the `null`-not-`0` half) + UI (covered) |
+| R1 evidence gaps shown | Built | API (the `null`-not-`0` half) + UI |
 | R2 confidence travels | No surface | — |
 | R3 lineage before attribution | No surface | — |
 | R4 no default ranking | Partial | UI |

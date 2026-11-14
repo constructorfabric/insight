@@ -117,8 +117,6 @@ async page => {
 }
 ```
 
-Embrace creativity, overlays are powerful.
-
 ### Overlay API Summary
 
 | Method | Use Case |
