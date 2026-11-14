@@ -10,7 +10,7 @@ Runs the full test cycle for a connector.
 ## Prerequisites
 
 - Connector package exists at `CONNECTOR_DIR`
-- Tenant credentials configured in `connections/<tenant>.yaml`
+- `connections/<tenant>.yaml` with `tenant_id`, and the connector's credentials in `secrets/connectors/<name>.yaml`
 
 ## Phase 1: Resolve Tenant
 
@@ -48,7 +48,7 @@ src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/CONNECT
 ```
 
 Expected: `CONNECTION_STATUS: SUCCEEDED`
-If fails: check credentials in tenant yaml, show error.
+If fails: check the credentials in `secrets/connectors/<name>.yaml`, show error.
 
 ## Phase 5: Discover Streams
 
@@ -67,7 +67,7 @@ Discovered N streams:
 
 ```bash
 # Generate catalog if missing
-./airbyte-toolkit/generate-catalog.sh CONNECTOR_NAME <tenant>
+./tools/declarative-connector/generate-catalog.sh CONNECTOR_NAME <tenant>
 
 # Read data
 ./tools/declarative-connector/source.sh read CONNECTOR_PATH <tenant>
@@ -101,7 +101,7 @@ After discover, verify that ALL cursor fields exist in the schema (Phase 6 alrea
 
 ```bash
 # Generate schema from real data
-./airbyte-toolkit/generate-schema.sh <name> <tenant>
+./tools/declarative-connector/generate-schema.sh <name> <tenant>
 
 # Compare generated schema with inline schema in manifest
 # Every field in generated schema should be in manifest inline schema

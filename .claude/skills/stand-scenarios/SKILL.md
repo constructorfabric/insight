@@ -74,7 +74,7 @@ oracles, and one forbidden one.
 | **The API response the UI just received** | anything on screen | the drilldown table matches the payload behind it |
 | **The endpoint contract** | status codes, media types, problem documents | 415 on a wrong content type |
 | **The code** | a rule whose only statement is an implementation | a suppression threshold that appears in no contract |
-| ~~A number you read off a running stand~~ | **never** | the seed publishes no expected values |
+| ~~A number you read off a running stand~~ | **never** | the seed's only expected values, the manifest's `golden_metrics` task totals, are already asserted by `test_golden_metrics.py` |
 
 **No claim may assert an exact metric value.** Reading a number off the stand
 and asserting it back only proves that the code which produced it produced it.
@@ -89,8 +89,8 @@ need. The suite would rather have one more API test than one more browser test
 whenever the two would prove the same thing.
 
 A UI claim must carry, in writing, why an API test cannot make it — backed by
-something measured, not by "the UI should be covered too". The shipped
-justifications are the model: *every SPA route answers 200 text/html to an
+something measured, not by "the UI should be covered too". `tests/stand/README.md`
+carries the model: *every SPA route answers 200 text/html to an
 anonymous HTTP client; refusal exists only inside the browser.*
 
 ### 5. What already tests this?

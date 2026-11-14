@@ -34,7 +34,7 @@ covered**, so neither is a gap:
 | Direction | Proved by |
 |---|---|
 | admin rights ⇏ data visibility | `test_operator_sees_nobody_in_the_org_chart` |
-| seniority ⇏ admin rights | `test_admin_listing_is_403_for_a_realm_admin_without_the_grant` — its docstring: *"Holding `insight-admin` in the realm is NOT administrative authority."* |
+| seniority ⇏ admin rights | `test_every_admin_gated_operation_is_403_without_the_grant` — every admin-gated operation answers 403 to `realm_admin_session`, the CEO |
 
 Read them the right way round. It is easy to cite the second for the first,
 because both are about the word "admin".

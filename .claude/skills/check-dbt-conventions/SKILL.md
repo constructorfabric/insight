@@ -12,7 +12,7 @@ This skill audits the codebase against the dbt pipeline conventions. It is **LLM
 
 ## Source of truth
 
-Before reporting anything, **read this THIS turn**:
+Read this before reporting anything:
 
 - [.cf-studio/config/rules/architecture.md](../../../.cf-studio/config/rules/architecture.md) — "dbt Pipeline Conventions (summary)" states the hard rules this skill enforces
 
@@ -22,7 +22,7 @@ Where that file and the checks below disagree, the rules file wins — update th
 
 ### Check 1 — Silver models: engine + order_by + write strategy
 
-For every `.sql` file under `src/ingestion/silver/` (excluding `crm.disabled`):
+For every `.sql` file under `src/ingestion/silver/` (excluding `*disabled*` paths):
 
 - `engine` must be `insight_engine('ReplacingMergeTree', '_version')` OR `insight_engine('ReplacingMergeTree')` (versionless, only for `materialized='table'`). A literal engine string is a violation whatever family it names — it cannot follow the install's topology.
 - `order_by` must be `['unique_key']`
@@ -30,7 +30,7 @@ For every `.sql` file under `src/ingestion/silver/` (excluding `crm.disabled`):
 - If `materialized='incremental'` → `incremental_strategy='delete+insert'` AND `unique_key='unique_key'`
   (silver is physically deduplicated so any
   consumer — gold views, the product — can read silver WITHOUT `FINAL`).
-  `incremental_strategy='append'` in a silver model is now a FAIL.
+  `incremental_strategy='append'` in a silver model is a FAIL.
 
 Bash discovery:
 ```bash
@@ -41,7 +41,7 @@ For each file: read the `{{ config(...) }}` block. Report violations with file p
 
 ### Check 2 — Connector staging models: engine + order_by + unique_key projection
 
-For every `.sql` file under `src/ingestion/connectors/*/dbt/`:
+For every `.sql` file under `src/ingestion/connectors/*/*/dbt/`:
 
 - If `materialized` is `incremental` or `table` → `engine=insight_engine('ReplacingMergeTree', '_version')` + `order_by=['unique_key']`
 - If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window)
@@ -55,13 +55,13 @@ find src/ingestion/connectors -name "*.sql" -path "*/dbt/*" -not -path "*disable
 
 ### Check 3 — `unique_key` formula in connector record producers
 
-For every Airbyte YAML connector at `src/ingestion/connectors/*/connector.yaml`:
+For every Airbyte YAML connector at `src/ingestion/connectors/*/*/connector.yaml`:
 
 - Find every `AddFields` block with `path: [unique_key]` (or `path: [unique]` — that's a deviation)
 - Formula MUST start with `{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-`
 - Connector-specific tail follows (e.g., `{{ record['id'] }}` or composite)
 
-For every Python CDK connector at `src/ingestion/connectors/*/source_*/`:
+For every Python CDK connector at `src/ingestion/connectors/*/*/source_*/`:
 
 - Check `streams/base.py` (or equivalent) for a `_make_unique_key` helper
 - Helper must include `tenant_id` and `source_id` as the first two arguments
@@ -99,7 +99,7 @@ Every silver model and every dbt-owned staging model with append/event semantics
 3. **Explode/fan-out staging over full-refresh bronze**: one bronze row → many output rows AND bronze is full-refresh + overwrite.
    - Allowed: `jira__changelog_items`, `jira__issue_field_snapshot`
 
-For each `.sql` file under `src/ingestion/silver/` and `src/ingestion/connectors/*/dbt/`:
+For each `.sql` file under `src/ingestion/silver/` and `src/ingestion/connectors/*/*/dbt/`:
 
 - If `materialized='table'` AND model name is in the allow-list above → PASS
 - If `materialized='table'` AND model name is NOT in the allow-list → FAIL with suggestion: "Convert to `materialized='incremental'`. For **silver** use `incremental_strategy='delete+insert'` + `unique_key='unique_key'`; for **staging** use `incremental_strategy='append'`. Scope the incremental boundary to one source instance with `{{ silver_incremental_watermark([...]) }}` — never a table-wide `max(_version)`, which lets one producer's boundary permanently exclude a slower producer's rows. If upstream lacks `_version`, amend the SELECT to project `toUnixTimestamp64Milli(_airbyte_extracted_at) AS _version`."
@@ -108,7 +108,7 @@ For each `.sql` file under `src/ingestion/silver/` and `src/ingestion/connectors
 
 Bash discovery:
 ```bash
-grep -lE "materialized\s*=\s*'table'" src/ingestion/silver/ src/ingestion/connectors/*/dbt/ -r 2>/dev/null
+grep -lE "materialized\s*=\s*'table'" src/ingestion/silver/ src/ingestion/connectors/*/*/dbt/ -r 2>/dev/null
 ```
 
 Cross-reference each match against the allow-list and report PASS / FAIL.
@@ -118,8 +118,7 @@ Cross-reference each match against the allow-list and report PASS / FAIL.
 RMT only collapses duplicates on
 background merge (never guaranteed at query time), so **every read of an RMT
 relation must be deduplicated at read time** unless the producer is physically
-unique. A duplicate that slips through inflates metrics (e.g. the
-`slack_active_days = 42` incident).
+unique. A duplicate that slips through inflates metrics.
 
 A read is OK if ANY of:
 - it goes through the **`union_by_tag`** macro (which dedups the union by
@@ -130,23 +129,20 @@ A read is OK if ANY of:
 - the **producer is `incremental_strategy='delete+insert'` or `materialized='table'`**
   (physically unique → reader needs no dedup).
 
-FAIL conditions (scan `connectors/*/dbt/` + `silver/` + gold migrations
-`scripts/migrations/*.sql`):
+FAIL conditions (scan `connectors/*/*/dbt/` + `silver/` + `gold/`):
 1. A direct `ref()`/`source()` read of an RMT producer (append/incremental) with
    **no** dedup in scope and **not** via `union_by_tag`.
 2. **Aggregation over un-deduplicated bronze**: `count()`/`sum()`/`avg()` over a
    `source('bronze_*')` read without `FINAL` or `LIMIT 1 BY unique_key` (bronze is
    ReplacingMergeTree). Inflation is baked into one output row and is
-   unrecoverable downstream (e.g. `bitbucket_cloud__commits`, `claude_admin__ai_dev_usage`).
+   unrecoverable downstream (e.g. `bitbucket_cloud__commits`).
 3. A `snapshot()` macro call whose source is read without `FINAL` (spurious SCD2
    versions). The shared `macros/snapshot.sql` must read `FROM {{ source_ref }} FINAL`.
-4. A **gold view** in `scripts/migrations/*.sql` reading a `staging.*`/`silver.*`
-   append+RMT table without `FINAL`. (Reads of `delete+insert` silver are OK.
-   Note migrations are immutable history — verify against the latest migration
-   that (re)defines the view.)
 
 **Deterministic complement**: `src/ingestion/dbt/audit_rmt_read_dedup.py` performs
-this scan mechanically and exits non-zero on a gap — runnable in CI. Use it to
+this scan mechanically over `connectors/` and `silver/` and exits non-zero on a
+gap — runnable in CI. It does not read `gold/` (its gold pass globs
+`scripts/migrations/`), so check gold models by reading them. Use it to
 generate candidates, then confirm each by reading (it cannot resolve outer-scope
 dedup or column-level semantics).
 
@@ -154,7 +150,7 @@ dedup or column-level semantics).
 
 When user invokes `/check-dbt-conventions`:
 
-1. Read all 5 spec docs (`DESIGN.md` + 4 ADRs) THIS turn — confirm understanding
+1. Read the rules file named under Source of truth
 2. Run the 8 checks systematically using `Glob` / `Grep` / `Read` (optionally run `python3 src/ingestion/dbt/audit_rmt_read_dedup.py` for Check 8)
 3. Report per-check status: PASS / FAIL with file paths + line numbers + the offending text
 4. Summarize: total checks, failures by category
@@ -181,7 +177,7 @@ Check 8 — Read-time dedup of RMT reads — FAIL (1 violation)
 Summary: 6/8 PASS, 2 FAIL (Checks 2, 8 — fixes above)
 ```
 
-Refuse to report PASS without having read each spec doc this turn (anti-pattern: stale reasoning). Refuse to invent file paths — only report files actually scanned.
+Report PASS only after reading the rules file in this run. Refuse to invent file paths — only report files actually scanned.
 
 ## When to invoke
 

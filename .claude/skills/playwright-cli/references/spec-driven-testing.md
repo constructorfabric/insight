@@ -12,9 +12,11 @@ All three lean on the same mechanic: run `npx playwright test --debug=cli` in th
 
 ## 1. Planning
 
-Goal: produce a spec file (e.g. `specs/<feature>.plan.md`) that enumerates the scenarios to test. **Always** write the spec to a file.
+Goal: produce a spec file (e.g. `specs/<feature>.plan.md`) that enumerates the scenarios to test. Write the spec to a file.
 
 ### 1.1 Prerequisite: workspace
+
+This workflow is for a Node/TypeScript Playwright Test project. The Insight repository has none — its browser journeys are pytest + pytest-playwright under `tests/stand/ui/` and belong to `stand-ui-test` — so do not bootstrap one here.
 
 Check the workspace has Playwright installed before anything else:
 
@@ -24,7 +26,7 @@ test -f playwright.config.ts || test -f playwright.config.js
 npx --no-install playwright --version
 ```
 
-If there is no Playwright install, bootstrap one and let the user pick the defaults:
+In another repository with no Playwright install, bootstrap one and let the user pick the defaults:
 
 ```bash
 npm init playwright@latest
@@ -99,8 +101,7 @@ Map out:
 - Persistence: reload, local/session storage, URL fragments.
 - Navigation: which controls change the URL, back/forward behaviour.
 
-**Important**: Do not just open the app url with playwright-cli, always go through the test to capture any custom setup done there.
-**Important**: Stop the background test when done exploring.
+Open the app through the seed test rather than its URL, so any custom setup in the test runs. Stop the background test when done exploring.
 
 ### 1.4 Write the spec file
 
@@ -169,7 +170,7 @@ playwright-cli attach tw-XXXX
 # resume
 ```
 
-**Do not** just open the app url with playwright-cli, always go through the test to capture any custom setup done there.
+As in planning, open the app through the seed test, not its URL.
 
 Walk the scenario's `Steps:` one by one with `playwright-cli`, treating the spec as the plan and the live app as the source of truth. If a step is vague ("click the button" — which button?), references an element that no longer exists, or contradicts the app's actual behaviour, use your judgement: update the spec to match what the app really does, then keep going. Editing the spec mid-generation is expected.
 
@@ -216,7 +217,7 @@ Rules:
 - Prefix each numbered step with a `// N. <step text>` comment before its actions.
 - Use the describe group name verbatim from the spec (no `1.` ordinal).
 - Import from `./fixtures` if the project has one; otherwise `@playwright/test`.
-- **Important**: close the CLI session and stop the background test before moving to the next scenario.
+- Close the CLI session and stop the background test before moving to the next scenario.
 
 ### 2.3 Generate multiple scenarios
 

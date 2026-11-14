@@ -84,9 +84,8 @@ INSIGHT_STAND_REALM_EXPORT=deploy/compose/keycloak/realm-insight.generated-<name
   uv run --project tests --frozen pytest tests/stand
 ```
 
-Verb reference: `./dev-compose.sh test-stand --help`. It omits `up --auth
-<keycloak|fakeidp>`, which exists — read `cmd_test_stand` if you need the
-full set.
+Verb reference: `./dev-compose.sh test-stand --help`, or `cmd_test_stand` in
+`dev-compose.sh` for the full set.
 
 ## Aiming a run
 
@@ -140,9 +139,9 @@ Chromium's `--unsafely-treat-insecure-origin-as-secure` does not help —
 both `launch()` and `launch_persistent_context()`.
 
 So a containerised runner joins the gateway's network namespace and uses
-`localhost:<port>` (no suite image is published anymore — CI runs host-side
-from the checkout, and host `localhost:<port>` satisfies the same
-constraint; `--image` remains for a locally built runner):
+`localhost:<port>`. No suite image is published: CI runs host-side from the
+checkout, where host `localhost:<port>` satisfies the same constraint, and
+`--image` is for a locally built runner:
 
 ```bash
 ./dev-compose.sh test-stand test --image <locally-built-suite-image>
@@ -178,36 +177,32 @@ Read it for two things:
   directly, so no connector runs). A test needing a capability the stand may
   lack carries the matching marker rather than assuming.
 
-What it does **not** carry is an expected value for any metric. No test under
-`tests/stand/` asserts one, and none may: an admissible expectation would have
-to be *computable from the seed inputs* rather than read back out of the gold
-layer, and the seed publishes no such set. Reading a number off a running stand
-and asserting it back only proves that the code which produced it produced it.
+`PROFILE.md` carries no expected metric value. The manifest's `golden_metrics`
+task totals are the seed's only expected values, and
+`tests/stand/api/analytics/test_golden_metrics.py` already asserts them. No
+other test under `tests/stand/` asserts a metric value, and none may: an
+admissible expectation has to be *computable from the seed inputs* rather than
+read back out of the gold layer. Reading a number off a running stand and
+asserting it back only proves that the code which produced it produced it.
 
 ## Declaring what a test needs
 
 | Marker | Resolution when unmet | Meaning |
 |---|---|---|
 | `@pytest.mark.requires_seed(*names)` | **session aborts** at collection, listing every missing name and every test that needed it | the stand was seeded wrong |
-| `@pytest.mark.requires_ingestion` | that item **skips**, with a reason | a legitimate property of this stand |
+| `@pytest.mark.requires_<capability>` (e.g. `requires_ingestion`, `requires_portal_metrics`) | that item **skips**, with a reason | the stand's manifest does not declare that capability — a legitimate property of this stand |
 | `@pytest.mark.requires_service_principal` | that item **skips**, with a reason | the stand's manifest does not declare `service_principals` — i.e. its token listener is not published. Read the manifest, not your container |
-| `@pytest.mark.requires_catalogue(*parts)` | that item **skips**, with a reason | rows `src/ingestion/tools/seed/insight_seed/analytics.py` writes are absent |
 
 Two different resolutions on purpose: a missing *fixture* is a defect in how
 the stand was prepared; a missing *capability* is a fact about it.
 
-Only two are carried by shipped tests today — `requires_seed` and
-`requires_service_principal`. `requires_ingestion` and `requires_catalogue` are
-registered and unused, so do not go looking for an example of them; they are
-the extension contract, not current practice.
-
-All four are registered in `tests/pyproject.toml` under
+Every marker is registered in `tests/pyproject.toml` under
 `[tool.pytest.ini_options] markers`, with `--strict-markers` and `-ra` — that
 is the single place to add one. Do not re-register them in a conftest.
 
 Extending: a new capability marker needs a row in `CAPABILITY_MARKERS`
-(`tests/stand/conftest.py`); a new catalogue part needs one in
-`CATALOGUE_PARTS`. A typo in either is caught as a `UsageError`, not silently
+(`tests/stand/conftest.py`), which maps it to its manifest capability. A typo
+there is caught as a `UsageError`, not silently
 skipped — that check exists because a wrong mapping would skip every test
 carrying the marker with a reason that reads perfectly plausibly.
 
@@ -266,7 +261,7 @@ tests that create rows. What you need here is the triage row below.
 | Everything skips with "capability … not present" | expected on this stand (`ingestion: no`) | not a failure — read the reason |
 | Login loops, then 503 | **base URL is not `localhost`** — see the trap above | join the gateway netns, or use the published port |
 | `scratch resources survived the run` | a test created rows and did not delete them | find it by the `RUN_TAG` in the leaked names |
-| Metric value assertions | there are none, by design | not a failure — the seed publishes no expected values |
+| Metric value assertions | none outside test_golden_metrics.py, by design | not a failure — the golden_metrics task totals are the seed's only expected values |
 | Tests pass but assert nothing real | a stand where identity is perfect and the SPA renders an empty shell passes every API test | that is what the UI journeys are for |
 
 Every message about the stand quotes the `source_path` it believed, so a

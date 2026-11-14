@@ -19,8 +19,8 @@ Run every command from this directory — `pnpm` is scoped here, not to the repo
 the repository-wide `coverage-gate`. Both vitest projects run in that single pass, so a component
 covered only by a story still counts.
 
-New and changed lines must reach 80% coverage. The component's overall floor is lower while the
-suite is built out — see `overall_min` in `scripts/ci/components.py`. Paths excluded from
+New and changed lines must reach 80% coverage, and so must the component overall (`OVERALL_MIN` in
+`scripts/ci/coverage.py`). Paths excluded from
 `vitest.config.ts`'s coverage config are invisible to both gates rather than scored zero, so adding
 a file there silently removes it from enforcement.
 

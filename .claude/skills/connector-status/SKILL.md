@@ -1,7 +1,7 @@
 ---
 name: connector-status
 description: "Collect the current state of all connectors across Argo, Airbyte, and ClickHouse, and present as a unified status table. Use when the user asks about connector health, sync status, or pipeline state."
-user_invocable: true
+user-invocable: true
 ---
 
 # Connector Status Dashboard
@@ -12,7 +12,8 @@ Collect the current state of all connectors across Argo, Airbyte, and ClickHouse
 
 - `KUBECONFIG` set to target cluster
 - Airbyte API accessible via port-forward on `localhost:8001` (or already forwarded)
-- `kubectl` access to namespaces: `argo`, `airbyte`, `data`
+- `kubectl` access to namespaces: `$INSIGHT_NAMESPACE` (default `insight`), `airbyte`
+- `clickhouse-client` that reaches the chart's `clickhouse.host`
 
 ## Data Collection Steps
 
@@ -27,8 +28,10 @@ curl -s "http://localhost:8001/api/v1/health" 2>/dev/null | grep -q available ||
 ### 2. Argo: CronWorkflows + last workflow per connector
 
 ```bash
+NS="${INSIGHT_NAMESPACE:-insight}"
+
 # CronWorkflows: schedule, suspend status
-kubectl get cronworkflows -n argo -o json | python3 -c "
+kubectl get cronworkflows -n "$NS" -o json | python3 -c "
 import sys,json
 data=json.load(sys.stdin)
 for cwf in data['items']:
@@ -39,11 +42,12 @@ for cwf in data['items']:
     print(json.dumps({'name':name,'schedule':schedule,'suspend':suspend,'last_run':last_run}))
 "
 
-# Last workflow per connector prefix: phase, start, finish, error
-kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp -o json | python3 -c "
-import sys, json
+# Last workflow per connector: phase, start, finish, error
+PREFIXES=$(kubectl get cronworkflows -n "$NS" -o jsonpath='{.items[*].metadata.labels.insight\.cyberfabric\.com/connector}')
+kubectl get workflows -n "$NS" --sort-by=.metadata.creationTimestamp -o json | PREFIXES="$PREFIXES" python3 -c "
+import os, sys, json
 data = json.load(sys.stdin)
-PREFIXES = ['bamboohr','bitbucket-cloud','confluence','cursor','jira','m365','slack','zoom','salesforce']
+PREFIXES = sorted(set(os.environ['PREFIXES'].split()), key=len, reverse=True)
 last = {}
 last_ok = {}
 for wf in data['items']:
@@ -114,10 +118,10 @@ done
 ### 4. ClickHouse: Bronze + Staging + Silver row counts and sizes
 
 ```bash
-CH_PASS=$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d)
+CH_PASS=$(kubectl get secret insight-db-creds -n "${INSIGHT_NAMESPACE:-insight}" -o jsonpath='{.data.clickhouse-password}' | base64 -d)
 
 # Per-database totals
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" --query "
+clickhouse-client --host <clickhouse.host> --user <clickhouse.username> --password "$CH_PASS" --query "
 SELECT
     database,
     sum(rows) as total_rows,
@@ -129,7 +133,7 @@ ORDER BY database
 "
 
 # Per-table detail (optional, for deeper inspection)
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" --query "
+clickhouse-client --host <clickhouse.host> --user <clickhouse.username> --password "$CH_PASS" --query "
 SELECT
     database,
     table,

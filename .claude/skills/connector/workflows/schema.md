@@ -15,7 +15,7 @@ Runs discover against the real API and generates JSON schema files + configured 
 ## Phase 1: Generate Schemas
 
 ```bash
-./airbyte-toolkit/generate-schema.sh CONNECTOR_NAME <tenant>
+./tools/declarative-connector/generate-schema.sh CONNECTOR_NAME <tenant>
 ```
 
 Saves to `connectors/<path>/schemas/<stream>.json`
@@ -23,7 +23,7 @@ Saves to `connectors/<path>/schemas/<stream>.json`
 ## Phase 2: Generate Catalog
 
 ```bash
-./airbyte-toolkit/generate-catalog.sh CONNECTOR_NAME <tenant>
+./tools/declarative-connector/generate-catalog.sh CONNECTOR_NAME <tenant>
 ```
 
 Saves to `connectors/<path>/configured_catalog.json`

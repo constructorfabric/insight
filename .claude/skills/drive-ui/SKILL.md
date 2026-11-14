@@ -1,6 +1,6 @@
 ---
 name: drive-ui
-description: "Drive the Insight web UI in a real browser to see, verify, explore, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', 'exercise every option in this screen', 'find the download limit', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect: the data that decides it is captured here. The `playwright-cli` skill owns the commands and this skill owns getting an authenticated browser, exploring what is on screen, and capturing evidence someone can act on — it hands the issue itself to `file-bug-insight`, and `scope-feature-tests` plans coverage on paper where this drives the stand in front of you."
+description: "Drive the Insight web UI in a real browser to see, verify, explore, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: checking or reproducing what a page shows, exercising a screen's options and limits, or capturing evidence for a UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect: the data that decides it is captured here. The `playwright-cli` skill owns the commands and this skill owns getting an authenticated browser, exploring what is on screen, and capturing evidence someone can act on — it hands the issue itself to `file-bug-insight`, and `scope-feature-tests` plans coverage on paper where this drives the stand in front of you."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
@@ -74,7 +74,7 @@ Gate on **the app having rendered**, not on a token appearing in storage. The se
 Wait for a real element instead — snapshot and look for a control the page cannot render without:
 
 ```sh
-playwright-cli goto "http://localhost:3000/ic/<url-encoded-email>/personal"
+playwright-cli goto "http://localhost:3000/ic/<person-id>/personal"
 playwright-cli snapshot --depth=6
 ```
 
@@ -93,9 +93,9 @@ When a negative survives that pass, say which instrument you ruled out. When it 
 
 ## Routes worth knowing
 
-- `/ic/<url-encoded-email>/personal` — IC dashboard, personal view (`@` encodes as `%40`)
-- `/ic/<url-encoded-email>/team` — team view for the same person
-- `/metrics` — metrics catalog
+- `/portal` — the portal; `/`, unknown paths and an `/ic/...` URL whose segment is not a person id all redirect here
+- `/ic/<person-id>/personal` — IC dashboard, personal view
+- `/ic/<person-id>/team` — team view for the same person
 
 Group cards expose `aria-label="Open <group title> details"`, which makes them stable targets:
 
@@ -128,7 +128,7 @@ When the surface builds a downloadable artifact, open the artifact. Parse every 
 
 ## Capture evidence someone can act on
 
-Write artifacts **outside this repo** — nothing here is gitignored for scratch output, so leftovers surface in someone's `git status` and ride along on the next `git add -A`:
+Write artifacts **outside this repo**, or under `screenshots-and-etc/`, which `.gitignore` reserves for media produced while driving the UI. Anywhere else in the checkout, leftovers surface in someone's `git status` and ride along on the next `git add -A`:
 
 ```sh
 EVIDENCE="$(mktemp -d)"     # or a path under the session scratchpad dir

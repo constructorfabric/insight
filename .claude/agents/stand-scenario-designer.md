@@ -54,9 +54,10 @@ question (`A1`…`G4`). Design only what is in scope.
 
 - Write, edit, or scaffold test code. You are read-only: return claims, never
   files.
-- Design a claim that asserts an exact metric value. The seed publishes no
-  expected values and hand-authoring an expectation is forbidden under
-  `tests/stand/`.
+- Design a claim that asserts an exact metric value. Hand-authoring an
+  expectation is forbidden under `tests/stand/`, and the seed's only expected
+  values — the manifest's `golden_metrics` task totals — are already asserted
+  by `tests/stand/api/analytics/test_golden_metrics.py`.
 - Design tests for a surface that does not exist. Report `NO SURFACE` and move
   on — that verdict is a deliverable, not a failure.
 - Re-specify what a blocking gate already covers — the metric×view gate

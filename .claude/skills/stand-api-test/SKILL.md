@@ -53,14 +53,14 @@ Open every module with the route it covers and the codes this module asserts:
 ```
 
 Then say what the test is *for*, not what it does. The shipped modules explain
-the trap — which failure the assertion rules out, which prior defect motivated
-it, which other module holds the same story. That is the house style; match it.
+the trap — which failure the assertion rules out, and which other module holds
+the same story. That is the house style; match it.
 
 ## The catalogue, and why 401 lives in one place
 
 `operations.py` is read from the **route tables** in
 `src/backend/services/{analytics,identity-resolution}/src/api/`. Both services
-now emit their own OpenAPI document, but the route tables stay the source
+emit their own OpenAPI document, but the route tables stay the source
 here: the catalogue must list what the gateway *routes*, which includes the
 `/internal/*` S2S pair that is deliberately outside the generated document.
 
