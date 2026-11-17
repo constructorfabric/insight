@@ -64,13 +64,6 @@
       "scroll_to_bottom": "Jump to the end of the list",
       "download": "Download"
     },
-    "ui_components": {
-      "sidebar": {
-        "title": "Sidebar",
-        "description": "Displays the mobile sidebar.",
-        "toggle": "Toggle Sidebar"
-      }
-    },
     "period_presets": {
       "7d": "7d",
       "14d": "14d",
@@ -91,7 +84,10 @@
     "copied": "Copied",
     "copy_failed": "Unable to copy",
     "a11y": {
-      "notifications": "Notifications"
+      "notifications": "Notifications",
+      "section_navigation": "Section navigation",
+      "expand_navigation": "Expand navigation",
+      "collapse_navigation": "Collapse navigation"
     }
   },
   "theme": {

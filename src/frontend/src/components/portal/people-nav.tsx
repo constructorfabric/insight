@@ -3,15 +3,16 @@ import { useState } from "react";
 
 import { OrgTree } from "@/components/org-tree";
 import { ItemButton } from "@/components/portal/pane-nav";
-import { Input, ScrollArea } from "@gears-frontx/ui-kit";
-import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
+  Input,
+  ScrollArea,
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import { visibleGroups } from "@/lib/insight/groups";
 import {
   orderByReadiness,

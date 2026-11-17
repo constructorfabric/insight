@@ -1,23 +1,17 @@
 import * as React from "react";
 
 /**
- * How much chrome the viewport can afford. The portal shell has two fixed
- * sidebars — a 56px icon rail and a 256px context pane — which is fine on a
- * wide screen and ruinous on a narrow one.
+ * How much chrome the viewport can afford. The portal shell sidebar holds a
+ * 49px icon rail and a 256px context pane.
  *
- * - `wide` (>= 1024px): both in normal flow, as designed.
- * - `narrow` (768–1023px): the rail stays (56px is cheap and keeps zone
- *   switching one tap away), the pane collapses off-canvas behind the topbar
- *   trigger. 312px of chrome on a 900px window left the content 588px.
- * - `phone` (< 768px): neither fits. The rail hides and the pane becomes the
- *   only navigation surface, so it also carries the rail's zone list and
- *   settings menu.
+ * - `wide` (>= 1024px): starts open, rail and pane beside the content.
+ * - `narrow` (768–1023px): starts collapsed to the rail, keeping zone switching
+ *   one tap away; the topbar trigger or a rail pick opens the pane.
+ * - `phone` (< 768px): the kit renders the sidebar as a drawer, rail and pane
+ *   together, behind the topbar trigger.
  *
- * The lower bound deliberately matches `useIsMobile` (768), because that is the
- * breakpoint at which the sidebar primitive itself switches from an off-canvas
- * panel to a Sheet — one boundary, two consequences, no third opinion. Which
- * collapse mechanism is live matters to callers: below 768 the pane is a Sheet
- * driven by `openMobile`, above it an off-canvas panel driven by `open`.
+ * The lower bound matches the kit's own mobile breakpoint (768): below it the
+ * sidebar is a Sheet driven by `openMobile`, above it a panel driven by `open`.
  */
 export type ShellLayout = "phone" | "narrow" | "wide";
 

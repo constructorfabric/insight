@@ -1,4 +1,4 @@
-import { useSidebar } from "@/components/ui/sidebar";
+import { useSidebar } from "@gears-frontx/ui-kit";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 
 /**
@@ -12,8 +12,8 @@ export function useDismissDrawer(): () => void {
   const layout = useShellLayout();
   const { setOpen, setOpenMobile } = useSidebar();
   return () => {
-    // Below 768 the pane is a Sheet (`openMobile`); on a tablet it is an
-    // off-canvas panel (`open`). Wide keeps it in flow — nothing to dismiss.
+    // Below 768 the sidebar is a Sheet (`openMobile`); on a tablet it collapses
+    // to the rail (`open`). Wide keeps the pane open — nothing to dismiss.
     if (layout === "phone") setOpenMobile(false);
     else if (layout === "narrow") setOpen(false);
   };

@@ -92,8 +92,15 @@ vi.mock("@/components/portal/person-header", () => ({
     <div data-testid="person-header">{person}</div>
   ),
 }));
-vi.mock("@/components/portal/lens-rail", () => ({ LensRail: () => <div /> }));
-vi.mock("@/components/portal/context-pane", () => ({ ContextPane: () => <div /> }));
+vi.mock("@/components/portal/lens-rail", () => ({
+  LensRail: () => <div />,
+  RailItems: () => <div />,
+  RailFooterItems: () => <div />,
+}));
+vi.mock("@/components/portal/context-pane", () => ({
+  ContextPane: () => <div />,
+  ZonePages: () => <div />,
+}));
 vi.mock("@/components/portal/portal-topbar", () => ({ PortalTopBar: () => <div /> }));
 vi.mock("@/components/mock-banner", () => ({ MockBanner: () => <div /> }));
 vi.mock("@/components/view-as-banner", () => ({

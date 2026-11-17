@@ -1,22 +1,11 @@
 // @vitest-environment jsdom
-/**
- * The rail's open state.
- *
- * Most cases here are about the interaction rather than the look, because the
- * look is the easy half. The one that matters is the click: a click navigates
- * and leaves the pointer sitting on the rail, so without an explicit dismissal
- * the rail reopens on top of the pane the click was aimed at. That failed
- * silently once already when the state was expressed as CSS variants — the
- * rules simply never matched and nothing said so.
- */
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 
 const mocks = vi.hoisted(() => ({
-  layout: "wide" as "phone" | "narrow" | "wide",
   selected: [] as string[],
   activeItem: "home",
   openFeedback: vi.fn(),
@@ -25,20 +14,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/components/feedback-context", () => ({
   useFeedbackDialog: () => ({ openFeedback: mocks.openFeedback }),
 }));
-
-vi.mock("@/lib/portal/use-shell-layout", () => ({
-  useShellLayout: () => mocks.layout,
-}));
 vi.mock("@/lib/portal/use-rail-nav", () => ({
   useRailNav: () => ({
     items: [
       { id: "home", label: "Home", icon: () => null, zones: ["overview"] },
-      {
-        id: "people",
-        label: "People",
-        icon: () => null,
-        zones: ["person", "people"],
-      },
+      { id: "people", label: "People", icon: () => null, zones: ["person", "people"] },
     ],
     activeItem: mocks.activeItem,
     selectItem: (item: { id: string }) => mocks.selected.push(item.id),
@@ -52,37 +32,38 @@ vi.mock("@/components/app-sidebar-footer", () => ({
   ),
 }));
 
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { Sidebar, SidebarProvider, useSidebar } from "@gears-frontx/ui-kit";
+import { setPortalRailLabels } from "@/lib/portal/portal-store";
 import { LensRail } from "./lens-rail";
 
-/** The rail opens on a timer, so a hover only counts once the wait is over. */
-const settle = () =>
-  act(() => {
-    vi.advanceTimersByTime(400);
-  });
+function OpenState() {
+  return <output data-testid="open">{String(useSidebar().open)}</output>;
+}
 
-const rail = () =>
+/** Collapsed to the rail, the way a tablet starts; open, the way wide starts. */
+const rail = (open: boolean) =>
   render(
-    <SidebarProvider>
-      <LensRail />
-    </SidebarProvider>
+    <SidebarProvider defaultOpen={open}>
+      <Sidebar collapsible="icon">
+        <LensRail />
+      </Sidebar>
+      <OpenState />
+    </SidebarProvider>,
   );
+const collapsedRail = () => rail(false);
 
-/** The label is present either way; what changes is whether it can be seen. */
-const labelOf = (name: string) =>
-  screen.getByRole("button", { name }).querySelector("span:not(.sr-only)");
+/** A label shown outside the button itself, i.e. in the tooltip popup. */
+const tooltipFor = (label: string) =>
+  screen
+    .queryAllByText(label)
+    .find((node) => !node.closest('[data-testid="lens-rail"]'));
 
 beforeEach(() => {
-  // `shouldAdvanceTime` is required, not incidental: `userEvent` awaits a real
-  // promise between events, and with a clock that only moves when a test moves
-  // it that await is never resolved — every pointer interaction here hangs
-  // until the runner's timeout. It does mean the opening wait can expire on
-  // its own mid-test, which is harmless: the next action either wanted it open
-  // anyway, or is a leave, and a leave cancels the pending timer as it closes.
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  mocks.layout = "wide";
+  act(() => setPortalRailLabels(false));
+  localStorage.clear();
   mocks.selected = [];
   mocks.activeItem = "home";
+  mocks.openFeedback.mockClear();
   window.matchMedia ??= ((query: string) => ({
     matches: false,
     media: query,
@@ -96,216 +77,114 @@ beforeEach(() => {
 });
 
 describe("LensRail", () => {
-  it("shows labels while the pointer is on it", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    expect(labelOf("Home")).toHaveClass("opacity-0");
-
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    expect(labelOf("Home")).toHaveClass("opacity-100");
-  });
-
-  it("collapses on a click and stays collapsed under the pointer", async () => {
-    // The whole reason this state exists. The click navigates; the pointer has
-    // not moved; reopening here would cover the pane that was just asked for.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    expect(labelOf("People")).toHaveClass("opacity-100");
-
-    await user.click(screen.getByRole("button", { name: "People" }));
-    expect(mocks.selected).toEqual(["people"]);
-    expect(labelOf("People")).toHaveClass("opacity-0");
-  });
-
-  it("collapses when the settings menu navigates, for the same reason", async () => {
-    // The trigger lives in the rail's own footer, so reaching it expands the
-    // rail over the pane the destination renders in.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-    expect(labelOf("People")).toHaveClass("opacity-100");
-
-    await user.click(screen.getByRole("button", { name: "Go somewhere" }));
-
-    expect(labelOf("People")).toHaveClass("opacity-0");
-  });
-
-  it("expands again once the pointer has left and come back", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    const el = screen.getByTestId("lens-rail");
-
-    await user.hover(el);
-    settle();
-    await user.click(screen.getByRole("button", { name: "People" }));
-    expect(labelOf("People")).toHaveClass("opacity-0");
-
-    await user.unhover(el);
-    await user.hover(el);
-    settle();
-    expect(labelOf("People")).toHaveClass("opacity-100");
-  });
-
   it("marks the item that owns the open zone", () => {
     mocks.activeItem = "people";
-    rail();
-    expect(screen.getByRole("button", { name: "People" })).toHaveAttribute(
-      "data-active"
-    );
-    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute(
-      "data-active"
-    );
+    collapsedRail();
+    expect(screen.getByRole("button", { name: "People" })).toHaveAttribute("data-active");
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute("data-active");
   });
 
-  it("renders nothing on a phone", () => {
-    // 56px of rail plus a 256px pane left a phone with almost no content; the
-    // zones live in the context pane's drawer there instead.
-    mocks.layout = "phone";
-    rail();
-    expect(screen.queryByTestId("lens-rail")).not.toBeInTheDocument();
-  });
+  it("opens the pane beside it when an item is picked", async () => {
+    const user = userEvent.setup();
+    collapsedRail();
+    expect(screen.getByTestId("open")).toHaveTextContent("false");
 
-  it("uncaps the brand mark so WebKit does not shrink the product name to an ellipsis", () => {
-    rail();
-    expect(screen.getByRole("img", { name: "Constructor Fabric" })).toHaveClass(
-      "max-w-none"
-    );
-  });
-});
+    await user.click(screen.getByRole("button", { name: "People" }));
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe("LensRail state that only breaks in a particular order", () => {
-  it("does not strand itself when a zone is chosen from the keyboard", async () => {
-    // Enter on a focused button produces a click, and a click used to mean
-    // "the pointer is resting on me, stay shut until it leaves". There is no
-    // pointer in this story, so nothing would ever clear that — the rail was
-    // dead to the mouse from then on.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    await user.tab();
-    await user.tab();
-    await user.keyboard("{Enter}");
     expect(mocks.selected).toEqual(["people"]);
-
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    expect(labelOf("People")).toHaveClass("opacity-100");
+    expect(screen.getByTestId("open")).toHaveTextContent("true");
   });
 
-  it("shows the labels to a keyboard user at all", async () => {
-    // Eight identical icons and the text at zero opacity is not navigable by
-    // anyone who can see but is not using a pointer.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    await user.tab();
-    await user.tab();
-    expect(labelOf("Home")).toHaveClass("opacity-100");
-  });
+  it("opens the settings menu from the collapsed rail and shuts it after a pick", async () => {
+    const user = userEvent.setup();
+    collapsedRail();
 
-  it("comes back shut after the rail is unmounted under the pointer", async () => {
-    // A width change unmounts the rail without a pointer-leave, so the state
-    // it left behind used to survive: widen again and it was already open,
-    // with the pointer nowhere near it.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const { rerender } = rail();
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    expect(labelOf("Home")).toHaveClass("opacity-100");
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Go somewhere" }));
 
-    mocks.layout = "phone";
-    rerender(
-      <SidebarProvider>
-        <LensRail />
-      </SidebarProvider>
-    );
-    mocks.layout = "wide";
-    rerender(
-      <SidebarProvider>
-        <LensRail />
-      </SidebarProvider>
-    );
-    expect(labelOf("Home")).toHaveClass("opacity-0");
-  });
-
-  it("keeps the labels while the keyboard is still inside it", async () => {
-    // Two ways in, and only one of them is the pointer's to end. A pointer
-    // crossing the rail on its way somewhere else used to collapse it under a
-    // focused button, putting a keyboard user back on an unlabelled icon they
-    // had no way to re-reveal.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    const el = screen.getByTestId("lens-rail");
-    await user.tab();
-    await user.tab();
-    expect(labelOf("People")).toHaveClass("opacity-100");
-
-    await user.hover(el);
-    await user.unhover(el);
-    settle();
-    expect(labelOf("People")).toHaveClass("opacity-100");
-
-    // Leaving with the keyboard is what ends a keyboard visit.
-    act(() => (document.activeElement as HTMLElement).blur());
-    expect(labelOf("People")).toHaveClass("opacity-0");
-  });
-
-  it("stays shut for a pointer that is only passing through", async () => {
-    // The wait is the whole guard. Before it was a timer, the panel became
-    // clickable at once and merely being over it counted as staying, so a
-    // crossing pointer opened the rail anyway — over the row it was heading
-    // for, having swallowed any click on the way.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    const el = screen.getByTestId("lens-rail");
-    await user.hover(el);
-    await user.unhover(el);
-    settle();
-    expect(labelOf("Home")).toHaveClass("opacity-0");
+    expect(screen.queryByRole("button", { name: "Go somewhere" })).not.toBeInTheDocument();
   });
 
   it("offers feedback from the rail itself, not from inside the settings menu", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
+    const user = userEvent.setup();
+    collapsedRail();
 
     await user.click(screen.getByRole("button", { name: "Feedback" }));
 
     expect(mocks.openFeedback).toHaveBeenCalled();
   });
 
-  it("treats Feedback and Settings like a zone item, shut and open", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    const home = screen.getByRole("button", { name: "Home" });
+  it.each([
+    ["open", true],
+    ["collapsed", false],
+  ])("labels a rail item on hover while the pane is %s", async (_, open) => {
+    const user = userEvent.setup();
+    rail(open);
+    expect(tooltipFor("People")).toBeUndefined();
 
-    for (const name of ["Feedback", "Settings"]) {
-      const button = screen.getByRole("button", { name });
-      expect(button.className, name).toBe(home.className);
-      expect(button, name).toHaveAttribute("title", name);
-      expect(labelOf(name)?.className, name).toBe(labelOf("Home")?.className);
-      expect(button.querySelector("svg"), name).toHaveClass("shrink-0");
-      expect(button.querySelector("svg"), name).not.toHaveClass("size-[19px]");
-    }
+    await user.hover(screen.getByRole("button", { name: "People" }));
 
-    const anchor = screen
-      .getByRole("button", { name: "Settings" })
-      .parentElement?.querySelector("[data-popover-anchor]");
-    expect(anchor).toHaveClass("w-10");
-    expect(anchor).toHaveClass("absolute");
+    await waitFor(() => expect(tooltipFor("People")).toBeDefined());
+  });
 
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    expect(labelOf("Feedback")).toHaveClass("opacity-100");
-    expect(labelOf("Settings")).toHaveClass("opacity-100");
-    expect(screen.getByRole("button", { name: "Feedback" }).className).toBe(
-      home.className
-    );
+  it("labels Settings on hover and still opens its menu on a click", async () => {
+    const user = userEvent.setup();
+    rail(true);
+    const settings = screen.getByRole("button", { name: "Settings" });
+
+    await user.hover(settings);
+    await waitFor(() => expect(tooltipFor("Settings")).toBeDefined());
+
+    await user.click(settings);
+    expect(screen.getByRole("button", { name: "Go somewhere" })).toBeInTheDocument();
+  });
+});
+
+describe("LensRail names", () => {
+  it("starts with icons only", () => {
+    rail(true);
+    expect(screen.getByRole("button", { name: "Expand navigation" })).toBeInTheDocument();
+  });
+
+  it("keeps the reader's choice across a remount", async () => {
+    const user = userEvent.setup();
+    const first = rail(true);
+
+    await user.click(screen.getByRole("button", { name: "Expand navigation" }));
+    first.unmount();
+    rail(true);
+
+    expect(screen.getByRole("button", { name: "Collapse navigation" })).toBeInTheDocument();
+    expect(localStorage.getItem("insight.portal.railLabels")).toBe("true");
+  });
+
+  it("drops the item tooltips once the names show", async () => {
+    const user = userEvent.setup();
+    act(() => setPortalRailLabels(true));
+    rail(true);
+
+    await user.hover(screen.getByRole("button", { name: "People" }));
+
+    expect(tooltipFor("People")).toBeUndefined();
+  });
+
+  it.each([
+    ["icons only", false, "Expand navigation"],
+    ["names shown", true, "Collapse navigation"],
+  ])("labels the toggle by tooltip alone, %s", async (_, labels, name) => {
+    const user = userEvent.setup();
+    act(() => setPortalRailLabels(labels));
+    rail(true);
+    const toggle = screen.getByRole("button", { name });
+    expect(toggle).toHaveTextContent(/^$/);
+
+    await user.hover(toggle);
+
+    await waitFor(() => expect(tooltipFor(name)).toBeDefined());
+  });
+
+  it("offers no toggle while the sidebar is collapsed to icons", () => {
+    collapsedRail();
+    expect(screen.queryByRole("button", { name: /(Expand|Collapse) navigation/ })).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect } from "storybook/test";
 import type { CSSProperties } from "react";
 
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@gears-frontx/ui-kit";
+import { setPortalRailLabels } from "@/lib/portal/portal-store";
 import { handlers } from "@/mocks/handlers";
 import { expectHorizontallyCentred } from "@/test/storybook/layout";
 
@@ -13,7 +15,13 @@ const meta: Meta<typeof LensRail> = {
   parameters: { layout: "fullscreen", msw: { handlers } },
   decorators: [
     (Story) => (
-      <SidebarProvider style={{ "--rail-width": "3.5rem" } as CSSProperties}>
+      <SidebarProvider
+        style={
+          {
+            "--rail-width": "calc(var(--sidebar-width-icon) + 1px)",
+          } as CSSProperties
+        }
+      >
         <Story />
       </SidebarProvider>
     ),
@@ -34,17 +42,43 @@ export const TestIconsSitCentredInTheirButtons: Story = {
       expectHorizontallyCentred(
         button,
         button.querySelector("svg")!,
-        button.title
+        button.textContent ?? ""
       );
     }
   },
 };
 
-export const TestLogoSitsCentredInTheRail: Story = {
+export const TestLogoSitsCentredInTheRailHeader: Story = {
   tags: ["test"],
   play: async ({ canvas }) => {
     const logo = await canvas.findByRole("img", { name: "Constructor Fabric" });
 
-    expectHorizontallyCentred(canvas.getByTestId("lens-rail"), logo, "Logo");
+    expectHorizontallyCentred(logo.parentElement!, logo, "Logo");
+  },
+};
+
+export const NamesShown: Story = {
+  beforeEach: () => {
+    setPortalRailLabels(true);
+    return () => setPortalRailLabels(false);
+  },
+  decorators: [
+    (Story) => (
+      <div style={{ "--rail-width": "12rem" } as CSSProperties}>
+        <Story />
+      </div>
+    ),
+  ],
+};
+
+export const TestTheToggleStaysIconOnlyWithNamesShown: Story = {
+  ...NamesShown,
+  tags: ["test"],
+  play: async ({ canvas }) => {
+    const toggle = await canvas.findByRole("button", {
+      name: "Collapse navigation",
+    });
+
+    expect(toggle.textContent).toBe("");
   },
 };

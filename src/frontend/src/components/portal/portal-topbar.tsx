@@ -1,8 +1,8 @@
 import { HelpCircle } from "lucide-react";
 
 import { SliceSelect } from "@/components/portal/slice-select";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
+  SidebarTrigger,
   Tooltip,
   TooltipContent,
   TooltipTrigger,

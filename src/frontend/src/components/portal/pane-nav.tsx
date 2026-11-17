@@ -9,7 +9,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import { resolveText, type DisplayText } from "@/i18n/localized-text";
 import {
   PLANNED_GROUP_LABEL,

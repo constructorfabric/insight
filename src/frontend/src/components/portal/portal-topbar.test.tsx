@@ -14,7 +14,7 @@ vi.mock("@tanstack/react-router", async () => {
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@gears-frontx/ui-kit";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

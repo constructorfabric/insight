@@ -28,16 +28,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
-} from "@gears-frontx/ui-kit";
-import { PaneGroupLabel } from "@/components/portal/pane-group-label";
-import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import { folderAllows, type FolderAllows } from "@/lib/custom/dashboard-access";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { useIsAdmin } from "@/queries/identity-me";

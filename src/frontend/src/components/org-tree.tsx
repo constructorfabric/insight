@@ -8,7 +8,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
+} from "@gears-frontx/ui-kit";
 import { personName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { personIdFromPath } from "@/lib/metrics/entity";

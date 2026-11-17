@@ -6,7 +6,8 @@ import "@/i18n";
 
 import { ThemeProvider } from "@/components/theme-provider";
 
-vi.mock("@/components/ui/sidebar", () => ({
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   SidebarMenu: ({ children }: { children?: React.ReactNode }) => (
     <div>{children}</div>
   ),
@@ -16,10 +17,6 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenuButton: ({ children }: { children?: React.ReactNode }) => (
     <div data-testid="menu-button">{children}</div>
   ),
-}));
-
-vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   DropdownMenu: ({ children }: { children?: React.ReactNode }) => (
     <div>{children}</div>
   ),
