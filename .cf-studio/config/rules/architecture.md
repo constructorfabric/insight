@@ -90,6 +90,13 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 7. **Read pattern** — silver consumers MUST use `SELECT … FROM silver.X FINAL` or `argMax(... ORDER BY _version)`. RMT tables hold multiple versions per `unique_key` until background merge.
 8. **Silver class = the analysed population only** — a `class_*` table is a clean view for the metrics built on it, not a mirror of bronze. A connector's staging feeder drops accounts the source proves are outside that population (unlicensed, guest, deactivated, non-billable) with a `WHERE` on the source's account-status signal; the class carries no status column for gold to filter on. Analysing the excluded accounts (guest engagement, offboarding) belongs in a separate model reading bronze, which keeps every raw row. Filter on account status, never on a flag derived from activity (a per-day active flag, a billable-active-user flag: a quiet period is not an inactive account), and state in a comment whether a `NULL` signal keeps or drops the row. Adding the filter to an existing incremental feeder needs a MAJOR connector version bump: that dispatches the `dbt --full-refresh` that purges rows written before it. Reference: the M365 `m365__collab_*` feeders (`isLicensed` / `assignedProducts`) and the Slack chat feeder (`is_guest`).
 9. **Airbyte sync mode** — always `destinationSyncMode='append_dedup'` with `primaryKey=[['unique_key']]`. A stream without a `unique_key` schema property fails catalog normalization (it would land as an ever-duplicating table); `append` and `overwrite` are forbidden. The 2.x destination performs no destination-side dedup work — append_dedup is the same append-only insert path with an engine-level-dedup table shape, so the old OOM concern does not apply.
+10. **Model versions** — every model in the dbt project, gold and identity included, carries a whole-number `meta.transform_version`, 1 by default from `dbt_project.yml`. A change to what a model writes or how it is built raises the version in the same change: `config(meta={'transform_version': 2})`, or `config.meta.transform_version` in the model's YAML properties.
+   - CI (the Guards job) fails when a model's SQL, build config, `ref`/`source` set, a macro it reaches, or a project variable it reads by literal name changes without a higher version. Comments, whitespace, `description`, `docs` and `meta` do not count. A `-- depends_on:` comment counts: it changes the dependencies. A tag change counts for the class whose `union_by_tag` gains or loses the model.
+   - CI compares text, not meaning. A refactor that keeps the output also raises the version.
+   - Raise the version by hand where CI cannot see the change. A `sources.yml` edit that points a source at another table raises every model reading that source. A new value of a variable raises the models that read it through a computed name. A change to a relation raises the models that read it through `adapter.get_relation`.
+   - Models that read a changed model through `ref` keep their versions.
+   - Never lower a version. Reverting a change raises it again.
+   - A model built anew from bronze MUST give the same rows its incremental runs gave. Never derive lasting state from a recent window of bronze. When bronze keeps only the latest state of a record, the model that accumulates its history is `full_refresh=false`, and a change that must rewrite that history ships a migration.
 
 ### Anti-patterns
 
@@ -112,8 +119,9 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 
 ### Validation
 
-- Skill `/check-dbt-conventions` — LLM-based correctness check (engine, order_by, unique_key formula presence)
+- Skill `/check-dbt-conventions` — LLM-based correctness check (engine, order_by, unique_key formula presence, the version raises CI cannot see)
 - `dbt parse` — Jinja / config syntax (CI gate)
+- `scripts/ci/transform_versions.py` — model versions against the base branch (rule 10; CI Guards job)
 
 ## Critical Files
 

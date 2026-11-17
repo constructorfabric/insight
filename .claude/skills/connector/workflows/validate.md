@@ -202,6 +202,7 @@ python3 scripts/ci/connector_wiring.py
 - [ ] SELECT includes `tenant_id`, `source_id`, `unique_key`
 - [ ] Uses `{{ source('bronze_<name>', '<stream>') }}`
 - [ ] Has `{% if is_incremental() %}` block
+- [ ] Every model whose definition the change alters raises `meta.transform_version`, per rule 10 of the dbt Pipeline Conventions in `.cf-studio/config/rules/architecture.md`. The descriptor `version` does not cover dbt models.
 
 ### Identity Resolution inputs
 
