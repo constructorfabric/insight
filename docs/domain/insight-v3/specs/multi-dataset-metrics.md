@@ -180,14 +180,3 @@ fields. Compiles to `UNION ALL`.
 
 The alternative reading: if we expect authors to want arbitrary shaping anyway,
 go straight to C and skip B and D.
-
-## Open questions
-
-1. Which of the three needs is the one in front of us now?
-2. For A: is "no drilldown on a composite" acceptable, or does it open one
-   child's records?
-3. For A and B: when one dataset holds a person by email and the other by id,
-   do we join on the resolved person?
-4. For C: who writes the SQL — administrators only, or the assistant too?
-5. Do joined records need to honour each dataset's own "same record" rule
-   before the join? (Assumed yes throughout.)
