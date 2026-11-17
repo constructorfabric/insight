@@ -375,6 +375,15 @@ the reason the domain is in Insight. Two of its inputs are not in this design
 yet: release markers come from a CI connector, and the ticket → tracker link
 needs the vendor's per-ticket related-information endpoint (`jira_issue_ids`).
 
+### Access
+
+**In the UI, support data is visible to administrators only.** The support
+section, its metrics and its drill-downs are shown to users holding the ADMIN
+role and to nobody else, whatever their reach; every other user does not see
+the section at all. The audiences below describe whom the data is meant to
+serve; opening it to any of them is a separate decision, not implied by this
+design.
+
 ### Audiences
 
 Support roles map onto the reach personas of
@@ -397,6 +406,8 @@ function of whoever asks.
 
 ### Rules the metrics inherit
 
+- Only ADMIN sees support data in the UI ([Access](#access)); the rules
+  below apply as soon as any other persona is given it.
 - No verdict about a named person: a LEAD sees conclusions for a team, and a
   comparison with fewer than eight people a side is withheld with the reason,
   as SCENARIOS.md states for every domain.
