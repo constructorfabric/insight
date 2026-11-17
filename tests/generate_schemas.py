@@ -151,6 +151,25 @@ same limitation the other generated documents carry.
 
 '''
 
+V3_HEADER = '''"""insight-v3-core response shapes — GENERATED, do not edit.
+
+Regenerate with:
+
+    uv run --project tests --frozen python tests/generate_schemas.py
+
+Source: `docs/components/backend/insight-v3-core/openapi.json`, generated offline
+by `cargo run -p insight-v3-core -- openapi` from the same registrations that
+serve the routes, and drift-gated in CI. These models describe the structs that
+serialize the wire.
+
+The document types the alert operations' bodies only. Every other JSON success
+body it declares as a bare `type: object`, so those are modelled by hand in
+`v3_untyped.py`; `generate_schemas.py --check` fails the day the document types
+one of them, or adds an untyped one.
+"""
+
+'''
+
 IDENTITY_HEADER = '''"""Identity Resolution response shapes — GENERATED, do not edit.
 
 Regenerate with:
@@ -176,6 +195,12 @@ same limitation the analytics and authenticator documents carry.
 
 
 @dataclass(frozen=True)
+class HandWritten:
+    module: Path
+    operations: frozenset[str]
+
+
+@dataclass(frozen=True)
 class Generated:
     """A service whose document describes bodies: models are generated and committed."""
 
@@ -187,6 +212,7 @@ class Generated:
     #: `common.UnzonedDatetime`). Per-service because it is a claim about how
     #: THAT service serialises timestamps, not a house style.
     unzoned_datetime: bool = False
+    hand_written: HandWritten | None = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +270,48 @@ def declares_only_200(spec_path: Path) -> str | None:
     return f"declares {sorted(declared - {'200'})}, which only the Rust service's own document does"
 
 
+V3_UNTYPED: frozenset[str] = frozenset(
+    {
+        "GET /v1/dashboards 200",
+        "POST /v1/dashboards 201",
+        "GET /v1/dashboards/{id} 200",
+        "GET /v1/dashboards/{id}/dependents 200",
+        "POST /v1/dashboards/{id}/duplicate 201",
+        "GET /v1/dashboards/{id}/grants 200",
+        "GET /v1/dashboards/{id}/widgets 200",
+        "POST /v1/dashboards/{id}/widgets/{widget_id}/drilldown 200",
+        "POST /v1/dashboards/{id}/widgets/{widget_id}/run 200",
+        "GET /v1/datasets 200",
+        "GET /v1/datasets/{name} 200",
+        "PUT /v1/datasets/{name} 200",
+        "GET /v1/datasets/{name}/dependents 200",
+        "GET /v1/datasets/{name}/records 200",
+        "GET /v1/folders 200",
+        "POST /v1/folders 201",
+        "PATCH /v1/folders/{id} 200",
+        "PUT /v1/folders/{id}/dashboards/{dashboard_id} 200",
+        "GET /v1/folders/{id}/grants 200",
+        "GET /v1/metrics 200",
+        "POST /v1/metrics 201",
+        "GET /v1/metrics/{id} 200",
+        "GET /v1/metrics/{id}/dependents 200",
+        "POST /v1/metrics/{id}/drilldown 200",
+        "POST /v1/metrics/{id}/run 200",
+        "GET /v1/orphaned-dashboards 200",
+        "GET /v1/orphaned-folders 200",
+        "GET /v1/pins 200",
+        "GET /v1/tables 200",
+        "GET /v1/tables/{database}/{table} 200",
+        "GET /v1/tags 200",
+        "GET /v1/widgets 200",
+        "POST /v1/widgets 201",
+        "GET /v1/widgets/{id} 200",
+        "GET /v1/widgets/{id}/dependents 200",
+        "POST /v1/chat 200",
+    }
+)
+
+
 TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
     Generated(
         name="analytics",
@@ -284,7 +352,31 @@ TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
         output=_SCHEMAS / "previews.py",
         header=PREVIEWS_HEADER,
     ),
+    Generated(
+        name="insight-v3-core",
+        spec=_SPECS / "insight-v3-core" / "openapi.json",
+        output=_SCHEMAS / "v3.py",
+        header=V3_HEADER,
+        hand_written=HandWritten(module=_SCHEMAS / "v3_untyped.py", operations=V3_UNTYPED),
+    ),
 )
+
+
+def _success_bodies(spec_path: Path) -> list[tuple[str, dict[str, Any]]]:
+    spec: dict[str, Any] = json.loads(spec_path.read_text(encoding="utf-8"))
+    found: list[tuple[str, dict[str, Any]]] = []
+
+    paths: dict[str, dict[str, Any]] = spec.get("paths") or {}
+    for path, operations in sorted(paths.items()):
+        for method, operation in sorted(operations.items()):
+            responses: dict[str, Any] = operation.get("responses") or {}
+            for status, response in sorted(responses.items()):
+                if not status.isdigit() or int(status) >= 300:
+                    continue
+                for media in (response.get("content") or {}).values():
+                    found.append((f"{method.upper()} {path} {status}", media.get("schema") or {}))
+
+    return found
 
 
 def modellable_bodies(spec_path: Path) -> list[str]:
@@ -301,22 +393,45 @@ def modellable_bodies(spec_path: Path) -> list[str]:
     if not spec_path.is_file():
         return []
 
-    spec: dict[str, Any] = json.loads(spec_path.read_text(encoding="utf-8"))
-    found: list[str] = []
+    return [
+        operation
+        for operation, schema in _success_bodies(spec_path)
+        if {"properties", "$ref", "items"} & set(schema)
+    ]
 
-    paths: dict[str, dict[str, Any]] = spec.get("paths") or {}
-    for path, operations in sorted(paths.items()):
-        for method, operation in sorted(operations.items()):
-            responses: dict[str, Any] = operation.get("responses") or {}
-            for status, response in sorted(responses.items()):
-                if not status.isdigit() or int(status) >= 300:
-                    continue
-                for media in (response.get("content") or {}).values():
-                    schema = media.get("schema") or {}
-                    if {"properties", "$ref", "items"} & set(schema):
-                        found.append(f"{method.upper()} {path} {status}")
 
-    return found
+def untyped_bodies(spec_path: Path) -> frozenset[str]:
+    return frozenset(
+        operation
+        for operation, schema in _success_bodies(spec_path)
+        if not {"properties", "$ref", "items"} & set(schema)
+    )
+
+
+def check_hand_written(target: Generated) -> str | None:
+    if target.hand_written is None:
+        return None
+
+    listed = target.hand_written.operations
+    untyped = untyped_bodies(target.spec)
+    if listed == untyped:
+        print(f"{target.name}: {len(listed)} untyped bodies modelled by hand")
+        return None
+
+    problems: list[str] = []
+    if typed := sorted(listed - untyped):
+        problems.append(
+            f"now typed or gone: {', '.join(typed)} — drop them from the hand-written list, "
+            f"delete their models from {target.hand_written.module.name} and use the "
+            f"generated ones in {target.output.name}"
+        )
+    if added := sorted(untyped - listed):
+        problems.append(
+            f"untyped and unmodelled: {', '.join(added)} — model them in "
+            f"{target.hand_written.module.name} and list them"
+        )
+
+    return f"{target.name}: " + "; ".join(problems)
 
 
 def generate(target: Generated) -> str:
@@ -430,10 +545,10 @@ def main() -> int:
         elif isinstance(target, Untrusted):
             problem = check_untrusted(target)
         elif args.check:
-            problem = check(target)
+            problem = check(target) or check_hand_written(target)
         else:
             write(target)
-            problem = None
+            problem = check_hand_written(target)
 
         if problem:
             problems.append(problem)

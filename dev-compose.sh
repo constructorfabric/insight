@@ -2020,6 +2020,7 @@ test_stand_write_env() {
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_CH    ""
   update_env_var "$TEST_STAND_ENV_FILE" ANALYTICS_PERIODIC_VALIDATION_ENABLED "false"
+  update_env_var "$TEST_STAND_ENV_FILE" INSIGHT_V3_CORE_ENV_FILE "deploy/compose/insight-v3-core.test-stand.env"
   # Point the authenticator at the same origin the realm registers and the
   # browser runner drives, so the callback lands where the session cookie
   # can be set. Left at its .env.compose.example default

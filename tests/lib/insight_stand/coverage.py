@@ -16,9 +16,11 @@ stand) reads that ledger back and answers two questions:
      the admin grant (403). So every operation has an observation, and one whose
      only observed codes are those was swept and never tested. Counting it as
      covered is precisely the mistake this gate exists to prevent.
-  2. Did every status code the analytics CONTRACT declares get observed?
+  2. Did every status code each `--spec` CONTRACT declares get observed? A
+     contract with no catalogued operation under its prefix is reported as not
+     measured: the stand does not serve it.
 
-Only analytics is gated on its spec, though identity emits its own document
+Identity is not gated on its spec, though it emits its own document
 and CI drift-gates it beside analytics. What blocks (2) for identity is the
 other side of the comparison: every status code the
 document declares has to be OBSERVED, and `.standard_errors` stamps the full
@@ -49,6 +51,11 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 #: Server faults are declared for fidelity and cannot be induced deterministically
 #: from outside, so they never count against coverage.
 SERVER_FAULT_FLOOR = 500
+
+#: The gateway answers 401 before routing; a service document may omit it.
+EDGE_REFUSAL = 401
+
+ANALYTICS_PREFIX = "/api/analytics"
 
 #: The statuses a CATALOGUE-WIDE SWEEP stamps on operations it never tested:
 #: `test_gateway.py` calls every operation anonymously (401), and the identity
@@ -166,6 +173,10 @@ BLOCKED: dict[str, frozenset[int]] = {
     "GET /v1/connector-health": frozenset({400, 404, 409}),
     "GET /v1/connector-health/{connector}/syncs": frozenset({404, 409}),
 }
+
+
+#: Keyed by gateway prefix: two services can share a path, like `GET /v1/metrics`.
+BLOCKED_BY_PREFIX: dict[str, Mapping[str, frozenset[int]]] = {ANALYTICS_PREFIX: BLOCKED}
 
 
 def spec_operations(spec: Mapping[str, Any]) -> dict[str, list[int]]:
@@ -386,6 +397,9 @@ class SpecReport:
     spec_ops: Mapping[str, list[int]]
     validated: Mapping[str, set[int]]
     unmatched: Sequence[Mapping[str, Any]]
+    prefix: str = ANALYTICS_PREFIX
+    blocked: Mapping[str, frozenset[int]] = field(default_factory=lambda: BLOCKED)
+    name: str = "analytics"
 
     def __post_init__(self) -> None:
         ops = set(self.spec_ops)
@@ -401,11 +415,11 @@ class SpecReport:
             op: seen
             for op in sorted(ops)
             if (
-                seen := (UNIVERSAL_BOILERPLATE | set(BLOCKED.get(op, frozenset())))
+                seen := (UNIVERSAL_BOILERPLATE | set(self.blocked.get(op, frozenset())))
                 & self.validated.get(op, set())
             )
         }
-        self.stale_blocked = [op for op in sorted(BLOCKED) if op not in ops]
+        self.stale_blocked = [op for op in sorted(self.blocked) if op not in ops]
         # The commoner staleness, and the one the operation-level check above
         # misses entirely: the operation is still documented, but a code this
         # list subtracts is no longer declared for it. That is exactly the shape
@@ -414,15 +428,15 @@ class SpecReport:
         # nothing while still reading as a live judgement about the route.
         self.blocked_undeclared = {
             op: gone
-            for op in sorted(BLOCKED)
-            if op in ops and (gone := set(BLOCKED[op]) - set(self.spec_ops[op]))
+            for op in sorted(self.blocked)
+            if op in ops and (gone := set(self.blocked[op]) - set(self.spec_ops[op]))
         }
         # Codes the suite proved that the document does not declare — the
         # under-declaration half of #1669, invisible in the matrix below.
         self.undeclared = {
             op: extra
             for op in sorted(ops)
-            if (extra := self.validated.get(op, set()) - set(self.spec_ops[op]))
+            if (extra := self.validated.get(op, set()) - set(self.spec_ops[op]) - {EDGE_REFUSAL})
         }
 
         coverable = sum(len(codes) for codes in self.required.values())
@@ -436,8 +450,12 @@ class SpecReport:
         return (
             {code for code in declared if code < SERVER_FAULT_FLOOR}
             - UNIVERSAL_BOILERPLATE
-            - set(BLOCKED.get(op, frozenset()))
+            - set(self.blocked.get(op, frozenset()))
         )
+
+    def qualified(self, op: str) -> str:
+        method, _, path = op.partition(" ")
+        return f"{method} {self.prefix}{path}"
 
     @property
     def passed(self) -> bool:
@@ -488,7 +506,17 @@ def match_against_spec(
     return validated, unmatched
 
 
-def violations(catalogue: CatalogueReport, spec: SpecReport | None) -> list[str]:
+def _specs(specs: SpecReport | Sequence[SpecReport] | None) -> list[SpecReport]:
+    if specs is None:
+        return []
+    if isinstance(specs, SpecReport):
+        return [specs]
+    return list(specs)
+
+
+def violations(
+    catalogue: CatalogueReport, specs: SpecReport | Sequence[SpecReport] | None
+) -> list[str]:
     """Blocking findings. A non-empty list fails the gate."""
     out = [
         f"NEVER CALLED: {label} is in the operation catalogue and the ledger has no "
@@ -501,44 +529,58 @@ def violations(catalogue: CatalogueReport, spec: SpecReport | None) -> list[str]
         "answers"
         for label in catalogue.swept_only
     ]
-    if spec is not None:
-        out += [f"MISSING: {op} is documented and exercised by no test" for op in spec.missing]
+    for spec in _specs(specs):
+        out += [
+            f"MISSING: {spec.qualified(op)} is documented and exercised by no test"
+            for op in spec.missing
+        ]
     return out
 
 
-def advisories(spec: SpecReport | None) -> list[str]:
+def advisories(specs: SpecReport | Sequence[SpecReport] | None) -> list[str]:
     """Reported, never blocking — the picture, and the suppression lists' hygiene."""
-    if spec is None:
-        return []
+    out: list[str] = []
+    for spec in _specs(specs):
+        out += _advisories(spec)
+    return out
+
+
+def _advisories(spec: SpecReport) -> list[str]:
+    q = spec.qualified
     out = [
-        f"uncovered code: {op} has not answered declared {sorted(gap)} "
+        f"uncovered code: {q(op)} has not answered declared {sorted(gap)} "
         f"(saw {sorted(spec.validated[op])})"
         for op, gap in spec.uncovered.items()
     ]
     out += [
-        f"blocked-now-observed: {op} answered {sorted(seen)}, which the exclusions call "
+        f"blocked-now-observed: {q(op)} answered {sorted(seen)}, which the exclusions call "
         "unreachable — drop the entry"
         for op, seen in spec.blocked_observed.items()
     ]
     out += [
-        f"stale BLOCKED: {op} is no longer in the spec — drop the entry"
+        f"stale BLOCKED: {q(op)} is no longer in the spec — drop the entry"
         for op in spec.stale_blocked
     ]
     out += [
-        f"stale BLOCKED: {op} no longer declares {sorted(gone)} — the document was "
+        f"stale BLOCKED: {q(op)} no longer declares {sorted(gone)} — the document was "
         "corrected, so the exclusion suppresses nothing; drop it"
         for op, gone in spec.blocked_undeclared.items()
     ]
     out += [
-        f"observed but undeclared: {op} answered {sorted(codes)}, which the document does "
+        f"observed but undeclared: {q(op)} answered {sorted(codes)}, which the document does "
         "not declare — the suite covers it, the contract does not describe it"
         for op, codes in spec.undeclared.items()
     ]
     return out
 
 
-def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
-    blocking = violations(catalogue, spec)
+def render(
+    catalogue: CatalogueReport,
+    specs: SpecReport | Sequence[SpecReport] | None,
+    unmeasured: Sequence[str] = (),
+) -> str:
+    measured = _specs(specs)
+    blocking = violations(catalogue, measured)
     verdict = "✅ PASS" if not blocking else "❌ FAIL"
     lines = [
         "# Stand API coverage",
@@ -548,11 +590,16 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
         + (f" · {len(catalogue.swept_only)} swept only" if catalogue.swept_only else "")
         + (f" · {len(catalogue.unobserved)} never called" if catalogue.unobserved else ""),
     ]
-    if spec is not None:
-        lines.append(
-            f"Analytics contract: **{spec.coverage_pct}%** of coverable status codes "
-            f"({spec.total_covered}/{spec.total_coverable})."
-        )
+    lines += [
+        f"`{spec.name}` contract: **{spec.coverage_pct}%** of coverable status codes "
+        f"({spec.total_covered}/{spec.total_coverable})."
+        for spec in measured
+    ]
+    lines += [
+        f"`{prefix}` contract: not measured — the catalogue names no operation under it, "
+        "so this stand does not serve it."
+        for prefix in unmeasured
+    ]
     lines += [
         "",
         "_Blocking: a catalogued operation never called, or only ever refused, or a "
@@ -561,9 +608,11 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
         "",
     ]
 
-    if spec is not None:
+    for spec in measured:
         codes = sorted({code for declared in spec.spec_ops.values() for code in declared})
         lines += [
+            f"## `{spec.name}` — `{spec.prefix}`",
+            "",
             "| operation | " + " | ".join(str(c) for c in codes) + " | covered |",
             "|---|" + "---|" * (len(codes) + 1),
         ]
@@ -584,8 +633,9 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
             covered = "—" if not coverable else f"{len(coverable & seen)}/{len(coverable)}"
             label = f"❌ `{op}`" if op in spec.missing else f"`{op}`"
             lines.append(f"| {label} | " + " | ".join(row) + f" | {covered} |")
+        lines.append("")
         if spec.unmatched:
-            lines += ["", "## ⚠️ Observed but unmatched (informational)", ""]
+            lines += [f"### ⚠️ Observed under `{spec.prefix}` but unmatched (informational)", ""]
             lines += [
                 f"- `{row['method']} {row['path']}` → {sorted(row['statuses'])}"
                 for row in spec.unmatched
@@ -593,7 +643,7 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
 
     if blocking:
         lines += ["", "## ❌ Gate violations (blocking)", ""] + [f"- {v}" for v in blocking]
-    notes = advisories(spec)
+    notes = advisories(measured)
     if notes:
         lines += ["", "## ⚠️ Advisories (reported, non-blocking)", ""] + [f"- {n}" for n in notes]
     return "\n".join(lines) + "\n"
@@ -603,8 +653,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stand API coverage gate.")
     parser.add_argument("--observed", required=True, help="ledger written at pytest_sessionfinish")
     parser.add_argument("--catalogue", required=True, help="JSON list of catalogued operations")
-    parser.add_argument("--spec", help="committed analytics OpenAPI document")
-    parser.add_argument("--prefix", default="/api/analytics", help="gateway prefix for --spec")
+    parser.add_argument(
+        "--spec",
+        action="append",
+        default=[],
+        metavar="[PREFIX=]PATH",
+        help="a committed OpenAPI document and the gateway prefix its service sits under; "
+        "repeatable",
+    )
+    parser.add_argument(
+        "--prefix", default=ANALYTICS_PREFIX, help="gateway prefix for a --spec given without one"
+    )
     args = parser.parse_args(argv)
 
     ledger_path = Path(args.observed)
@@ -632,18 +691,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         observed=by_label(rows),
     )
 
-    spec_report: SpecReport | None = None
-    if args.spec:
-        spec_ops = spec_operations(json.loads(Path(args.spec).read_text(encoding="utf-8")))
-        validated, unmatched = match_against_spec(rows, args.prefix, spec_ops)
-        spec_report = SpecReport(spec_ops=spec_ops, validated=validated, unmatched=unmatched)
+    reports: list[SpecReport] = []
+    unmeasured: list[str] = []
+    for value in args.spec:
+        prefix, path = value.split("=", 1) if "=" in value else (args.prefix, value)
 
-    sys.stdout.write(render(catalogue, spec_report))
-    return 0 if not violations(catalogue, spec_report) else 1
+        if not any(op.path.startswith(f"{prefix}/") for op in catalogue.catalogue):
+            unmeasured.append(prefix)
+            continue
+
+        spec_ops = spec_operations(json.loads(Path(path).read_text(encoding="utf-8")))
+        validated, unmatched = match_against_spec(rows, prefix, spec_ops)
+        reports.append(
+            SpecReport(
+                spec_ops=spec_ops,
+                validated=validated,
+                unmatched=unmatched,
+                prefix=prefix,
+                blocked=BLOCKED_BY_PREFIX.get(prefix, {}),
+                name=Path(path).parent.name,
+            )
+        )
+
+    sys.stdout.write(render(catalogue, reports, unmeasured))
+    return 0 if not violations(catalogue, reports) else 1
 
 
 __all__: Sequence[str] = (
+    "ANALYTICS_PREFIX",
     "BLOCKED",
+    "BLOCKED_BY_PREFIX",
+    "EDGE_REFUSAL",
     "SERVER_FAULT_FLOOR",
     "UNIVERSAL_BOILERPLATE",
     "CatalogueReport",

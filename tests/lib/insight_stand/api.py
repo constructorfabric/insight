@@ -10,6 +10,7 @@ Prefixes come from `deploy/compose/gateway/routes.yaml`:
 
     /api/analytics  ->  http://analytics:8081   (strip_prefix: true)
     /api/identity   ->  http://identity-resolution:8082  (strip_prefix: true)
+    /api/v3         ->  http://insight-v3-core:8086  (strip_prefix: true)
 
 `strip_prefix` means the service sees its own `/v1/...`, so a caller writes the
 full gateway path (`/api/analytics/v1/metrics`) and the rewrite is the
@@ -64,7 +65,8 @@ type QueryParams = Mapping[str, QueryValue | Sequence[QueryValue]]
 
 ANALYTICS_PREFIX = "/api/analytics"
 IDENTITY_PREFIX = "/api/identity"
-GATEWAY_API_PREFIXES: tuple[str, ...] = (ANALYTICS_PREFIX, IDENTITY_PREFIX)
+V3_PREFIX = "/api/v3"
+GATEWAY_API_PREFIXES: tuple[str, ...] = (ANALYTICS_PREFIX, IDENTITY_PREFIX, V3_PREFIX)
 
 # Served by the edge itself rather than routed to a backend: the SPA at `/` and
 # the authenticator's browser endpoints under `/auth/`.
@@ -79,6 +81,11 @@ def analytics_path(suffix: str) -> str:
 def identity_path(suffix: str) -> str:
     """`identity_path("/v1/persons") -> "/api/identity/v1/persons"`."""
     return f"{IDENTITY_PREFIX}/{suffix.lstrip('/')}"
+
+
+def v3_path(suffix: str) -> str:
+    """`v3_path("/v1/metrics") -> "/api/v3/v1/metrics"`."""
+    return f"{V3_PREFIX}/{suffix.lstrip('/')}"
 
 
 @dataclass(frozen=True)
@@ -325,9 +332,11 @@ __all__: Sequence[str] = (
     "EDGE_PATH_PREFIXES",
     "GATEWAY_API_PREFIXES",
     "IDENTITY_PREFIX",
+    "V3_PREFIX",
     "ApiClient",
     "ApiResponse",
     "StandSession",
     "analytics_path",
     "identity_path",
+    "v3_path",
 )

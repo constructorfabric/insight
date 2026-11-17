@@ -22,6 +22,7 @@ persona resolution) lives in `../lib`; both are one uv project
 | `api/` | HTTP contract tests — no browser. Shared fixtures, the operation catalogue, the scratch policy and the response models live here. |
 | `api/analytics/` | The `/api/analytics` prefix, one module per path group. |
 | `api/identity/` | The `/api/identity` prefix, one module per concern. |
+| `api/v3/` | The `/api/v3` prefix (insight-v3-core), one module per path group. Its `conftest.py` holds the v3 scratch fixtures and marks every test `requires_insight_v3_core`. |
 | `api/test_gateway.py` | Neither service — the edge, sweeping 401 over every catalogued operation at once. |
 | `ui/` | The browser journeys, plus `ui/pages/` (page objects). |
 

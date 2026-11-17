@@ -480,6 +480,8 @@ services:
       mariadb: {condition: service_healthy, required: false}
       insight-v3-core-migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy, required: false}
+    env_file:
+      - ${INSIGHT_V3_CORE_ENV_FILE:-/dev/null}
     environment:
       !!merge <<: *backend-env
       APP__gears__insight_v3_core__config__clickhouse_url: "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
@@ -512,7 +514,7 @@ services:
       # to plus the provider's credentials, e.g. for a Discord webhook:
       #   APP__gears__insight_v3_core__config__alerts__destinations__ops__provider: discord
       #   APP__gears__insight_v3_core__config__alerts__destinations__ops__webhook_url: https://...
-      # Add them to a compose override; none ships here.
+      # List them in the file INSIGHT_V3_CORE_ENV_FILE names; none ships here.
       APP__gears__insight_v3_core__config__alerts__enabled: "${INSIGHT_V3_ALERTS_ENABLED:-true}"
       APP__gears__insight_v3_core__config__alerts__redis_url: "redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}"
     command:

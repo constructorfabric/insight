@@ -155,3 +155,17 @@ _PUBLISHED_FIELDS = (
 def test_the_published_field_set_has_not_changed_without_a_version_bump() -> None:
     """The version gate is coarse: it fires on a bump, not on a silent change."""
     assert tuple(manifest.Manifest.__annotations__) == _PUBLISHED_FIELDS
+
+
+@pytest.mark.parametrize(("flag", "deployed"), [(None, False), ("false", False), ("true", True)])
+def test_the_v3_capability_follows_the_v3_deploy_flag(flag: str | None, deployed: bool) -> None:
+    reader = _load_stand_reader()
+    env = _env()
+    if flag is not None:
+        env[config.INSIGHT_V3_CORE_ENV] = flag
+
+    doc = json.loads(json.dumps(manifest.build_manifest(env)))
+    parsed = reader.Manifest.parse(doc, source_path=pathlib.Path("contract-test"))
+
+    assert doc["capabilities"]["insight_v3_core"] is deployed
+    assert parsed.has_capability("insight_v3_core") is deployed

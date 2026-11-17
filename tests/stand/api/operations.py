@@ -4,7 +4,8 @@ Read from the route tables in
 `src/backend/services/{analytics,identity-resolution}/src/api/`, not from the
 committed OpenAPI documents: the catalogue must list what the gateway ROUTES,
 which includes the `/internal/*` S2S pair that is deliberately outside the
-generated document.
+generated document. insight-v3-core is the exception: its committed document is
+built from the very registrations that serve its routes, so it lists all of them.
 
 Two consumers, and the reason this is one list rather than two:
 
@@ -24,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from insight_stand import analytics_path, identity_path
+from insight_stand import analytics_path, identity_path, v3_path
 
 # Concrete stand-ins for path parameters. The 401 sweep runs before any
 # authentication, so the gateway never reaches a handler and these are never
@@ -47,6 +48,13 @@ SOME_CONNECTOR: Final[str] = "stand-in-connector"
 #: derives correctly and a literal path wins over this one.
 SOME_METRIC_KEY: Final[str] = "scratch.probe"
 
+SOME_WIDGET_ID: Final[str] = "01900000-0000-7000-8000-000000000001"
+SOME_DASHBOARD_ID: Final[str] = "01900000-0000-7000-8000-000000000002"
+SOME_GRANTEE: Final[str] = "01900000-0000-7000-8000-000000000003"
+SOME_DATASET: Final[str] = "stand-in-dataset"
+SOME_DATABASE: Final[str] = "stand-in-database"
+SOME_TABLE: Final[str] = "stand-in-table"
+
 #: Stand-in -> the parameter it stands in for. These values are synthetic and
 #: chosen for this purpose, so a path segment equal to one of them IS the
 #: parameter — which is what lets the template be derived rather than declared
@@ -56,6 +64,12 @@ _PARAMETERS: Final[dict[str, str]] = {
     SOME_METRIC_KEY: "{metric_key}",
     SOME_ACCOUNT_ID: "{account_id}",
     SOME_CONNECTOR: "{connector}",
+    SOME_WIDGET_ID: "{widget_id}",
+    SOME_DASHBOARD_ID: "{dashboard_id}",
+    SOME_GRANTEE: "{grantee}",
+    SOME_DATASET: "{name}",
+    SOME_DATABASE: "{database}",
+    SOME_TABLE: "{table}",
 }
 
 
@@ -78,7 +92,7 @@ class Operation:
 
     method: str
     path: str
-    #: `analytics` | `identity` — which service answers, per routes.yaml.
+    #: `analytics` | `identity` | `v3` — which service answers, per routes.yaml.
     service: str
 
     @property
@@ -91,12 +105,20 @@ class Operation:
         return _templated(self.path)
 
 
+V3_SERVICE: Final[str] = "v3"
+V3_CAPABILITY: Final[str] = "insight_v3_core"
+
+
 def _a(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=analytics_path(suffix), service="analytics")
 
 
 def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
+
+
+def _v(method: str, suffix: str) -> Operation:
+    return Operation(method=method, path=v3_path(suffix), service=V3_SERVICE)
 
 
 #: analytics — 26 operations.
@@ -195,7 +217,79 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/visible-persons"),
 )
 
-ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_OPERATIONS
+#: insight-v3-core — 65 operations. The gateway routes `/api/v3` only where the
+#: service is deployed, which the manifest states as `V3_CAPABILITY`.
+V3_OPERATIONS: Final[tuple[Operation, ...]] = (
+    _v("GET", "/v1/metrics"),
+    _v("POST", "/v1/metrics"),
+    _v("GET", f"/v1/metrics/{SOME_ID}"),
+    _v("PUT", f"/v1/metrics/{SOME_ID}"),
+    _v("DELETE", f"/v1/metrics/{SOME_ID}"),
+    _v("GET", f"/v1/metrics/{SOME_ID}/dependents"),
+    _v("POST", f"/v1/metrics/{SOME_ID}/run"),
+    _v("POST", f"/v1/metrics/{SOME_ID}/drilldown"),
+    _v("GET", "/v1/widgets"),
+    _v("POST", "/v1/widgets"),
+    _v("GET", f"/v1/widgets/{SOME_ID}"),
+    _v("PUT", f"/v1/widgets/{SOME_ID}"),
+    _v("DELETE", f"/v1/widgets/{SOME_ID}"),
+    _v("GET", f"/v1/widgets/{SOME_ID}/dependents"),
+    _v("GET", "/v1/dashboards"),
+    _v("POST", "/v1/dashboards"),
+    _v("GET", f"/v1/dashboards/{SOME_ID}"),
+    _v("PUT", f"/v1/dashboards/{SOME_ID}"),
+    _v("DELETE", f"/v1/dashboards/{SOME_ID}"),
+    _v("GET", f"/v1/dashboards/{SOME_ID}/dependents"),
+    _v("POST", f"/v1/dashboards/{SOME_ID}/duplicate"),
+    _v("PUT", f"/v1/dashboards/{SOME_ID}/tags"),
+    _v("POST", f"/v1/dashboards/{SOME_ID}/transfer"),
+    _v("GET", f"/v1/dashboards/{SOME_ID}/grants"),
+    _v("PUT", f"/v1/dashboards/{SOME_ID}/grants/{SOME_GRANTEE}"),
+    _v("DELETE", f"/v1/dashboards/{SOME_ID}/grants/{SOME_GRANTEE}"),
+    _v("GET", f"/v1/dashboards/{SOME_ID}/widgets"),
+    _v("POST", f"/v1/dashboards/{SOME_ID}/widgets/{SOME_WIDGET_ID}/run"),
+    _v("POST", f"/v1/dashboards/{SOME_ID}/widgets/{SOME_WIDGET_ID}/drilldown"),
+    _v("GET", "/v1/orphaned-dashboards"),
+    _v("GET", "/v1/folders"),
+    _v("POST", "/v1/folders"),
+    _v("PATCH", f"/v1/folders/{SOME_ID}"),
+    _v("DELETE", f"/v1/folders/{SOME_ID}"),
+    _v("PUT", f"/v1/folders/{SOME_ID}/dashboards/{SOME_DASHBOARD_ID}"),
+    _v("DELETE", f"/v1/folders/{SOME_ID}/dashboards/{SOME_DASHBOARD_ID}"),
+    _v("POST", f"/v1/folders/{SOME_ID}/transfer"),
+    _v("GET", f"/v1/folders/{SOME_ID}/grants"),
+    _v("PUT", f"/v1/folders/{SOME_ID}/grants/{SOME_GRANTEE}"),
+    _v("DELETE", f"/v1/folders/{SOME_ID}/grants/{SOME_GRANTEE}"),
+    _v("GET", "/v1/orphaned-folders"),
+    _v("GET", "/v1/tags"),
+    _v("GET", "/v1/pins"),
+    _v("PUT", f"/v1/pins/{SOME_DASHBOARD_ID}"),
+    _v("DELETE", f"/v1/pins/{SOME_DASHBOARD_ID}"),
+    _v("GET", "/v1/datasets"),
+    _v("GET", f"/v1/datasets/{SOME_DATASET}"),
+    _v("PUT", f"/v1/datasets/{SOME_DATASET}"),
+    _v("DELETE", f"/v1/datasets/{SOME_DATASET}"),
+    _v("GET", f"/v1/datasets/{SOME_DATASET}/dependents"),
+    _v("GET", f"/v1/datasets/{SOME_DATASET}/records"),
+    _v("GET", "/v1/tables"),
+    _v("GET", f"/v1/tables/{SOME_DATABASE}/{SOME_TABLE}"),
+    _v("GET", "/v1/alert-destinations"),
+    _v("GET", "/v1/alerts"),
+    _v("POST", "/v1/alerts"),
+    _v("POST", "/v1/alerts/preview"),
+    _v("GET", f"/v1/alerts/{SOME_ID}"),
+    _v("PUT", f"/v1/alerts/{SOME_ID}"),
+    _v("DELETE", f"/v1/alerts/{SOME_ID}"),
+    _v("POST", f"/v1/alerts/{SOME_ID}/enable"),
+    _v("POST", f"/v1/alerts/{SOME_ID}/disable"),
+    _v("GET", f"/v1/alerts/{SOME_ID}/notifications"),
+    _v("POST", "/v1/chat"),
+    _v("POST", "/v1/raw-data"),
+)
+
+ALL_OPERATIONS: Final[tuple[Operation, ...]] = (
+    ANALYTICS_OPERATIONS + IDENTITY_OPERATIONS + V3_OPERATIONS
+)
 
 #: Suffixes of the identity operations behind `require_admin`, enumerated
 #: exactly — a substring rule would silently classify future routes (and

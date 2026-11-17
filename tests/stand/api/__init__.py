@@ -2,6 +2,7 @@
 
     analytics/     the /api/analytics prefix, one module per path group
     identity/      the /api/identity prefix, one module per concern
+    v3/            the /api/v3 prefix (insight-v3-core), one module per path group
     test_gateway.py    neither — the edge itself
 
 Split by SERVICE because that is the axis along which a test's setup differs:
