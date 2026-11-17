@@ -1,12 +1,13 @@
 # Technical Design — Support Domain
 
-Version 0.3 — November 2026
+Version 0.4 — November 2026
 Based on: #886, #2297
 
 Target bronze → silver design for customer support data, with Zendesk as the
 first source. It describes where the domain should end up, not the shipped
-connector; [section 10](#10-gap-to-the-shipped-connector) lists the
-difference. Gold and UI are out of scope.
+connector; [section 11](#11-gap-to-the-shipped-connector) lists the
+difference. Gold models and UI are out of scope; [section 9](#9-metrics-and-audiences)
+names the metrics and audiences silver has to serve.
 
 <!-- toc -->
 
@@ -18,9 +19,10 @@ difference. Gold and UI are out of scope.
 - [6. Merged tickets](#6-merged-tickets)
 - [7. What is reused from task tracking](#7-what-is-reused-from-task-tracking)
 - [8. Invariants](#8-invariants)
-- [9. Sources that shape the contract](#9-sources-that-shape-the-contract)
-- [10. Gap to the shipped connector](#10-gap-to-the-shipped-connector)
-- [11. Deferred: support queues in a tracker](#11-deferred-support-queues-in-a-tracker)
+- [9. Metrics and audiences](#9-metrics-and-audiences)
+- [10. Sources that shape the contract](#10-sources-that-shape-the-contract)
+- [11. Gap to the shipped connector](#11-gap-to-the-shipped-connector)
+- [12. Deferred: support queues in a tracker](#12-deferred-support-queues-in-a-tracker)
 - [Open Questions](#open-questions)
 - [Sources](#sources)
 
@@ -350,7 +352,63 @@ replies, SLA or CSAT.
 - A custom field event is decoded with the field definition in force at the
   event's time.
 
-## 9. Sources that shape the contract
+## 9. Metrics and audiences
+
+What the contract has to serve. The metrics are computed in gold and are not
+specified here; each names the silver it reads, so a gap in silver is visible
+before gold is built.
+
+### Metrics
+
+| Family | Metrics | Reads |
+|---|---|---|
+| Volume and flow | created and solved per period, inflow vs outflow; backlog at a date and its age; volume by channel, brand, form, priority, group and driver field; share solved by AI agents; reopen rate | tickets, field history |
+| Speed | first reply time and resolution time (median, p90; business and calendar hours); next reply and requester wait time; time in each status | tickets, interactions, SLA events, field history |
+| SLA | compliance per SLA metric; breaches by policy, priority and group | SLA events, SLA policies |
+| Quality | CSAT and survey response rate; bad-rating reasons; CSAT by driver; one-touch resolution; reassignments and group escalations | satisfaction, interactions, field history |
+| Load | replies and touches per ticket; tickets per agent within a group; internal notes vs public replies | interactions, group memberships |
+| Knowledge | articles created and updated; article freshness | KB articles |
+| Cross-domain | ticket volume after a release; escalation chain ticket → tracker issue → fix; AI-agent share against first reply and CSAT; load per head over time | support classes joined with delivery, task tracking and HR |
+
+The cross-domain family is what a helpdesk's own reporting cannot answer and
+the reason the domain is in Insight. Two of its inputs are not in this design
+yet: release markers come from a CI connector, and the ticket → tracker link
+needs the vendor's per-ticket related-information endpoint (`jira_issue_ids`).
+
+### Audiences
+
+Support roles map onto the reach personas of
+[SCENARIOS.md](../../../product/SCENARIOS.md); the function is Support, or the
+function of whoever asks.
+
+| Role | Persona | Asks | Reads |
+|---|---|---|---|
+| Agent (L1/L2) | IC | How do I compare with my own past? Where does my time go? | own speed, CSAT and reopens, as trends |
+| Team lead | LEAD | Where is the team falling behind? What drives breaches? | backlog and age, SLA and first reply by group, load spread, bad-rating reasons |
+| Head of support | LEAD, EXEC | Is load outgrowing headcount? What do AI agents change? What drives volume? | volume trends, drivers, SLA by policy, AI share, CSAT by channel and brand |
+| Executive | EXEC | Is support getting better, and after which changes? | CSAT, SLA, cost per ticket, effect of releases and AI |
+| Product manager | LEAD, product | Which features and releases generate tickets? | drivers by product or component, volume after releases |
+| Engineering lead | LEAD, engineering | How many escalations reach us, how fast are they fixed? | escalation chain, defects raised from support |
+| Support QA | LEAD | Where does answer quality drop? | bad ratings and reasons, reopens, reassignments |
+| Workforce planner | LEAD | How many people, and when? | inflow by hour and weekday, agent work time |
+| Knowledge base owner | IC, LEAD | Which articles are missing or stale? | drivers without articles, article freshness |
+| Account manager | LEAD, sales | Which customers are struggling? | tickets and CSAT by customer organization |
+| Support operations | ADMIN | Is everything connected? Why is this empty? | stream health, empty CSAT on a lower plan, SLA policies without events |
+
+### Rules the metrics inherit
+
+- No verdict about a named person: a LEAD sees conclusions for a team, and a
+  comparison with fewer than eight people a side is withheld with the reason,
+  as SCENARIOS.md states for every domain.
+- Per-agent CSAT is shown only above a minimum number of ratings, an operator
+  setting ([section 5](#operator-settings)).
+- Activity counts measure load, not performance; they are shown beside speed
+  and CSAT, never as a ranking.
+- Customer organizations are a valid dimension; a requester is never a
+  person in Insight.
+- A change after a release is stated as "changed after", never "because of".
+
+## 10. Sources that shape the contract
 
 The contract is fixed only after it fits sources with different models, not
 only Zendesk look-alikes.
@@ -368,7 +426,7 @@ only Zendesk look-alikes.
 Minimum set before freezing the contract: Zendesk, Jira Service Management,
 Intercom, and ServiceNow or Salesforce.
 
-## 10. Gap to the shipped connector
+## 11. Gap to the shipped connector
 
 | Area | Shipped | Target |
 |---|---|---|
@@ -382,7 +440,7 @@ Intercom, and ServiceNow or Salesforce.
 | Silver | `class_support_activity` (person × day) + two dims | fact and dimension classes above; aggregates move to gold |
 | Gold | none | out of scope here |
 
-## 11. Deferred: support queues in a tracker
+## 12. Deferred: support queues in a tracker
 
 A team may run support as a project in Jira or YouTrack instead of a helpdesk.
 No such case is planned now. When one appears, the intended route is a
