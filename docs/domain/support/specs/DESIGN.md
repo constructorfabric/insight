@@ -1,6 +1,6 @@
 # Technical Design — Support Domain
 
-Version 0.4 — November 2026
+Version 0.5 — November 2026
 Based on: #886, #2297
 
 Target bronze → silver design for customer support data, with Zendesk as the
@@ -23,6 +23,7 @@ names the metrics and audiences silver has to serve.
 - [10. Sources that shape the contract](#10-sources-that-shape-the-contract)
 - [11. Gap to the shipped connector](#11-gap-to-the-shipped-connector)
 - [12. Deferred: support queues in a tracker](#12-deferred-support-queues-in-a-tracker)
+- [13. Deferred: mirroring Zendesk access](#13-deferred-mirroring-zendesk-access)
 - [Open Questions](#open-questions)
 - [Sources](#sources)
 
@@ -382,7 +383,10 @@ section, its metrics and its drill-downs are shown to users holding the ADMIN
 role and to nobody else, whatever their reach; every other user does not see
 the section at all. The audiences below describe whom the data is meant to
 serve; opening it to any of them is a separate decision, not implied by this
-design.
+design. The connector's admin token reads every ticket, including private
+groups, so showing its data to anyone but an administrator can reveal what
+Zendesk hides from them; [section 13](#13-deferred-mirroring-zendesk-access)
+describes how access would be opened.
 
 ### Audiences
 
@@ -461,6 +465,33 @@ connector. Open at that point: who marks a project, how it relates to the
 taxonomy constructor (#2281), and what stands in for CSAT and SLA where the
 tracker has neither.
 
+## 13. Deferred: mirroring Zendesk access
+
+Zendesk limits what each agent sees; Insight does not reproduce it while the
+UI is admin-only. Opening support data to another persona needs these limits
+first.
+
+| Zendesk control | Plans | Limits |
+|---|---|---|
+| Role: end user, light agent, agent, admin, team leader | all | light agents read tickets and add private notes only |
+| Ticket access in the agent profile: all, own groups, own organization, assigned only | below Enterprise | which tickets an agent sees |
+| Custom role: ticket access, group access, brand access | Enterprise, Employee Service Suite Professional | tickets by group, selected groups, brand |
+| Private groups | all | tickets visible only to members and roles granted access |
+| Comment access: public or none | Enterprise | whether an agent reads comments at all |
+| Report and Explore access | custom role; fixed per role below | analytics apart from ticket access |
+
+Intended route: a person sees a support row only if both Insight reach and
+Zendesk visibility allow it. Insight reach alone would expose private groups;
+Zendesk visibility alone would ignore the org chart. Aggregates over a team may
+later use reach alone; ticket-level drill-downs always need both.
+
+Data this adds to the connector: `role`, `custom_role_id` and
+`ticket_restriction` on users, a
+`zendesk_custom_roles` stream with the access fields above, the private flag
+on groups, and agents' brand membership. Open at that point: whether Report
+access should gate the support section the way ticket access gates rows, and
+what a person without a Zendesk account sees.
+
 ## Open Questions
 
 No Zendesk account is available to the team yet. Each question is answered on
@@ -505,4 +536,8 @@ Zendesk developer and help documentation:
 - [Getting the CSAT ratings of tickets](https://developer.zendesk.com/documentation/ticketing/data-and-reporting/incremental-ticket-export-csat/)
 - [Group memberships](https://developer.zendesk.com/api-reference/ticketing/groups/group_memberships/)
 - [Audit logs](https://developer.zendesk.com/api-reference/ticketing/account-configuration/audit_logs/)
+- [Custom roles](https://developer.zendesk.com/api-reference/ticketing/account-configuration/custom_roles/)
+- [User roles](https://support.zendesk.com/hc/en-us/articles/4408883763866-Understanding-Zendesk-Support-user-roles)
+- [Setting ticket access](https://support.zendesk.com/hc/en-us/articles/4408886939930-Adding-agents-and-admins-and-setting-ticket-access)
+- [Private ticket groups](https://support.zendesk.com/hc/en-us/articles/4988173561370-Creating-private-ticket-groups-and-granting-agents-access)
 - [Reporting on merged tickets](https://support.zendesk.com/hc/en-us/articles/4419174418202-What-Analytics-reporting-options-are-available-for-merged-tickets)
