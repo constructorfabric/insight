@@ -47,10 +47,10 @@ SELECT
     CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
     -- #266: total - channel = DMs + MPIMs (everything posted outside channels).
     toNullable(toInt64(greatest(
-        coalesce(u.messages_posted_count, 0) - coalesce(u.channel_messages_posted_count, 0),
+        assumeNotNull(u.messages_posted_count) - assumeNotNull(u.channel_messages_posted_count),
         0
     ))) AS direct_and_group_messages,
-    coalesce(u.messages_posted_count, 0) AS total_chat_messages,
+    assumeNotNull(u.messages_posted_count) AS total_chat_messages,
     u.channel_messages_posted_count AS channel_posts,
     CAST(NULL AS Nullable(Int64)) AS channel_replies,
     CAST(NULL AS Nullable(Int64)) AS urgent_messages,
@@ -62,6 +62,11 @@ FROM {{ source('bronze_slack', 'users_details') }} AS u FINAL
 WHERE u.user_id IS NOT NULL
   AND u.user_id != ''
   AND parseDateTimeBestEffortOrNull(u.date) IS NOT NULL
+  -- Bronze columns are all Nullable (the destination NULLs what it cannot coerce),
+  -- but Slack sends both counters on every row: a NULL is a broken row, not zero
+  -- messages. Dropped here, reported by assert_slack_bronze_rows_reach_metrics.
+  AND u.messages_posted_count IS NOT NULL
+  AND u.channel_messages_posted_count IS NOT NULL
   -- INVARIANT: the class holds workspace members only — a proven guest is dropped,
   -- an unknown flag keeps the row. `is_active` and `is_billable_seat` derive from
   -- activity (the latter is unreliable off invoiced plans): never filter on them.

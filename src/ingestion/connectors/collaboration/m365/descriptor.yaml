@@ -26,7 +26,12 @@ name: m365
 #   day Microsoft published partially is fetched again and the newest extract
 #   wins per user. MINOR: reconcile republishes the manifest; nothing stored
 #   changes meaning.
-version: "3.1.0"
+# 4.0.0 (major): every m365 staging feeder keys and identifies a user by the
+#   lowercased userPrincipalName and keeps the newest extract per key, so one
+#   account reported in two letter cases no longer yields two rows per day
+#   (#4295). MAJOR so reconcile dispatches the one-shot `dbt --full-refresh`
+#   that replaces rows already materialised under case-sensitive keys.
+version: "4.0.0"
 schedule: 0 2 * * *
 dbt_select: tag:m365+
 workflow: sync

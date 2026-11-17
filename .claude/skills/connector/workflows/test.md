@@ -78,6 +78,7 @@ Parse output and verify:
 - [ ] Every RECORD has `source_id` field (not null, not empty)
 - [ ] Every RECORD has `unique_key` field (not null, not empty)
 - [ ] `unique_key` contains `tenant_id` and `source_id`
+- [ ] Every RECORD of a stream with a cursor carries a non-null value in its `cursor_field` — the destination creates that column NOT NULL, and one null fails every sync attempt. The per-stream script in create.md §5.6 reports it as `null_cursor`; CDK connectors are checked the same way, not only nocode ones.
 - [ ] Expected streams are present in output
 - [ ] Records have expected fields from API
 
@@ -94,7 +95,7 @@ Stream: email_activity (N records)
 
 ## Phase 7: Verify Schema Completeness
 
-After discover, verify that ALL cursor fields exist in the schema:
+After discover, verify that ALL cursor fields exist in the schema (Phase 6 already checked that every record fills them):
 - For each stream with `incremental_sync`, check that `cursor_field` is in the stream's `json_schema.properties`
 - If missing: the field is from raw API response but not in inline schema → add it to schema and re-test
 
@@ -121,6 +122,7 @@ This prevents ClickHouse destination NPE on deploy.
   tenant_id: PASS (present in all records)
   source_id: PASS (present in all records)
   unique_key: PASS (contains tenant_id + source_id)
+  Cursor:    PASS (no record with a null cursor value)
   Schema:    PASS (all cursor fields present)
 
 Next: /connector deploy <name>

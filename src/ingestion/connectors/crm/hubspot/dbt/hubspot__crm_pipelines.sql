@@ -25,7 +25,7 @@ src AS (
         CAST(displayOrder AS Nullable(Int64))           AS display_order,
         toUInt8(coalesce(archived, false) OR {{ hubspot_absent_from_poll('_airbyte_extracted_at', 'polled_at') }}) AS is_deleted,
         createdAt                                       AS created_at,
-        updatedAt                                       AS updated_at,
+        {{ hubspot_known_time('updatedAt') }}           AS updated_at,
         data_source,
         toUnixTimestamp64Milli(polled_at)               AS _version
     FROM polls

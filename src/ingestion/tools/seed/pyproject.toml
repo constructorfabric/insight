@@ -24,7 +24,7 @@ requires-python = ">=3.12"
 # generation needs.
 dependencies = [
     "pymysql==1.2.3",
-    "clickhouse-connect==1.11.0",
+    "clickhouse-connect==1.12.0",
     # INVARIANT: exact pin — Faker's en_US pool changes between releases, and a
     # float pin would rename a stand's whole growth population on a rebuild.
     "faker==40.44.0",

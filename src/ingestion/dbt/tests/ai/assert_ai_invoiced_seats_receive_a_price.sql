@@ -35,12 +35,30 @@
 WITH
 -- The only invoice shape that states a per-seat amount, so the only one whose
 -- absence downstream is a coverage gap rather than a shape the vendor never sent.
-priced_months AS (
+-- Kept per seat population the operator bound the price to ('' when unbound), the
+-- same reach gold gives it: one instance's invoice does not make a month priced
+-- for another instance whose own invoice has not arrived yet.
+priced_populations AS (
     SELECT DISTINCT
         invoice.insight_tenant_id               AS tenant_id,
         invoice.source                          AS source,
-        invoice.period_month                    AS period_month
+        invoice.period_month                    AS period_month,
+        coalesce(binding.seat_source_id, '')    AS seat_source_id
     FROM {{ ref('class_ai_invoice') }} AS invoice FINAL
+    LEFT JOIN (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            source,
+            tier_ref,
+            seat_source_id
+        FROM {{ source('config', 'ai_seat_tier_map') }} FINAL
+        WHERE is_deleted = 0
+    ) AS binding
+        ON  binding.tenant_id = invoice.insight_tenant_id
+        AND binding.insight_source_id = invoice.source_id
+        AND binding.source = invoice.source
+        AND binding.tier_ref = invoice.tier_ref
     WHERE invoice.line_id IS NOT NULL
       AND invoice.category = 'subscriptions'
       AND invoice.is_proration = 0
@@ -58,10 +76,11 @@ priced_months AS (
 -- there, and this side joins the dimension. A seat with no tier can still be
 -- priced, because the single-offer branch takes that price whatever tier the seat
 -- carries, so the wrong filler here reports a seat that was in fact served.
-tiered_seats AS (
+tiered_seats_per_population AS (
     SELECT
         insight_tenant_id                       AS tenant_id,
         source,
+        source_id,
         tool,
         period_month,
         coalesce(seat_tier, 'unknown')          AS seat_tier,
@@ -71,6 +90,38 @@ tiered_seats AS (
       AND email IS NOT NULL
       AND email != ''
       AND insight_tenant_id IS NOT NULL
+    GROUP BY tenant_id, source, source_id, tool, period_month, seat_tier
+),
+
+tiered_seats AS (
+    SELECT
+        tenant_id,
+        source,
+        tool,
+        period_month,
+        seat_tier,
+        sum(seats)                              AS seats
+    FROM tiered_seats_per_population
+    GROUP BY tenant_id, source, tool, period_month, seat_tier
+),
+
+-- Seats of a population some invoice priced: a price bound to the population
+-- itself, or an unbound price, which may be the missing binding to report.
+priced_tiered_seats AS (
+    SELECT
+        tenant_id,
+        source,
+        tool,
+        period_month,
+        seat_tier,
+        sum(seats)                              AS seats
+    FROM tiered_seats_per_population
+    WHERE (tenant_id, source, period_month, source_id) IN (
+            SELECT tenant_id, source, period_month, seat_source_id FROM priced_populations
+        )
+       OR (tenant_id, source, period_month, '') IN (
+            SELECT tenant_id, source, period_month, seat_source_id FROM priced_populations
+        )
     GROUP BY tenant_id, source, tool, period_month, seat_tier
 ),
 
@@ -97,22 +148,28 @@ served_seats AS (
     GROUP BY tenant_id, tool, period_month, seat_tier
 ),
 
--- The invoice priced a seat and the month holds none to price.
+-- The invoice priced a seat and its population holds none to price: the bound
+-- population itself, or any population for an unbound price.
 no_tiered_seats AS (
-    SELECT
+    SELECT DISTINCT
         tenant_id,
         source,
         period_month,
         'no_tiered_seats'                       AS finding,
         ''                                      AS seat_tier,
         toUInt64(0)                             AS unpriced_seats
-    FROM priced_months
+    FROM priced_populations
     -- INVARIANT: a tuple NOT IN, never a LEFT JOIN tested for NULL. An unmatched
     -- ClickHouse left join yields the column's default, which for a count is 0
     -- and would read as a real answer.
-    WHERE (tenant_id, source, period_month) NOT IN (
-            SELECT tenant_id, source, period_month FROM tiered_seats
-        )
+    WHERE (seat_source_id != ''
+           AND (tenant_id, source, period_month, seat_source_id) NOT IN (
+               SELECT tenant_id, source, period_month, source_id FROM tiered_seats_per_population
+           ))
+       OR (seat_source_id = ''
+           AND (tenant_id, source, period_month) NOT IN (
+               SELECT tenant_id, source, period_month FROM tiered_seats
+           ))
 ),
 
 -- Seats of this tier exist, the month priced a seat, and fewer of them were
@@ -130,18 +187,15 @@ seats_unpriced AS (
         -- Cast because subtracting two counts yields Int64, and the other branch
         -- of the UNION carries a UInt64. The WHERE below makes it positive.
         toUInt64(seat.seats - coalesce(served.served, 0)) AS unpriced_seats
-    FROM tiered_seats AS seat
+    FROM priced_tiered_seats AS seat
     LEFT JOIN served_seats AS served
         ON  served.tenant_id = seat.tenant_id
         AND served.tool = seat.tool
         AND served.period_month = seat.period_month
         AND served.seat_tier = seat.seat_tier
-    WHERE (seat.tenant_id, seat.source, seat.period_month) IN (
-            SELECT tenant_id, source, period_month FROM priced_months
-        )
-      -- A left join that matched nothing yields 0 here, which is the honest
-      -- reading: no seat of this tier was served a fee.
-      AND seat.seats > coalesce(served.served, 0)
+    -- A left join that matched nothing yields 0 here, which is the honest
+    -- reading: no seat of this tier was served a fee.
+    WHERE seat.seats > coalesce(served.served, 0)
 )
 
 SELECT tenant_id, source, period_month, finding, seat_tier, unpriced_seats

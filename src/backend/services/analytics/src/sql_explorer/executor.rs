@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
+use toolkit_security::crypto::hash::Sha256;
 
 use crate::domain::query_gate::validate_mcp_sql;
 

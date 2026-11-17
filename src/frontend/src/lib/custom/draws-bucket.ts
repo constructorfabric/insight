@@ -15,9 +15,10 @@ export function drawsBucket(widget: Widget): boolean {
     case "table":
       return widget.columns.includes(BUCKET);
     case "line":
-    case "bar":
     case "area":
       return widget.x === BUCKET || widget.y === BUCKET;
+    case "bar":
+      return [widget.x, widget.y, widget.series].includes(BUCKET);
     case "stat":
       return widget.value === BUCKET;
     case "pie":

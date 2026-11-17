@@ -1,7 +1,7 @@
 name: hubspot
 # MAJOR per ADR-0015: the one-shot dbt --full-refresh it dispatches is what
 #   fills the new class_crm_* columns for rows stored before them.
-version: "3.2.0"
+version: "3.4.0"
 type: cdk
 schedule: "0 6 * * *"
 workflow: sync
@@ -13,7 +13,7 @@ images:
     name: source-hubspot-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-hubspot-insight:2026.11.10.09.55-d535981"
+    image: "ghcr.io/constructorfabric/source-hubspot-insight:2026.11.11.10.19-6a448d1"
 dbt_select: "tag:hubspot+"
 connection:
   namespace: "bronze_hubspot"

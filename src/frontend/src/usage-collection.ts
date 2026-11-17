@@ -35,7 +35,7 @@ const SCREEN_ITEMS = new Set([
 
 // SAFETY: `zone` and `item` are free text from the URL, and `screenPath`
 // redacts only identifier-shaped segments — an email would be recorded as-is.
-function screenOf(location: { pathname: string; search: string }): string {
+export function screenOf(location: { pathname: string; search: string }): string {
   const search = validatePortalSearch(
     Object.fromEntries(new URLSearchParams(location.search)),
   );

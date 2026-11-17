@@ -50,6 +50,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031 # v1.64.1-noble
+
 # Always a GitHub-hosted runner: the job reads the stand credentials
 # (.github/runners/README.md, "Exceptions").
 jobs:
@@ -218,10 +221,9 @@ jobs:
           grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/seed.log" | python3 "$REDACT" || true
           exit 1
 
-      - name: Install the browser the journeys drive
-        if: ${{ inputs.lane != 'api' }}
+      - name: Pull the browser image the journeys drive
         timeout-minutes: 10
-        run: uv run --project tests --frozen playwright install --with-deps chromium
+        run: docker pull "$UI_TESTS_IMAGE"
 
       # Inputs reach the shell through the environment and are quoted into
       # array elements, never spliced into the command line — a `-k` expression
@@ -258,8 +260,8 @@ jobs:
           if [ -n "${K_EXPRESSION:-}" ]; then
             echo "selection: -k ${K_EXPRESSION}"
           fi
-          uv run --project tests --frozen \
-            pytest tests/stand -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" "${args[@]}" \
+          .github/workflows/scripts/stand-suite-in-image.sh \
+            tests/stand -ra --stand-manifest /stand/manifest.json "${args[@]}" \
             2>&1 | python3 "$REDACT"
 
       # BETWEEN capture and upload, and always. A Playwright trace replays a

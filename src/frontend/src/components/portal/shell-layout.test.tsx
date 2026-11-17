@@ -194,7 +194,7 @@ describe("shell layout: phone", () => {
     await openDrawer();
     const pages = screen.getByRole("navigation", { name: "Section navigation" });
 
-    for (const label of ["Send feedback", "Settings"]) {
+    for (const label of ["Feedback", "Settings"]) {
       const row = screen.getByRole("button", { name: label });
       expect(
         pages.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -249,7 +249,7 @@ describe("shell layout: phone", () => {
     render(<Shell />);
     const user = await openDrawer();
 
-    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+    await user.click(screen.getByRole("button", { name: "Feedback" }));
 
     expect(mocks.openFeedback).toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();

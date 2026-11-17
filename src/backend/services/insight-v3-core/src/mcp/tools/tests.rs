@@ -307,6 +307,18 @@ fn every_tool_describes_itself_so_a_client_knows_when_to_reach_for_it() {
 }
 
 #[test]
+fn put_widget_tells_a_client_how_to_stack_a_bar_and_label_its_totals() {
+    let tools = CustomSurfaces::tool_router().list_all();
+    let Some(put_widget) = tools.iter().find(|tool| tool.name == "put_widget") else {
+        panic!("put_widget is a tool");
+    };
+    let description = put_widget.description.as_deref().unwrap_or_default();
+
+    assert!(description.contains("\"series\""), "{description}");
+    assert!(description.contains("\"labels\": true"), "{description}");
+}
+
+#[test]
 fn the_instructions_point_a_client_at_the_discovery_tool_first() {
     let info = rmcp::ServerHandler::get_info(&surfaces());
 

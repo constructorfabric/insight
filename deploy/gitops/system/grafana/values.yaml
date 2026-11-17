@@ -12626,6 +12626,8 @@ alerting:
     # data-quality-test run (scope scheduled). Each rule takes the LATEST line per series in
     # a 26h window, so it fires while the newest run still fails and resolves on the next
     # passing run; the family=data-quality route below groups per check and re-notifies daily.
+    # INVARIANT: keep container="main" (Argo's step container) in the selectors — a namespace-wide
+    # 26h scan outlives the 30s rule evaluation timeout, and execErrState turns that into an alert.
     - orgId: 1
       name: insight-data-quality
       folder: Insight Alerts
@@ -12644,7 +12646,7 @@ alerting:
           datasourceUid: loki
           model:
             refId: A
-            expr: last_over_time({namespace="${NS_APP}"} |= `data_quality_finding` | json event="fields.event",
+            expr: last_over_time({namespace="${NS_APP}", container="main"} |= `data_quality_finding` | json event="fields.event",
               scope="fields.scope", connector="fields.connector", check_id="fields.check_id", title="fields.title",
               tier="fields.tier", rows="fields.rows_violating" | event=`data_quality_finding` | tier=`error`
               | unwrap rows | __error__="" [26h]) by (scope, connector, check_id, title, tier)
@@ -12700,7 +12702,7 @@ alerting:
           datasourceUid: loki
           model:
             refId: A
-            expr: last_over_time({namespace="${NS_APP}"} |= `data_quality_run` | json event="fields.event",
+            expr: last_over_time({namespace="${NS_APP}", container="main"} |= `data_quality_run` | json event="fields.event",
               scope="fields.scope", connector="fields.connector", failed="fields.failed" | event=`data_quality_run`
               | unwrap failed | __error__="" [26h]) by (scope, connector)
             queryType: instant
@@ -12756,7 +12758,7 @@ alerting:
           datasourceUid: loki
           model:
             refId: A
-            expr: absent_over_time({namespace="${NS_APP}"} |= `data_quality_run` | json event="fields.event",
+            expr: absent_over_time({namespace="${NS_APP}", container="main"} |= `data_quality_run` | json event="fields.event",
               scope="fields.scope" | event=`data_quality_run` | scope=`scheduled` [26h])
             queryType: instant
         - refId: B

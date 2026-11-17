@@ -114,7 +114,7 @@ CRM-object archived streams (everything except owners) use a **two-pass list + b
 | `deals_property_history` | search + `POST /crm/v3/objects/deals/batch/read` with `propertiesWithHistory` | `class_crm_field_history` | `updatedAt` of the deal | `{objectId}:{property}:{digest}` |
 | `tickets_property_history` | search + `POST /crm/v3/objects/tickets/batch/read` with `propertiesWithHistory` | `class_crm_field_history` | `updatedAt` of the ticket | `{objectId}:{property}:{digest}` |
 
-Pipelines and property definitions are small, unpaged and carry no reliable modification time (a stage edit need not move its pipeline's `updatedAt`; HubSpot-defined properties often have none), so every sync re-reads them whole and Bronze dedups on `unique_key`.
+Pipelines and property definitions are small, unpaged and carry no reliable modification time (a stage edit need not move its pipeline's `updatedAt`; HubSpot-defined properties often have none), so every sync re-reads them whole and Bronze dedups on `unique_key`. The destination still stores their `updatedAt` cursor column `NOT NULL`, so a record without one is stamped with its `createdAt`, else `1970-01-01T00:00:00Z`; staging maps that instant back to a NULL `updated_at`.
 
 The history streams search for objects modified since the cursor, requesting only `hs_object_id`, then resolve them through `batch/read` with `propertiesWithHistory` — HubSpot caps that call at 50 inputs. Each change becomes one record. A changed object re-emits its whole history, so a change's id is a digest of the change itself (timestamp, value, source, user) and a replay lands on the same `unique_key`.
 

@@ -62,6 +62,7 @@ Run the per-stream `read` loop from `create.md` §5.6 and verify, for every stre
 - [ ] First-read record count > 0 (unless the source truly has no data).
 - [ ] Error count = 0 in both first read and resume read (any `ERROR` / `FATAL` in the log is a blocker).
 - [ ] Every emitted record contains `tenant_id`, `source_id`, `unique_key`.
+- [ ] `null_cursor=0` for every stream with a cursor: no record arrives with a null or missing `cursor_field` value (the destination stores the cursor NOT NULL). Applies to CDK connectors as much as nocode; check the mock-test fixtures cover a record without the field when the API can omit it.
 - [ ] For substreams, the parent_key/partition_field uses the parent's stable internal id (e.g. `youtrack_id` from `record['id']`), NOT a nullable human-readable field like `id_readable` from `record.get('idReadable')` — a `null` value silently routes to `.../None/<endpoint>` which 404s and drops the slice.
 - [ ] For incremental streams, a **resume read** (second run after capturing the emitted `STATE` message from stdout and writing it to `state.json`) returns a strict subset of the first-read records — usually zero. The skill's smoke-test script in `create.md` §5.6 does this capture + persist + resume automatically. A naive "second consecutive read" without persisting state cannot validate cursor advancement (`source.sh read` writes Airbyte Protocol JSON to stdout but does not update `state.json` itself).
 
@@ -231,7 +232,7 @@ python3 scripts/ci/connector_wiring.py
 
 The Airbyte destination creates every bronze table as `ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key` (append_dedup with primary key `unique_key` — configured by reconcile's `normalize_catalog.py` and mirrored by `bootstrap-db/create-connector-tables.sh`). No promotion step exists (#2877); nothing to add on the dbt side.
 
-- [ ] Every stream's inline schema declares `unique_key` and the `AddFields` formula can never yield null/empty (the destination makes the column NOT NULL)
+- [ ] Every stream's inline schema declares `unique_key` and the `AddFields` formula can never yield null/empty (the destination makes the column NOT NULL — and the same holds for every stream's cursor column, see Step 2c)
 - [ ] No `promote_bronze_to_rmt` calls or `__bronze_promoted` models are introduced
 ### Dashboard metric surfacing (only if the connector should appear in the UI)
 

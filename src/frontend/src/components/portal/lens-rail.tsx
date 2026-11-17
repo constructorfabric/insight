@@ -180,18 +180,20 @@ function FeedbackItem() {
 }
 
 function SettingsItem() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const { isMobile, setOpenMobile } = useSidebar();
+  const label = t("settings.nav_label");
 
   return (
     <SidebarMenuItem>
       <Popover open={open} onOpenChange={setOpen}>
-        <RailTooltip label="Settings">
+        <RailTooltip label={label}>
           <PopoverTrigger
             render={
-              <SidebarMenuButton aria-label="Settings">
+              <SidebarMenuButton aria-label={label}>
                 <Settings />
-                <span>Settings</span>
+                <span>{label}</span>
               </SidebarMenuButton>
             }
           />

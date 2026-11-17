@@ -107,7 +107,17 @@ name: claude-team
 #   again. MAJOR per ADR-0015 so reconcile runs the one-shot scoped
 #   `dbt --full-refresh` that brings those days back from Bronze;
 #   both overage models keep full_refresh=false and are not rebuilt.
-version: "4.0.0"
+# 5.0.0: two fixes for #4295. claude_team_code_metrics_org stores no envelope
+#   for a day without users, so its cursor cannot pass the per-user cursor and
+#   leave re-read days without a same-read reference. The ai_dev_usage activity
+#   gate reads cost as the emitted whole cents, so a sub-cent cost no longer
+#   admits a row with no activity. The ai_dev_usage incremental boundary moves
+#   from the business date to the extraction time, so days a backfill or a
+#   failed transform left behind are still admitted later (#4297). MAJOR per
+#   ADR-0015 so reconcile runs the one-shot scoped `dbt --full-refresh` that
+#   drops rows the old gate admitted and admits days the old boundary stranded;
+#   both overage models keep full_refresh=false and are not rebuilt.
+version: "5.0.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a
 # month's spend is frozen at the last read INSIDE it and whatever follows is

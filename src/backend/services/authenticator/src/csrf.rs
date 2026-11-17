@@ -17,7 +17,7 @@ use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::{IntoResponse as _, Response};
 use axum_extra::extract::cookie::CookieJar;
-use sha2::{Digest as _, Sha256};
+use toolkit_security::crypto::{constant_time_eq, hash::Sha256};
 
 use crate::api::AppState;
 use crate::api::error::SessionError;
@@ -48,11 +48,10 @@ fn verdict(
     allowlist: &[String],
 ) -> Verdict {
     if let Some(presented) = header_token {
-        // Constant-time equality via fixed-size digests — the comparison cost
-        // is independent of where the strings first differ.
+        // Fixed-size digests keep the token length out of the comparison.
         let a = Sha256::digest(presented.as_bytes());
         let b = Sha256::digest(session_token.as_bytes());
-        if a == b && !session_token.is_empty() {
+        if constant_time_eq(&a, &b) && !session_token.is_empty() {
             return Verdict::Pass;
         }
         return Verdict::Forbidden("csrf_token_mismatch");

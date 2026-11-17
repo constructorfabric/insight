@@ -1,10 +1,13 @@
 import { MetricGroupsView } from "@/components/portal/metric-groups-view";
 import { PersonHeader } from "@/components/portal/person-header";
 import { SingleGroupView } from "@/components/portal/single-group-view";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { visibleGroups } from "@/lib/insight/groups";
+import { usePageTitle } from "@/lib/portal/document-title-frame";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useSelectedPersonSection } from "@/lib/portal/use-person-sections";
+import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
  * Person zone: one specific person.
@@ -23,6 +26,9 @@ export function PersonView({ person }: { person: string }) {
   const showPlanned = usePortalShowPlanned();
   const groupIds = visibleGroups(showPlanned).map((group) => group.id);
   const selectedSection = useSelectedPersonSection();
+  const record = useIcPerson(person);
+  const name = record.data ? personDisplayName(record.data) : null;
+  usePageTitle(name);
 
   return (
     <>

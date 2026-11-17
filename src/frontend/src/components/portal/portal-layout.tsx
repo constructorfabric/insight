@@ -20,6 +20,7 @@ import {
   useSidebar,
 } from "@gears-frontx/ui-kit";
 import { useMetricsViewHidesPane } from "@/lib/portal/metrics-view-pane";
+import { PortalDocumentTitle } from "@/lib/portal/document-title-frame";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
 import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
 import {
@@ -87,32 +88,34 @@ export function PortalLayout() {
   ]);
 
   return (
-    <SidebarProvider
-      className="h-svh overflow-hidden"
-      // Rail plus pane: the provider's width is the whole open sidebar.
-      style={
-        {
-          "--rail-width": railWidth,
-          "--sidebar-width": paneHidden
-            ? railWidth
-            : `calc(${railWidth} + ${PANE_WIDTH})`,
-        } as CSSProperties
-      }
-    >
-      <PaneStateForLayout />
-      <ShellSidebar />
-      {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
-          topbar included — under the fixed shell sidebar. */}
-      <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
-        <MockBanner />
-        {/* The impersonation indicator: it names whose data is on screen and
-            carries the way out. Missing it left a view-as operator with no sign
-            they were not looking at their own org, and no exit. */}
-        <ViewAsBanner />
-        <PortalTopBar />
-        <Outlet />
-      </SidebarInset>
-    </SidebarProvider>
+    <PortalDocumentTitle>
+      <SidebarProvider
+        className="h-svh overflow-hidden"
+        // Rail plus pane: the provider's width is the whole open sidebar.
+        style={
+          {
+            "--rail-width": railWidth,
+            "--sidebar-width": paneHidden
+              ? railWidth
+              : `calc(${railWidth} + ${PANE_WIDTH})`,
+          } as CSSProperties
+        }
+      >
+        <PaneStateForLayout />
+        <ShellSidebar />
+        {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
+            topbar included — under the fixed shell sidebar. */}
+        <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
+          <MockBanner />
+          {/* The impersonation indicator: it names whose data is on screen and
+              carries the way out. Missing it left a view-as operator with no sign
+              they were not looking at their own org, and no exit. */}
+          <ViewAsBanner />
+          <PortalTopBar />
+          <Outlet />
+        </SidebarInset>
+      </SidebarProvider>
+    </PortalDocumentTitle>
   );
 }
 

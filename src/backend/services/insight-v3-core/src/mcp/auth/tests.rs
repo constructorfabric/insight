@@ -222,3 +222,23 @@ fn without_its_own_keys_url_the_advertised_origin_serves_them() {
         "https://insight.example.invalid/.well-known/jwks.json"
     );
 }
+
+#[test]
+fn decode_errors_split_backend_outage_from_bad_tokens() {
+    use jsonwebtoken::errors::{Error, ErrorKind};
+    let outage = Error::from(ErrorKind::Provider("backend down".to_owned()));
+    assert!(matches!(
+        super::decode_failure(&outage),
+        super::AuthFailure::Unavailable
+    ));
+    for kind in [
+        ErrorKind::InvalidSignature,
+        ErrorKind::ExpiredSignature,
+        ErrorKind::InvalidAlgorithm,
+    ] {
+        assert!(matches!(
+            super::decode_failure(&Error::from(kind)),
+            super::AuthFailure::Unauthorized
+        ));
+    }
+}

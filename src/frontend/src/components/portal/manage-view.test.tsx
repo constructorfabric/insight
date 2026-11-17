@@ -50,9 +50,7 @@ describe("Manage · What's new", () => {
     render(<ManageView item="whats-new" />);
 
     expect(screen.getByText("Insight · What's new")).toBeInTheDocument();
-    expect(
-      screen.getByText("Custom dashboards")
-    ).toBeInTheDocument();
+    expect(screen.getByText("Metrics view")).toBeInTheDocument();
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
 });

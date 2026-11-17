@@ -12,6 +12,18 @@ describe("drawsBucket", () => {
     ).toBe(true);
   });
 
+  it("is true for a bar stacked by it", () => {
+    expect(
+      drawsBucket({
+        type: "bar",
+        metric: "m",
+        x: "author",
+        y: "n",
+        series: "bucket",
+      }),
+    ).toBe(true);
+  });
+
   it("is true for a table that lists it among its columns", () => {
     expect(
       drawsBucket({ type: "table", metric: "m", columns: ["bucket", "n"] }),

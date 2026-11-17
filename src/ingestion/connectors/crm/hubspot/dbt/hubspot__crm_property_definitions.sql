@@ -34,7 +34,7 @@ WITH src AS (
         )                                               AS options,
         toUInt8(coalesce(archived, false))              AS is_deleted,
         createdAt                                       AS created_at,
-        updatedAt                                       AS updated_at,
+        {{ hubspot_known_time('updatedAt') }}           AS updated_at,
         data_source,
         toUnixTimestamp64Milli(_airbyte_extracted_at)   AS _version
     FROM {{ source('bronze_hubspot', 'property_definitions') }}

@@ -109,7 +109,7 @@ describe("LensRail", () => {
     const user = userEvent.setup();
     collapsedRail();
 
-    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+    await user.click(screen.getByRole("button", { name: "Feedback" }));
 
     expect(mocks.openFeedback).toHaveBeenCalled();
   });

@@ -26,11 +26,19 @@ export interface TableWidget extends WidgetBase {
   columns: string[];
 }
 
-/** A line, a bar and an area all read one column against another. */
+/** A line and an area both read one column against another. */
 export interface SeriesWidget extends WidgetBase {
-  type: "line" | "bar" | "area";
+  type: "line" | "area";
   x: string;
   y: string;
+}
+
+export interface BarWidget extends WidgetBase {
+  type: "bar";
+  x: string;
+  y: string;
+  series?: string;
+  labels?: boolean;
 }
 
 export interface StatWidget extends WidgetBase {
@@ -45,7 +53,8 @@ export interface PieWidget extends WidgetBase {
   value: string;
 }
 
-export type Widget = TableWidget | SeriesWidget | StatWidget | PieWidget;
+export type Widget =
+  TableWidget | SeriesWidget | BarWidget | StatWidget | PieWidget;
 
 /**
  * Where one field or one condition of a metric reads its value from.

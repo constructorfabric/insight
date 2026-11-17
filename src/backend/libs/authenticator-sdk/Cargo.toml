@@ -27,3 +27,4 @@ uuid = { workspace = true }
 # ES256 assertion signing. Workspace dep so the whole tree shares one
 # jsonwebtoken version + crypto provider (aws_lc_rs) — v10 panics otherwise.
 jsonwebtoken = { workspace = true }
+toolkit-security = { workspace = true }
