@@ -1,6 +1,6 @@
 # Technical Design — Support Domain
 
-Version 0.2 — November 2026
+Version 0.3 — November 2026
 Based on: #886, #2297
 
 Target bronze → silver design for customer support data, with Zendesk as the
@@ -22,6 +22,7 @@ difference. Gold and UI are out of scope.
 - [10. Gap to the shipped connector](#10-gap-to-the-shipped-connector)
 - [11. Deferred: support queues in a tracker](#11-deferred-support-queues-in-a-tracker)
 - [Open Questions](#open-questions)
+- [Sources](#sources)
 
 <!-- tocstop -->
 
@@ -63,22 +64,21 @@ Support is therefore its own domain (`class_support_*`), not rows in
 an admin email and API token — the incremental exports, SLA policies and
 satisfaction data are admin-only. Agents resolve to people by email.
 
-**Why many tables:** a ticket has many audits, each audit many events; SLA,
+**Why many tables:** a ticket has many updates, each update many events; SLA,
 ratings and metric events are separate objects with their own lifecycles, and
 custom fields, statuses and schedules are needed to decode them.
 
 | Bronze table | Endpoint | Mode | Purpose |
 |---|---|---|---|
 | `zendesk_tickets` | `incremental/tickets/cursor.json?include=metric_sets&support_type_scope=all` | incremental, cursor | Ticket snapshot, whole, including tickets handled by AI agents |
-| `zendesk_ticket_audits` | `tickets/{id}/audits` | substream over changed tickets | Full history from `Create`: fields, comments, survey events |
-| `zendesk_ticket_events` | `incremental/ticket_events?include=comment_events&support_type_scope=all` | incremental, time | Bulk history for increments — see [OQ-1](#oq-1-history-bulk-export-or-per-ticket-audits) |
+| `zendesk_ticket_events` | `incremental/ticket_events?include=comment_events&support_type_scope=all` | incremental, time | Ticket history: one record per update, with its field changes and comments |
 | `zendesk_ticket_metric_events` | `incremental/ticket_metric_events` | incremental | SLA lifecycle: apply, activate, pause, fulfill, breach |
 | `zendesk_satisfaction_ratings` | `satisfaction_ratings` | incremental, time | Legacy CSAT |
 | `zendesk_survey_responses` | `guide/survey_responses` | incremental by `created_at_start` | Survey-based CSAT |
 | `zendesk_users` | `incremental/users/cursor.json` | incremental, cursor | Agents and end users, role, suspension |
 | `zendesk_organizations` | `incremental/organizations` | incremental, time | Customer accounts |
 | `zendesk_groups`, `zendesk_group_memberships` | list | full refresh | Teams and who is in them |
-| `zendesk_ticket_fields`, `zendesk_ticket_forms`, `zendesk_custom_statuses`, `zendesk_brands` | list | full refresh | Dictionaries to decode tickets and audits |
+| `zendesk_ticket_fields`, `zendesk_ticket_forms`, `zendesk_custom_statuses`, `zendesk_brands` | list | full refresh | Dictionaries to decode tickets and their history |
 | `zendesk_sla_policies`, `zendesk_schedules` | list | full refresh | SLA targets and business hours |
 | `zendesk_deleted_tickets` | `deleted_tickets` | full refresh | Deletion census |
 | `zendesk_kb_articles` | `help_center/incremental/articles` | incremental, time | Knowledge base (Guide) |
@@ -93,8 +93,21 @@ custom fields, statuses and schedules are needed to decode them.
 | `tickets/{id}/audits` | one ticket | the account's general limit | one ticket each |
 
 Streams that share the incremental budget run on staggered schedules, tickets
-first. The audit substream is bounded by `incremental_dependency` on the
-ticket parent.
+first.
+
+**History comes from the bulk export, not per-ticket audits.** An audit is
+one save of a ticket — the fields it changed (`previous_value` → `value`), its
+comment and notifications — not a snapshot of the ticket; the list of a
+ticket's audits from `Create` is its history. `incremental/ticket_events`
+carries these updates for every ticket of the account ([OQ-1](#oq-1-layout-and-completeness-of-ticket-events)) in pages of up to
+1,000, so history costs one request per thousand updates instead of one per
+changed ticket. Its `start_time` is arbitrary, so the first sync reads from
+`start_date`, which defaults to the start of the account: every ticket then
+has its `Create`, and no initial state is derived backwards. A later
+`start_date` is an operator's choice to trade depth for backfill time; only
+then does a ticket created before it get a synthetic initial state, derived
+backwards from the snapshot as Jira does. `tickets/{id}/audits` stays a manual
+repair tool for a single ticket, not a stream.
 
 **Pagination is per endpoint, never mixed.** Cursor exports stop on
 `end_of_stream` / `has_more = false`; time-based exports pass `end_time` as the
@@ -102,15 +115,14 @@ next `start_time` until `end_of_stream`, and deduplicate on the record id,
 because a page boundary repeats records of the same second.
 
 **Both CSAT generations are collected.** An account runs one at a time, but
-may switch, so its history holds both. Survey responses link to a ticket
-through `subject_zrns` (`zen:ticket:{id}`) and through the
-`SurveyResponseSubmitted` audit event, which also carries the assignee and
-group at submission. Survey CSAT needs Support Professional or Suite Growth
-and above; on a lower plan the stream is empty, not an error.
+may switch, so its history holds both; silver merges them as
+[section 5](#satisfaction) describes. Survey responses link to a ticket
+through `subject_zrns` (`zen:ticket:{id}`). Survey CSAT needs Support
+Professional or Suite Growth and above; on a lower plan the stream is empty,
+not an error.
 
-**Deletions.** A deleted ticket stays in the export with status `deleted` and
-its audits answer 404. The 404 is recorded as an availability event, never a
-failed sync.
+**Deletions.** A deleted ticket stays in the export with status `deleted`;
+the change is recorded as an availability event.
 
 ## 4. Custom fields
 
@@ -137,14 +149,14 @@ snapshots `zendesk_ticket_fields` every sync with the `snapshot` /
 `fields_history` macros already used for user profiles, and decodes each event
 with the definition in force at its time.
 
-**In history.** A custom field change is an audit `Change` with
+**In history.** A custom field change is a `Change` child event with
 `field_name = <field id>` and the new and previous value. The vendor
 documents `tags` values as arrays; the design assumes every multi-value field
 carries the full set before and after, not a delta
-([OQ-3](#oq-3-multi-value-fields-in-audits)). Drop-down, multi-select and
+([OQ-3](#oq-3-multi-value-fields-in-history)). Drop-down, multi-select and
 checkbox values are mirrored into `tags`, so one edit can produce two `Change`
 events; silver counts the field change and treats the matching `tags` change
-as its echo. An option deletion rewrites tickets without an audit; it
+as its echo. An option deletion rewrites tickets without an update; it
 surfaces as a `snapshot_diff`.
 
 **State from history.** Because every event carries the whole value, the
@@ -159,7 +171,7 @@ Facts and dimensions only; per-day aggregates and thresholds belong to gold.
 
 | Class | Grain | Built from |
 |---|---|---|
-| `class_support_ticket_field_history` | ticket × field × event | audits / ticket events, deletions, snapshot diffs |
+| `class_support_ticket_field_history` | ticket × field × event | ticket events, deletions, snapshot diffs |
 | `class_support_tickets` | ticket, current state | fold of history, checked against the snapshot |
 | `class_support_interactions` | one message | comment events |
 | `class_support_sla_events` | ticket × SLA metric × instance × event | ticket metric events |
@@ -182,17 +194,17 @@ Same shape as `class_task_field_history`.
 | Field | Type | Description |
 |---|---|---|
 | `ticket_id` | String | Native ticket id |
-| `event_id` | String | Audit id; shared by every field one audit changed |
-| `event_kind` | String | `initial` (from `Create`), `change`, `availability`, `snapshot_diff` |
+| `event_id` | String | Update id; shared by every field one update changed |
+| `event_kind` | String | `initial` (from `Create`), `synthetic_initial` (ticket older than `start_date`), `change`, `availability`, `snapshot_diff` |
 | `field_id` | String | `status`, `priority`, `group_id`, `assignee_id`, `tags`, or a custom field id |
 | `field_cardinality` | String | `single` or `multi`, from the field type |
 | `value` | String (JSON) | New value; the whole set for multi-value fields |
 | `previous_value` | String (JSON) | Value before the event |
-| `event_at` | DateTime | Audit time |
-| `event_order` | Int | Total order within a ticket: time, then audit id, then event id |
-| `actor_id` | String | Audit author |
+| `event_at` | DateTime | Update time |
+| `event_order` | Int | Total order within a ticket: time, then update id, then child event id |
+| `actor_id` | String | Author of the update |
 | `actor_kind` | String | `agent`, `ai_agent`, `end_user`, `system` (trigger, automation, API) |
-| `channel` | String | `via.channel` of the audit |
+| `channel` | String | `via` of the update |
 
 ### Tickets
 
@@ -257,6 +269,19 @@ counts and one-touch resolution are computed from it.
 | `assignee_id`, `group_id` | String | Owner when the rating was given |
 | `rated_at` | DateTime | Time |
 
+How the two generations merge:
+
+- **One table, one score vocabulary.** Legacy `good` / `bad` map as they are;
+  a survey answer maps by its `rating_category` (`good`, `neutral`, `bad`).
+- **One rating per ticket.** When a ticket holds both kinds, the latest
+  `rated_at` wins; earlier ones stay in the table as history.
+- **One formula.** CSAT is `good / (good + neutral + bad)`; `offered` and
+  unanswered surveys are out of the denominator. `neutral` exists only after
+  a switch to surveys, so gold marks the switch date on a CSAT trend.
+- **One owner rule.** A legacy rating carries its assignee and group; a survey
+  response does not, so they come from the ticket's field history folded at
+  `rated_at`.
+
 ### Dimensions
 
 - `class_support_agents`: `agent_id`, `email`, `role`, `is_active`. Resolved
@@ -293,10 +318,10 @@ field links source to target — only the comment text names it.
 
 **What silver does.** Both tickets stay as they are, with their own history.
 
-- The source's closing audit becomes an `availability` event `merged`; the
+- The source's closing update becomes an `availability` event `merged`; the
   ticket is not counted as solved, and its resolution time is not measured.
 - Interactions on the source stay on the source: the work was done there.
-- `merged_into_id` is filled when the merge audit names the target; otherwise
+- `merged_into_id` is filled when the merge update names the target; otherwise
   it is NULL, never guessed from free text.
 
 ## 7. What is reused from task tracking
@@ -320,7 +345,7 @@ replies, SLA or CSAT.
 - `requester_id` and `organization_id` never join to people.
 - A merged or deleted ticket is never counted as solved.
 - A reopen is a `status` change out of `solved` into an open category.
-- A `tags` change that mirrors a custom field change in the same audit is not
+- A `tags` change that mirrors a custom field change in the same update is not
   a second update.
 - A custom field event is decoded with the field definition in force at the
   event's time.
@@ -369,33 +394,46 @@ tracker has neither.
 
 ## Open Questions
 
-### OQ-1: History, bulk export or per-ticket audits
+No Zendesk account is available to the team yet. Each question is answered on
+the first sync against a trial or development account; until then the
+connector and silver accept both readings where one is named.
 
-Per-ticket audits cost one request per changed ticket but give the whole
-history from `Create`. `incremental/ticket_events` returns up to 1,000 events
-a page across all tickets, but shares the 10-a-minute budget and starts at
-`start_time`, so tickets older than the window have no `Create`.
+### OQ-1: Layout and completeness of ticket events
 
-| Option | Backfill | Increments | Cost |
-|---|---|---|---|
-| A. Audits only | audits | audits | one request per changed ticket, every sync |
-| B. Audits once, then bulk | audits for every ticket once | `ticket_events` | bulk pages; one audit request per ticket ever |
-| C. Bulk only | `ticket_events` from `start_date`, initial state derived backwards | `ticket_events` | cheapest; Jira-style synthetic initial |
-| D. Bulk as change detector | audits | audits only for tickets the bulk export names | as A, minus the ticket export as parent |
+The vendor reference shows a `Comment` child event but not a `Change` one, and
+does not say whether the export reaches events of archived tickets or how far
+back it goes. Silver parses a field name both as `field_name` and as a key of
+the child event, and treats a ticket without `Create` as starting before
+`start_date`.
 
-Leaning to B. Blocking question: the layout of a `Change` child event in
-`ticket_events` (whether the field name is a key or `field_name`) and whether
-it carries the same events as audits — to compare on a test account.
+### OQ-2: How a merge names its target
 
-### OQ-2: How a merge audit names its target
+Whether the source's closing update carries a structured reference to the
+target, or only the comment text, decides whether `merged_into_id` can be
+filled. Until known, it stays NULL.
 
-Whether the source's closing audit carries a structured reference to the
-target (in `via` or an event), or only the comment text, decides whether
-`merged_into_id` can be filled. To check on a test account.
+### OQ-3: Multi-value fields in history
 
-### OQ-3: Multi-value fields in audits
-
-The vendor reference shows arrays for `tags` but does not say whether a
+The reference shows arrays for `tags` but does not say whether a
 `multiselect` or `multi_lookup` change carries the full set or only the
-difference, nor whether its `tags` echo lands in the same audit. Both decide
-how the fold reads multi-value fields — to check on a test account.
+difference, nor whether its `tags` echo lands in the same update. The fold
+assumes full sets; a delta shows up as a `snapshot_diff` against the ticket
+snapshot.
+
+## Sources
+
+Zendesk developer and help documentation:
+
+- [Incremental exports](https://developer.zendesk.com/api-reference/ticketing/ticket-management/incremental_exports/)
+- [Ticket audits](https://developer.zendesk.com/api-reference/ticketing/tickets/ticket_audits/)
+- [Ticket audit events reference](https://developer.zendesk.com/documentation/ticketing/reference-guides/ticket-audit-events-reference/)
+- [Ticket metric events](https://developer.zendesk.com/api-reference/ticketing/tickets/ticket_metric_events/)
+- [SLA policies](https://developer.zendesk.com/api-reference/ticketing/business-rules/sla_policies/)
+- [Ticket fields](https://developer.zendesk.com/api-reference/ticketing/tickets/ticket_fields/)
+- [Tickets, including merge](https://developer.zendesk.com/api-reference/ticketing/tickets/tickets/)
+- [Satisfaction ratings (legacy CSAT)](https://developer.zendesk.com/api-reference/ticketing/ticket-management/satisfaction_ratings/)
+- [CSAT survey responses](https://developer.zendesk.com/api-reference/ticketing/ticket-management/csat_survey_responses/)
+- [Getting the CSAT ratings of tickets](https://developer.zendesk.com/documentation/ticketing/data-and-reporting/incremental-ticket-export-csat/)
+- [Group memberships](https://developer.zendesk.com/api-reference/ticketing/groups/group_memberships/)
+- [Audit logs](https://developer.zendesk.com/api-reference/ticketing/account-configuration/audit_logs/)
+- [Reporting on merged tickets](https://support.zendesk.com/hc/en-us/articles/4419174418202-What-Analytics-reporting-options-are-available-for-merged-tickets)
