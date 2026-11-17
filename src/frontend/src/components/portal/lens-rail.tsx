@@ -42,7 +42,7 @@ export function LensRail() {
     <Sidebar
       collapsible="none"
       data-testid="lens-rail"
-      className="w-(--rail-width) border-e"
+      className="w-(--rail-width) border-e transition-[width] duration-200 ease-linear motion-reduce:transition-none"
     >
       <SidebarHeader>
         <img
@@ -66,11 +66,26 @@ export function LensRail() {
   );
 }
 
-/** Whether the rail's rows show their names right now. */
+/** Whether the rail's rows show their names right now: always in the phone drawer. */
 function useRailLabelsShown(): boolean {
   const labels = usePortalRailLabels();
-  const { state } = useSidebar();
-  return labels && state === "expanded";
+  const { isMobile, state } = useSidebar();
+  return isMobile || (labels && state === "expanded");
+}
+
+/** A row's name, faded in once the rail has finished widening. */
+function RailName({ children }: { children: string }) {
+  const shown = useRailLabelsShown();
+  return (
+    <span
+      className={cn(
+        "transition-opacity duration-150 motion-reduce:transition-none",
+        shown ? "opacity-100 delay-200" : "opacity-0"
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
 /**
@@ -131,7 +146,7 @@ export function RailItems() {
                   }}
                 >
                   <item.icon />
-                  <span>{item.label}</span>
+                  <RailName>{item.label}</RailName>
                 </SidebarMenuButton>
               </RailTooltip>
             </SidebarMenuItem>
@@ -172,7 +187,7 @@ function FeedbackItem() {
           }}
         >
           <MessageSquare />
-          <span>{label}</span>
+          <RailName>{label}</RailName>
         </SidebarMenuButton>
       </RailTooltip>
     </SidebarMenuItem>
@@ -193,7 +208,7 @@ function SettingsItem() {
             render={
               <SidebarMenuButton aria-label={label}>
                 <Settings />
-                <span>{label}</span>
+                <RailName>{label}</RailName>
               </SidebarMenuButton>
             }
           />
@@ -228,9 +243,8 @@ function RailTooltip({
   label: string;
   children: ReactElement;
 }) {
-  const { isMobile } = useSidebar();
   const labelsShown = useRailLabelsShown();
-  if (isMobile || labelsShown) return children;
+  if (labelsShown) return children;
 
   return (
     <Tooltip>
