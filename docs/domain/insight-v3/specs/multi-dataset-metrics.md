@@ -161,6 +161,58 @@ fields. Compiles to `UNION ALL`.
 | Drilldown | unclear | works | works | works |
 | Size | S–M | M | M–L | S |
 
+## Who does it this way
+
+| Approach | Product | How | Source |
+|---|---|---|---|
+| A. Composite | dbt MetricFlow | A ratio metric names a numerator and a denominator metric. Each is computed in its own subquery; the results are joined on their common dimensions. | [ratio metrics](https://docs.getdbt.com/docs/build/ratio) |
+| A. Composite | Waydev | A formula over up to 7 existing metrics with `+ - * / ^`. | [custom metrics](https://docs.waydev.co/docs/custom-metrics-how-to) |
+| B. Joined dataset | Looker | An explore lists joins, each with a declared `relationship`. | [join relationship](https://docs.cloud.google.com/looker/docs/reference/param-explore-join-relationship) |
+| B. Joined dataset | Cube | A cube lists joins with a `relationship`. A primary key is required so Cube can correct row multiplication. | [joins](https://docs.cube.dev/reference/data-modeling/joins) |
+| B. Joined dataset | Omni | Joins in a semantic model; typed measures let it apply symmetric aggregation against fan-out. | [measures](https://docs.omni.co/modeling/measures) |
+| B. Joined dataset | dbt MetricFlow | Joins follow declared entity keys. Joins that would fan out are not allowed. | [join logic](https://docs.getdbt.com/docs/build/join-logic) |
+| B, unguarded | Metabase | The query builder joins tables and saved questions. Rows repeated by a one-to-many join are the author's to handle. | [joins](https://www.metabase.com/docs/latest/questions/query-builder/join) |
+| C. SQL dataset | Rill | A metrics view reads one model or table. A model is a SQL `SELECT`. | [metrics views](https://docs.rilldata.com/reference/project-files/metrics-views) |
+| C. SQL dataset | DX | Data Studio: the customer writes PostgreSQL over DX's tables, joins included. | [Data Studio](https://docs.getdx.com/data-studio/) |
+| C. SQL dataset | LinearB | Metrics Builder: SQL over published views. | [Metrics Builder](https://linearb.helpdocs.io/article/uubbonyo3o-metrics-builder-in-linear-b) |
+| Dropped: widget merge | Looker | Merged results combine queries after each has run, 5,000 rows per query by default. | [merged results](https://docs.cloud.google.com/looker/docs/merged-results) |
+
+What that tells us:
+
+- **A is an established shape.** MetricFlow compiles a cross-model ratio the way
+  option A proposes: aggregate each side, then join on shared dimensions.
+- **B needs fan-out handled by design.** Every tool that models joins either
+  forbids the unsafe ones (MetricFlow) or corrects for them and needs primary
+  keys to do it (Cube, Omni). `many_to_one` only is the forbidding route.
+- **Engineering-analytics products split between SQL and a formula builder.**
+  DX and LinearB hand the author SQL, which is the case for skipping to C.
+  Waydev's builder is option A.
+- **Rill has our split.** A single-table metric layer on top, SQL shaping
+  underneath: option C with the metric compiler untouched.
+- **Merging finished results has a row cap** wherever it exists, which is why it
+  is dropped here.
+
+A in MetricFlow:
+
+```yaml
+metrics:
+  - name: food_order_pct
+    type: ratio
+    numerator: food_orders
+    denominator: orders
+```
+
+B in LookML:
+
+```lookml
+explore: order {
+  join: user {
+    sql_on: ${order.user_id} = ${user.id} ;;
+    relationship: many_to_one
+  }
+}
+```
+
 ## Work every option needs
 
 - A dataset cannot be dropped while something depends on it. Today that check
