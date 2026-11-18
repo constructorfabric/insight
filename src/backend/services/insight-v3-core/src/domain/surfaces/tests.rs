@@ -6,6 +6,8 @@ use super::*;
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::definitions::memory::MemoryDefinitions;
 
+mod composite;
+
 type R = Result<(), Box<dyn Error>>;
 
 impl Surfaces<'_> {

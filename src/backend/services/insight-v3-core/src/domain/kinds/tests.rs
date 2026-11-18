@@ -41,6 +41,19 @@ fn a_metric_names_no_definition() {
 }
 
 #[test]
+fn a_composite_names_each_metric_it_combines_once() {
+    let body = json!({ "combine": { "a": "incidents", "b": "deploys", "c": "incidents" } });
+
+    assert_eq!(
+        refers_to(DefinitionKind::Metric, &body),
+        vec![
+            Reference::new(DefinitionKind::Metric, "incidents"),
+            Reference::new(DefinitionKind::Metric, "deploys"),
+        ]
+    );
+}
+
+#[test]
 fn renaming_leaves_a_body_that_never_named_the_old_name_alone() {
     let cases = [
         (
@@ -83,6 +96,11 @@ fn renaming_rewrites_every_place_a_kind_may_name_another() {
             json!({ "widgets": "old" }),
             json!({ "widgets": "new" }),
         ),
+        (
+            DefinitionKind::Metric,
+            json!({ "combine": { "a": "old", "b": "kept" } }),
+            json!({ "combine": { "a": "new", "b": "kept" } }),
+        ),
     ];
 
     for (kind, before, after) in cases {
@@ -117,7 +135,7 @@ fn renaming_several_at_once_renames_each_reference_once() {
 fn only_the_kinds_that_can_name_a_kind_are_worth_reading() {
     assert_eq!(
         referred_to_by(DefinitionKind::Metric),
-        &[DefinitionKind::Widget]
+        &[DefinitionKind::Widget, DefinitionKind::Metric]
     );
     assert_eq!(
         referred_to_by(DefinitionKind::Widget),
@@ -132,6 +150,10 @@ fn every_kind_a_body_names_lists_the_naming_kind_among_its_holders() {
         (
             DefinitionKind::Metric,
             json!({ "table": "events", "fields": [] }),
+        ),
+        (
+            DefinitionKind::Metric,
+            json!({ "combine": { "a": "incidents", "b": "deploys" } }),
         ),
         (
             DefinitionKind::Widget,

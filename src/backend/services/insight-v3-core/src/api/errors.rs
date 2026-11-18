@@ -73,6 +73,7 @@ pub(crate) trait ApiErrors {
             ),
             CustomError::Body(source) => Self::invalid_field("body", source.to_string()),
             CustomError::Compile(source) => Self::invalid_field("body", source.to_string()),
+            CustomError::Composite(source) => Self::invalid_field("body", source.to_string()),
             CustomError::Run(source) => Self::run_error(source),
             CustomError::Store(source) => Self::definition_store_error(source),
             CustomError::Datasets(source) => Self::dataset_store_error(source),

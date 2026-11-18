@@ -16,16 +16,22 @@ pub(super) const MAX_IDENTIFIER_CHARS: usize = 128;
 /// How to sort the rows. Without it the grouping's own columns order the
 /// result, which cannot answer "the most" or "the largest".
 #[derive(Debug, Deserialize)]
-pub(super) struct OrderBy {
+pub(crate) struct OrderBy {
     /// One of the query's own `as_name` values.
-    pub(super) field: String,
+    pub(crate) field: String,
     #[serde(default)]
-    pub(super) direction: Direction,
+    pub(crate) direction: Direction,
+}
+
+impl OrderBy {
+    pub(crate) fn descending(&self) -> bool {
+        matches!(self.direction, Direction::Desc)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(super) enum Direction {
+pub(crate) enum Direction {
     #[default]
     Asc,
     Desc,
@@ -305,7 +311,7 @@ impl Field {
 /// One selected column over another, where both are aliases of the same
 /// select list. `nullIf` keeps a zero denominator a missing rate instead of
 /// an error.
-fn ratio_sql(numerator: &str, denominator: &str, percent: bool) -> String {
+pub(crate) fn ratio_sql(numerator: &str, denominator: &str, percent: bool) -> String {
     let division = format!("(`{numerator}` / nullIf(`{denominator}`, 0))");
 
     if percent {
@@ -440,7 +446,7 @@ impl Agg {
     }
 }
 
-pub(super) fn is_identifier(value: &str) -> bool {
+pub(crate) fn is_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.chars().count() <= MAX_IDENTIFIER_CHARS
         && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')

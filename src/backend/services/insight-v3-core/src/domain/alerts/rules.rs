@@ -172,6 +172,7 @@ impl<'a> AlertRules<'a> {
                 }
                 CustomError::Body(_)
                 | CustomError::Compile(_)
+                | CustomError::Composite(_)
                 | CustomError::DatasetNotReady(_) => AlertsError::MetricUnreadable {
                     metric: metric.as_str().to_owned(),
                     reason: error.to_string(),

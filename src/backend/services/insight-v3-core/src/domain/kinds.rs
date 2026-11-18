@@ -17,6 +17,7 @@ use widget::WidgetError;
 
 use crate::domain::datasets::Datasets;
 use crate::domain::definition::{DefinitionKind, DefinitionStoreError, Lookup};
+use crate::domain::query::composite::CompositeError;
 use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
@@ -47,6 +48,8 @@ pub(crate) enum KindError {
     Body(serde_json::Error),
     #[error(transparent)]
     Compile(MetricQueryError),
+    #[error(transparent)]
+    Composite(CompositeError),
     #[error("dashboard time range: {0}")]
     Range(WindowError),
     #[error(transparent)]
@@ -62,9 +65,10 @@ pub(crate) enum KindError {
 /// Checks a body against the rules of its kind, before it is stored.
 ///
 /// A lookup is passed because a kind may need what another definition holds:
-/// a widget draws its metric's columns, so it reads that metric. The datasets
-/// are passed for the same reason: a metric reads one, and what that dataset
-/// declares is what decides whether the metric has an answer.
+/// a widget draws its metric's columns, so it reads that metric, and a
+/// composite reads the metrics it combines. The datasets are passed for the
+/// same reason: a metric reads one, and what that dataset declares is what
+/// decides whether the metric has an answer.
 pub(crate) async fn check(
     kind: DefinitionKind,
     body: &Value,
@@ -73,7 +77,7 @@ pub(crate) async fn check(
     over: metric::CompileAgainst<'_>,
 ) -> Result<(), KindError> {
     match kind {
-        DefinitionKind::Metric => metric::check(body, datasets, over).await,
+        DefinitionKind::Metric => metric::check(body, definitions, datasets, over).await,
         DefinitionKind::Widget => widget::check(body, definitions, datasets).await,
         DefinitionKind::Dashboard => dashboard::check(body),
     }
@@ -94,7 +98,7 @@ pub(crate) fn refers_to(kind: DefinitionKind, body: &Value) -> Vec<Reference> {
 /// which becomes the id each is stored under.
 pub(crate) fn rename_reference(kind: DefinitionKind, body: Value, from: &str, to: &str) -> Value {
     match kind {
-        DefinitionKind::Metric => body,
+        DefinitionKind::Metric => metric::rename_reference(body, from, to),
         DefinitionKind::Widget => widget::rename_reference(body, from, to),
         DefinitionKind::Dashboard => dashboard::rename_reference(body, from, to),
     }
@@ -131,7 +135,7 @@ pub(crate) fn rename_references(
 /// reading when asking what still depends on it.
 pub(crate) fn referred_to_by(kind: DefinitionKind) -> &'static [DefinitionKind] {
     match kind {
-        DefinitionKind::Metric => &[DefinitionKind::Widget],
+        DefinitionKind::Metric => &[DefinitionKind::Widget, DefinitionKind::Metric],
         DefinitionKind::Widget => &[DefinitionKind::Dashboard],
         DefinitionKind::Dashboard => &[],
     }

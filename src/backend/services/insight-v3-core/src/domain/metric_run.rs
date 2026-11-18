@@ -6,6 +6,9 @@ use super::datasets::{self, Datasets};
 use super::definition::{DefinitionId, DefinitionKind, Definitions, StoredDefinition};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
+use super::kinds::metric::composite::{self, Children};
+use super::query::composite::{Composite, CompositeError};
+use super::query::metric::Metric;
 use super::query::metric_query::over::Over;
 use super::query::metric_query::{ColumnKind, CompiledQuery, MetricQuery, MetricRunner, RunResult};
 use super::query::time_window::{Window, WindowRequest};
@@ -111,6 +114,18 @@ impl<'a> MetricRuns<'a> {
             .ok_or_else(|| missing_metric(id))
     }
 
+    /// A stored metric, read as a plain query or a composite.
+    async fn metric_of(&self, id: &DefinitionId) -> Result<Metric, CustomError> {
+        Metric::parse(self.body_of(id).await?).map_err(CustomError::Body)
+    }
+
+    /// Every metric a composite combines, read and admitted now.
+    async fn children_of(&self, composite: &Composite) -> Result<Children, CustomError> {
+        composite::children(composite, self.definitions, self.datasets)
+            .await
+            .map_err(CustomError::from)
+    }
+
     /// The stored metric with what it is called, or the refusal that there
     /// is none.
     async fn stored_of(&self, id: &DefinitionId) -> Result<StoredDefinition, CustomError> {
@@ -122,18 +137,32 @@ impl<'a> MetricRuns<'a> {
     }
 
     /// The columns a stored metric answers, from its definition and its
-    /// dataset's declaration. Nothing is run.
+    /// dataset's declaration, or from the metrics a composite combines.
+    /// Nothing is run.
     pub(crate) async fn columns(&self, name: &DefinitionId) -> Result<Columns, CustomError> {
-        let body = self.body_of(name).await?;
-        let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
+        let metric = self.metric_of(name).await?;
 
-        let Some(named) = metric.dataset() else {
-            metric.check_table().map_err(CustomError::Compile)?;
-            return Ok(columns_of(&metric, None));
+        let kinds = match &metric {
+            Metric::Query(query) => self.query_kinds(query).await?,
+            Metric::Composite(composite) => self.children_of(composite).await?.column_kinds(false),
+        };
+
+        Ok(columns_of(&metric, kinds))
+    }
+
+    /// What a plain metric's columns hold, from its dataset's declaration
+    /// when it reads one.
+    async fn query_kinds(
+        &self,
+        query: &MetricQuery,
+    ) -> Result<Vec<(String, ColumnKind)>, CustomError> {
+        let Some(named) = query.dataset() else {
+            query.check_table().map_err(CustomError::Compile)?;
+            return Ok(query.column_kinds(None, false));
         };
         let (declaration, _) = self.ready_dataset(named).await?;
 
-        Ok(columns_of(&metric, Some(&declaration)))
+        Ok(query.column_kinds(Some(&declaration), false))
     }
 
     /// Runs a stored metric as [`MetricRuns::run`] does, and answers the
@@ -144,26 +173,43 @@ impl<'a> MetricRuns<'a> {
         request: &WindowRequest,
     ) -> Result<NamedRun, CustomError> {
         let stored = self.stored_of(id).await?;
-        let metric: MetricQuery = serde_json::from_value(stored.body).map_err(CustomError::Body)?;
+        let metric = Metric::parse(stored.body).map_err(CustomError::Body)?;
 
-        let Some(named) = metric.dataset() else {
-            let result = self.run_over_table(&metric, request).await?;
-            return Ok(NamedRun {
-                result,
-                columns: columns_of(&metric, None),
-                name: stored.name,
-            });
+        let (result, kinds) = match &metric {
+            Metric::Query(query) => self.run_query_named(query, request).await?,
+            Metric::Composite(composite) => {
+                let children = self.children_of(composite).await?;
+                let kinds = children.column_kinds(false);
+                (
+                    self.run_composite(composite, children, request).await?,
+                    kinds,
+                )
+            }
         };
-        let (declaration, table) = self.ready_dataset(named).await?;
-        let result = self
-            .run_over_ready_dataset(&metric, &declaration, &table, request)
-            .await?;
 
         Ok(NamedRun {
             result,
-            columns: columns_of(&metric, Some(&declaration)),
+            columns: columns_of(&metric, kinds),
             name: stored.name,
         })
+    }
+
+    /// A plain metric's rows, and what each of its columns holds.
+    async fn run_query_named(
+        &self,
+        query: &MetricQuery,
+        request: &WindowRequest,
+    ) -> Result<(RunResult, Vec<(String, ColumnKind)>), CustomError> {
+        let Some(named) = query.dataset() else {
+            let result = self.run_over_table(query, request).await?;
+            return Ok((result, query.column_kinds(None, false)));
+        };
+        let (declaration, table) = self.ready_dataset(named).await?;
+        let result = self
+            .run_over_ready_dataset(query, &declaration, &table, request)
+            .await?;
+
+        Ok((result, query.column_kinds(Some(&declaration), false)))
     }
 
     /// Runs a stored metric over the window the caller asked for, resolved
@@ -174,9 +220,13 @@ impl<'a> MetricRuns<'a> {
         name: &DefinitionId,
         request: &WindowRequest,
     ) -> Result<RunResult, CustomError> {
-        let body = self.body_of(name).await?;
-
-        let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
+        let metric = match self.metric_of(name).await? {
+            Metric::Query(query) => query,
+            Metric::Composite(composite) => {
+                let children = self.children_of(&composite).await?;
+                return self.run_composite(&composite, children, request).await;
+            }
+        };
 
         let Some(named) = metric.dataset() else {
             return self.run_over_table(&metric, request).await;
@@ -194,8 +244,10 @@ impl<'a> MetricRuns<'a> {
         window: &Window,
     ) -> Result<Prepared, CustomError> {
         let body = self.body_of(name).await?;
-        let metric: MetricQuery =
-            serde_json::from_value(body.clone()).map_err(CustomError::Body)?;
+        let metric = match Metric::parse(body.clone()).map_err(CustomError::Body)? {
+            Metric::Query(query) => query,
+            Metric::Composite(_) => return Err(CustomError::Composite(CompositeError::NoRecords)),
+        };
         let own_order = metric
             .own_order()
             .map(|(field, descending)| (field.to_owned(), descending));
@@ -244,6 +296,38 @@ impl<'a> MetricRuns<'a> {
             source: Source::Dataset { table },
             body,
         })
+    }
+
+    /// Runs a composite once: each child compiled over the window as a
+    /// subquery, stacked and folded. It counts no undated rows of its own.
+    async fn run_composite(
+        &self,
+        composite: &Composite,
+        mut children: Children,
+        request: &WindowRequest,
+    ) -> Result<RunResult, CustomError> {
+        let window = Self::resolve(request)?;
+        children
+            .read_engines(self.metrics)
+            .await
+            .map_err(CustomError::Run)?;
+        let compiled = children
+            .compile(
+                composite,
+                self.metrics.people(),
+                &window,
+                self.datasets_database,
+            )
+            .map_err(CustomError::Composite)?;
+
+        let mut result = self
+            .metrics
+            .run(&compiled)
+            .await
+            .map_err(CustomError::Run)?;
+        result.clock = children.clock();
+
+        Ok(result)
     }
 
     /// Runs a metric over the warehouse table it names, as the table is.
@@ -411,11 +495,11 @@ fn missing_metric(id: &DefinitionId) -> CustomError {
     }
 }
 
-/// What a definition says its rows hold, given the declaration of the
-/// dataset it reads, when it reads one.
-fn columns_of(metric: &MetricQuery, declaration: Option<&Declaration>) -> Columns {
+/// What a definition says its rows hold, given what each column holds as
+/// what it reads decides.
+fn columns_of(metric: &Metric, kinds: Vec<(String, ColumnKind)>) -> Columns {
     Columns {
-        kinds: metric.column_kinds(declaration, false),
+        kinds,
         groups: metric.groups().to_vec(),
         imposed_limit: metric
             .imposed_limit()

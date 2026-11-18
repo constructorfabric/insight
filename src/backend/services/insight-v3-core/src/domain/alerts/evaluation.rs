@@ -175,6 +175,7 @@ fn unknown_because(rule: &str, error: &CustomError) -> UnknownReason {
         }
         CustomError::Body(_)
         | CustomError::Compile(_)
+        | CustomError::Composite(_)
         | CustomError::Range(_)
         | CustomError::DatasetNotReady(_)
         | CustomError::Unanswerable(_)

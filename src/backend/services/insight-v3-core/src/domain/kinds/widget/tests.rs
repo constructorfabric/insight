@@ -3,8 +3,8 @@ use serde_json::json;
 use super::*;
 
 /// A metric whose run has no date to bucket by.
-fn metric() -> MetricQuery {
-    serde_json::from_value(json!({
+fn metric() -> Metric {
+    Metric::parse(json!({
         "dataset": "events",
         "fields": [
             { "field": "day", "type": "string", "as_name": "day" },
@@ -49,8 +49,8 @@ fn every_kind_that_draws_two_columns_checks_both() {
     }
 }
 
-fn stacked_metric() -> MetricQuery {
-    serde_json::from_value(json!({
+fn stacked_metric() -> Metric {
+    Metric::parse(json!({
         "dataset": "runs",
         "fields": [
             { "field": "outcome", "type": "string", "as_name": "outcome" },

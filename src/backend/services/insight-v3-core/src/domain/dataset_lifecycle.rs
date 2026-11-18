@@ -18,6 +18,7 @@ use super::kinds::dataset::state::Operation;
 use super::kinds::dataset::validate::validate;
 use super::kinds::metric;
 use super::kinds::metric::answerable;
+use super::query::metric::Metric;
 use super::query::metric_query::MetricQuery;
 use super::violation::Violation;
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Shape};
@@ -165,7 +166,8 @@ impl<'a> DatasetLifecycle<'a> {
         let mut broken = Vec::new();
 
         for (reader, body) in self.readers(name).await? {
-            let Ok(written) = serde_json::from_value::<MetricQuery>(body) else {
+            // INVARIANT: a composite names no dataset, so no reader is one.
+            let Ok(Metric::Query(written)) = Metric::parse(body) else {
                 continue;
             };
 

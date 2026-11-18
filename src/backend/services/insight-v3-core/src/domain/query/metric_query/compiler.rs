@@ -30,7 +30,7 @@ impl super::MetricQuery {
 /// Where a whole run stops without the metric having asked it to: the
 /// default bound when it names none, or the most it may ask for when it
 /// names more. A bound the metric names itself is its own question.
-fn imposed_limit(limit: Option<u32>) -> Option<u32> {
+pub(crate) fn imposed_limit(limit: Option<u32>) -> Option<u32> {
     match limit {
         None => Some(DEFAULT_LIMIT),
         Some(limit) if limit > MAX_LIMIT => Some(MAX_LIMIT),
@@ -40,7 +40,7 @@ fn imposed_limit(limit: Option<u32>) -> Option<u32> {
 
 /// How much of the result a compiled query is asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Bound {
+pub(crate) enum Bound {
     /// Everything a reader drawing the whole result gets: ordered as the
     /// metric says, cut at its own limit or the default.
     Whole,
@@ -48,6 +48,9 @@ enum Bound {
     /// wrote survives, and then the order behind it is made total so the
     /// same N rows answer every page.
     Paged,
+    /// Every row, in no order: a subquery whose rows something outside it
+    /// combines, orders and cuts.
+    Inner,
 }
 
 /// What the field list compiled to.
@@ -141,7 +144,7 @@ impl MetricQuery {
     /// Whether this metric answers one row per group rather than one per
     /// record, which is what decides whether a windowed run buckets or merely
     /// reports the bucket each row falls in.
-    fn groups_its_rows(&self) -> bool {
+    pub(crate) fn groups_its_rows(&self) -> bool {
         !self.group_by.is_empty() || self.fields.iter().any(|field| field.agg.is_some())
     }
 
@@ -296,6 +299,18 @@ impl MetricQuery {
         over: Option<Over<'_>>,
     ) -> Result<CompiledQuery, MetricQueryError> {
         self.assemble(people, window, engine, over, Bound::Whole)
+    }
+
+    /// The same query as a subquery, with every row it groups and nothing
+    /// ordering or cutting them.
+    pub(crate) fn compile_inner(
+        &self,
+        people: &People,
+        window: &Window,
+        engine: TableEngine,
+        over: Option<Over<'_>>,
+    ) -> Result<CompiledQuery, MetricQueryError> {
+        self.assemble(people, window, engine, over, Bound::Inner)
     }
 
     /// The same query for a reader that orders and pages it itself.
@@ -589,7 +604,7 @@ impl MetricQuery {
 ///
 /// A bounded read is an ordered read: which rows a `LIMIT` keeps is only
 /// an answer when something says which come first.
-fn bound_by(
+pub(crate) fn bound_by(
     sql: &mut String,
     bound: Bound,
     limit: Option<u32>,
@@ -600,6 +615,7 @@ fn bound_by(
     let limit = match bound {
         Bound::Whole => Some(limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT)),
         Bound::Paged => limit.map(|limit| limit.min(MAX_LIMIT)),
+        Bound::Inner => None,
     };
     let Some(limit) = limit else {
         return;

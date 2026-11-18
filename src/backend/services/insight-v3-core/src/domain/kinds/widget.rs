@@ -12,6 +12,8 @@ use crate::domain::datasets::Datasets;
 use crate::domain::definition::{DefinitionId, DefinitionKind, Lookup};
 use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::kinds::metric::answerable::effective_clock;
+use crate::domain::kinds::metric::composite;
+use crate::domain::query::metric::Metric;
 use crate::domain::query::metric_query::MetricQuery;
 
 #[derive(Debug, Deserialize)]
@@ -98,7 +100,7 @@ impl Widget {
     /// The columns a reader narrows the detail by: the group a bar, a slice
     /// or a row stands for. A table row stands for the groups its metric
     /// makes, where the table draws them; a stat stands for no group.
-    fn narrowing_columns<'w>(&'w self, drawn: &'w MetricQuery) -> Vec<&'w str> {
+    fn narrowing_columns<'w>(&'w self, drawn: &'w Metric) -> Vec<&'w str> {
         match self {
             Self::Line { x, .. } | Self::Bar { x, .. } | Self::Area { x, .. } => vec![x.as_str()],
             Self::Pie { label, .. } => vec![label.as_str()],
@@ -129,7 +131,7 @@ impl Widget {
     }
 
     /// Refuses a widget whose metric cannot supply what it draws.
-    fn check_against(&self, metric: &MetricQuery, clocked: bool) -> Result<(), WidgetError> {
+    fn check_against(&self, metric: &Metric, clocked: bool) -> Result<(), WidgetError> {
         let available = metric.column_names(clocked);
 
         if self.columns().is_empty() {
@@ -154,7 +156,7 @@ impl Widget {
     /// takes the bar's column in the detail as well.
     fn check_detail_against(
         &self,
-        drawn: &MetricQuery,
+        drawn: &Metric,
         detail: &MetricQuery,
         clocked: bool,
     ) -> Result<(), WidgetError> {
@@ -194,6 +196,11 @@ pub(crate) enum WidgetError {
     #[error("there is no metric named `{0}`")]
     NoMetric(String),
     #[error(
+        "`{0}` combines other metrics and has no records of its own, so it cannot be a \
+         widget's detail; name one of the metrics it combines"
+    )]
+    CompositeDetail(String),
+    #[error(
         "`{column}` is not a column of the detail metric `{detail}`, so its rows could not be \
          narrowed to what this widget draws; the detail's columns are: {available}"
     )]
@@ -216,18 +223,13 @@ pub(crate) async fn check(
     let widget: Widget =
         serde_json::from_value(body.clone()).map_err(|error| KindError::Widget(error.into()))?;
 
-    let metric_name = DefinitionId::parse(widget.metric())
-        .map_err(|_| KindError::Widget(WidgetError::NoMetric(widget.metric().to_owned())))?;
-
-    let stored = definitions
-        .get(DefinitionKind::Metric, &metric_name)
-        .await
-        .map_err(KindError::Store)?
-        .ok_or_else(|| KindError::Widget(WidgetError::NoMetric(widget.metric().to_owned())))?;
-
-    let metric: MetricQuery =
-        serde_json::from_value(stored).map_err(|error| KindError::Widget(error.into()))?;
-    let dated = clocked(&metric, datasets).await;
+    let metric = stored_metric(widget.metric(), definitions).await?;
+    let dated = match &metric {
+        Metric::Query(query) => clocked(query, datasets).await,
+        Metric::Composite(combined) => composite::children(combined, definitions, datasets)
+            .await?
+            .dated(),
+    };
 
     widget
         .check_against(&metric, dated)
@@ -236,7 +238,11 @@ pub(crate) async fn check(
     let Some(named) = widget.detail() else {
         return Ok(());
     };
-    let detail = stored_metric(named, definitions).await?;
+    let Metric::Query(detail) = stored_metric(named, definitions).await? else {
+        return Err(KindError::Widget(WidgetError::CompositeDetail(
+            named.to_owned(),
+        )));
+    };
     let dated = clocked(&detail, datasets).await;
 
     widget
@@ -245,7 +251,7 @@ pub(crate) async fn check(
 }
 
 /// A stored metric, read as one, or the refusal that there is none.
-async fn stored_metric(named: &str, definitions: &dyn Lookup) -> Result<MetricQuery, KindError> {
+async fn stored_metric(named: &str, definitions: &dyn Lookup) -> Result<Metric, KindError> {
     let name = DefinitionId::parse(named)
         .map_err(|_| KindError::Widget(WidgetError::NoMetric(named.to_owned())))?;
 
@@ -255,7 +261,7 @@ async fn stored_metric(named: &str, definitions: &dyn Lookup) -> Result<MetricQu
         .map_err(KindError::Store)?
         .ok_or_else(|| KindError::Widget(WidgetError::NoMetric(named.to_owned())))?;
 
-    serde_json::from_value(stored).map_err(|error| KindError::Widget(error.into()))
+    Metric::parse(stored).map_err(|error| KindError::Widget(error.into()))
 }
 
 /// Whether a windowed run of this metric has a date to bucket by, and so

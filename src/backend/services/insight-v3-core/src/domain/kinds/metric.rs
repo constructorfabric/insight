@@ -1,12 +1,16 @@
 //! What a stored metric admits, and what it names.
 
 pub(crate) mod answerable;
+pub(crate) mod composite;
 
 use serde_json::Value;
 
 use super::{KindError, Reference};
 use crate::domain::datasets::{self, Datasets};
+use crate::domain::definition::{DefinitionKind, Lookup};
 use crate::domain::kinds::metric::answerable::effective_clock;
+use crate::domain::query::composite::Composite;
+use crate::domain::query::metric::{COMBINE_KEY, Metric};
 use crate::domain::query::metric_query::TableEngine;
 use crate::domain::query::metric_query::over::Over;
 use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, People};
@@ -29,22 +33,35 @@ const A_WINDOW: Window = Window::Requested {
 /// get, so one that cannot be read as a metric at all is refused here rather
 /// than at each of them. What the metric asks of its dataset is settled here
 /// too: the declaration is what says whether a field exists, what type it
-/// holds, and so whether the question has an answer.
+/// holds, and so whether the question has an answer. A composite reads the
+/// metrics it combines, which may be arriving in the same batch.
 pub(crate) async fn check(
     body: &Value,
+    definitions: &dyn Lookup,
     datasets: &dyn Datasets,
     over: CompileAgainst<'_>,
 ) -> Result<(), KindError> {
-    let metric: MetricQuery = serde_json::from_value(body.clone()).map_err(KindError::Body)?;
+    match Metric::parse(body.clone()).map_err(KindError::Body)? {
+        Metric::Query(query) => check_query(&query, datasets, over).await,
+        Metric::Composite(composite) => {
+            check_composite(&composite, definitions, datasets, over).await
+        }
+    }
+}
 
+async fn check_query(
+    metric: &MetricQuery,
+    datasets: &dyn Datasets,
+    over: CompileAgainst<'_>,
+) -> Result<(), KindError> {
     let Some(named) = metric.dataset() else {
         let dated = metric.has_clock().map_err(KindError::Compile)?;
-        return compiles(&metric, over.people, None, dated);
+        return compiles(metric, over.people, None, dated);
     };
     if metric.addresses_a_relation() {
         return Err(KindError::Compile(MetricQueryError::AddressesARelation));
     }
-    reaches_past_the_declaration(&metric)?;
+    reaches_past_the_declaration(metric)?;
     metric.check_window().map_err(KindError::Compile)?;
 
     let Some(ready) = datasets::ready(datasets, named)
@@ -54,7 +71,7 @@ pub(crate) async fn check(
         return Err(KindError::DatasetNotReady(named.to_owned()));
     };
 
-    let violations = answerable::check(&metric, &ready.declaration);
+    let violations = answerable::check(metric, &ready.declaration);
     if !violations.is_empty() {
         return Err(KindError::Unanswerable(violations));
     }
@@ -64,9 +81,31 @@ pub(crate) async fn check(
         database: over.database,
         table: &ready.table,
     };
-    let dated = effective_clock(&metric, &ready.declaration).is_some();
+    let dated = effective_clock(metric, &ready.declaration).is_some();
 
-    compiles(&metric, over.people, Some(relation), dated)
+    compiles(metric, over.people, Some(relation), dated)
+}
+
+/// Whether a composite's children can be combined, and the query that
+/// combines them built, as [`compiles`] asks of a plain metric.
+async fn check_composite(
+    composite: &Composite,
+    definitions: &dyn Lookup,
+    datasets: &dyn Datasets,
+    over: CompileAgainst<'_>,
+) -> Result<(), KindError> {
+    let children = composite::children(composite, definitions, datasets).await?;
+
+    children
+        .compile(composite, over.people, &Window::legacy(), over.database)
+        .map_err(KindError::Composite)?;
+    if children.dated() {
+        children
+            .compile(composite, over.people, &A_WINDOW, over.database)
+            .map_err(KindError::Composite)?;
+    }
+
+    Ok(())
 }
 
 /// What a dry compilation needs beside the dataset: where the records are
@@ -133,9 +172,37 @@ fn reaches_past_the_declaration(metric: &MetricQuery) -> Result<(), KindError> {
     ))
 }
 
-/// A metric names no other definition: it reads a dataset, which is not one.
-pub(crate) fn refers_to(_body: &Value) -> Vec<Reference> {
-    Vec::new()
+/// The metrics a composite combines, when its body names them readably. A
+/// plain metric names no other definition: it reads a dataset, which is not
+/// one.
+pub(crate) fn refers_to(body: &Value) -> Vec<Reference> {
+    let Some(combined) = body.get(COMBINE_KEY).and_then(Value::as_object) else {
+        return Vec::new();
+    };
+
+    let mut named = Vec::new();
+    for metric in combined.values().filter_map(Value::as_str) {
+        let reference = Reference::new(DefinitionKind::Metric, metric);
+        if !named.contains(&reference) {
+            named.push(reference);
+        }
+    }
+
+    named
+}
+
+/// The same composite, combining `to` wherever it combined `from`.
+pub(crate) fn rename_reference(mut body: Value, from: &str, to: &str) -> Value {
+    let Some(combined) = body.get_mut(COMBINE_KEY).and_then(Value::as_object_mut) else {
+        return body;
+    };
+    for metric in combined.values_mut() {
+        if metric.as_str() == Some(from) {
+            *metric = Value::String(to.to_owned());
+        }
+    }
+
+    body
 }
 
 /// The dataset this metric reads, when its body names one readably.
