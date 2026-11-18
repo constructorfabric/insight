@@ -264,8 +264,7 @@ impl Field {
     ///
     /// The two are this query's own `as_name`s, already selected: `ClickHouse`
     /// resolves an alias inside the same select list, so a rate needs no
-    /// second pass over the table. `nullIf` keeps a zero denominator a
-    /// missing rate instead of an error.
+    /// second pass over the table.
     pub(super) fn ratio(
         &self,
         selected: &HashSet<&str>,
@@ -290,13 +289,7 @@ impl Field {
             }
         }
 
-        let division = format!("(`{numerator}` / nullIf(`{denominator}`, 0))");
-
-        Ok(Some(if self.percent {
-            format!("(100 * {division})")
-        } else {
-            division
-        }))
+        Ok(Some(ratio_sql(numerator, denominator, self.percent)))
     }
 
     /// The same, keeping only the rows this field's own conditions admit.
@@ -306,6 +299,19 @@ impl Field {
             (Some(agg), None) => format!("{}({read})", agg.sql()),
             (None, _) => read,
         }
+    }
+}
+
+/// One selected column over another, where both are aliases of the same
+/// select list. `nullIf` keeps a zero denominator a missing rate instead of
+/// an error.
+fn ratio_sql(numerator: &str, denominator: &str, percent: bool) -> String {
+    let division = format!("(`{numerator}` / nullIf(`{denominator}`, 0))");
+
+    if percent {
+        format!("(100 * {division})")
+    } else {
+        division
     }
 }
 
