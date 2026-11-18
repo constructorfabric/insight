@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::domain::query::metric_query::{CompiledQuery, FieldType, People, TableEngine};
+use crate::domain::query::metric_query::{
+    CompiledQuery, FieldType, MetricQuery, People, TableEngine,
+};
 use crate::domain::query::time_window::{RequestedRange, Window};
 
 fn composite(body: Value) -> Composite {
