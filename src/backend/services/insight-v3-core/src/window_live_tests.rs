@@ -28,9 +28,24 @@ struct Stand {
     table: String,
 }
 
+async fn stand_or_skip(schema: &str) -> Option<Stand> {
+    let client = live_client()?;
+    let table = format!("window_{}", Uuid::now_v7().simple());
+    execute(&client, &format!("CREATE TABLE {table} {schema}")).await;
+
+    Some(Stand {
+        runner: MetricRunner::new(
+            insight_clickhouse::Client::new(client.config().clone()),
+            People::new("identity"),
+        ),
+        client,
+        table,
+    })
+}
+
 // Empty counts as unset: the CI matrix passes '' to entries without a
 // provisioned ClickHouse, and set-but-empty must skip exactly like absent.
-async fn stand_or_skip(schema: &str) -> Option<Stand> {
+pub(crate) fn live_client() -> Option<insight_clickhouse::Client> {
     let url = std::env::var(URL_VAR).unwrap_or_default();
     if url.is_empty() {
         eprintln!("skipping: {URL_VAR} not set");
@@ -59,18 +74,7 @@ async fn stand_or_skip(schema: &str) -> Option<Stand> {
         config = config.with_auth(user, password);
     }
 
-    let client = insight_clickhouse::Client::new(config);
-    let table = format!("window_{}", Uuid::now_v7().simple());
-    execute(&client, &format!("CREATE TABLE {table} {schema}")).await;
-
-    Some(Stand {
-        runner: MetricRunner::new(
-            insight_clickhouse::Client::new(client.config().clone()),
-            People::new("identity"),
-        ),
-        client,
-        table,
-    })
+    Some(insight_clickhouse::Client::new(config))
 }
 
 impl Stand {
@@ -144,7 +148,7 @@ impl Stand {
     }
 }
 
-async fn execute(client: &insight_clickhouse::Client, sql: &str) {
+pub(crate) async fn execute(client: &insight_clickhouse::Client, sql: &str) {
     client
         .query(sql)
         .execute()

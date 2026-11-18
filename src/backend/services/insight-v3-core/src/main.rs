@@ -11,6 +11,9 @@ mod store;
 mod window_live_tests;
 
 #[cfg(test)]
+mod composite_live_tests;
+
+#[cfg(test)]
 mod live_mariadb;
 
 #[cfg(test)]
