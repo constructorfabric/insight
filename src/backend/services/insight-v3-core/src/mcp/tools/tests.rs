@@ -319,6 +319,21 @@ fn put_widget_tells_a_client_how_to_stack_a_bar_and_label_its_totals() {
 }
 
 #[test]
+fn put_metric_tells_a_client_how_to_combine_metrics() {
+    let tools = CustomSurfaces::tool_router().list_all();
+    let Some(put_metric) = tools.iter().find(|tool| tool.name == "put_metric") else {
+        panic!("put_metric is a tool");
+    };
+    let description = put_metric.description.as_deref().unwrap_or_default();
+
+    assert!(description.contains("\"combine\""), "{description}");
+    assert!(
+        description.contains("\"field\": \"incidents.count\""),
+        "{description}"
+    );
+}
+
+#[test]
 fn the_instructions_point_a_client_at_the_discovery_tool_first() {
     let info = rmcp::ServerHandler::get_info(&surfaces());
 
