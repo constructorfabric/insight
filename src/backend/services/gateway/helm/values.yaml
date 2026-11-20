@@ -137,8 +137,6 @@ resources:
 # Liveness = static /healthz. Readiness = LOCAL only, deliberately NOT gated on
 # the authenticator (DESIGN 3.15): coupling a caching proxy's readiness to a
 # downstream dependency turns a transient auth blip into a fleet-wide outage.
-# The authenticator dependency is surfaced separately at /healthz/authenticator
-# for monitoring/alerting only, never the readiness gate.
 livenessProbe:
   httpGet:
     path: /healthz

@@ -12,11 +12,6 @@ app.kubernetes.io/name: git-cli-proxy
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- /*
-Bytes in a Kubernetes quantity like `50Gi`. Only the forms an operator would
-write for a volume are accepted; anything else fails loudly rather than being
-silently read as zero, which would make the budget guard below vacuous.
-*/ -}}
 {{- define "insight-git-cli-proxy.quantityBytes" -}}
 {{- $q := . | toString -}}
 {{- $n := regexFind "^[0-9]+" $q -}}
@@ -32,12 +27,6 @@ silently read as zero, which would make the budget guard below vacuous.
 {{- end }}
 
 {{- /*
-The effective cache budget in bytes. Defaults to 85% of persistence.size —
-the remainder is headroom for transient packs and git temp files, because the
-app reclaims to its own budget while the VOLUME filling up is enforced by
-kubelet as pod eviction: a crash, not a mechanism. `cache.diskBudgetBytes`
-overrides the default and is validated against the same band.
-
 Integer math only: Helm parses YAML numbers as float64, and a budget in the
 1e10 range renders in scientific notation once it becomes one — which the
 service then refuses to deserialize.
@@ -61,9 +50,6 @@ service then refuses to deserialize.
 {{- define "insight-git-cli-proxy.validateDiskBudget" -}}
 {{- $budget := int64 (include "insight-git-cli-proxy.diskBudgetBytes" .) -}}
 {{- $repoCap := int64 (required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes) -}}
-{{- /* Admission reserves the per-repo cap before a clone, so the cap must fit
-       under the service's reclaim high watermark (85% of the budget) — a cap
-       merely under the budget boots and then 429s every request forever. */ -}}
 {{- if gt (mul $repoCap 100) (mul $budget 85) -}}
   {{- fail (printf "cache.maxRepoBytes (%d) exceeds 85%% of the cache budget (%d bytes): admission reserves the per-repo cap up front, so such a repository could never be admitted even on an empty cache." $repoCap $budget) -}}
 {{- end -}}

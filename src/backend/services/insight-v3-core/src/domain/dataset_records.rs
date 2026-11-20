@@ -1,22 +1,15 @@
-//! Looking at what a dataset holds: one page of its records, ordered by
-//! the instant they arrived or by a field the dataset declares.
-
 use super::datasets::{self, Datasets};
 use super::definition::DefinitionId;
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::read::{Form, PAYLOAD_COLUMN, read};
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Page, Record};
 
-/// The column every record carries, whatever the dataset declares.
 pub(crate) const ARRIVED: &str = "received_at";
 
-/// Reads a dataset's own records, for a reader deciding whether what arrives
-/// is what they meant to send.
 #[derive(Debug)]
 pub(crate) struct DatasetRecords<'a> {
     datasets: &'a dyn Datasets,
     tables: &'a DatasetTables,
-    /// How many records one look shows, whatever the dataset holds.
     cap: u64,
 }
 
@@ -29,10 +22,6 @@ impl<'a> DatasetRecords<'a> {
         }
     }
 
-    /// One page of a dataset's records, and how many it holds in all.
-    ///
-    /// A dataset mid-create or mid-removal answers nothing: there is no table
-    /// to look in, or there is about to be none.
     pub(crate) async fn page(
         &self,
         name: &DefinitionId,
@@ -63,8 +52,6 @@ impl<'a> DatasetRecords<'a> {
 
         match looked.await {
             Ok(preview) => Ok(preview),
-            // The dataset went while this read was in flight, which is the
-            // same answer as its never having been there.
             Err(DatasetTableError::Vanished) => {
                 Err(PreviewError::NotReady(name.as_str().to_owned()))
             }
@@ -73,28 +60,20 @@ impl<'a> DatasetRecords<'a> {
     }
 }
 
-/// What a reader asked one look for.
 #[derive(Debug)]
 pub(crate) struct Look {
     pub(crate) limit: Option<u64>,
     pub(crate) offset: u64,
-    /// A declared field, or `received_at`. Absent means the order records
-    /// arrived in.
     pub(crate) order_by: Option<String>,
     pub(crate) descending: bool,
 }
 
-/// How the page is ordered: by a declared field, read as the declaration says
-/// it is read, or by the instant the record arrived.
 fn ordering(declaration: &Declaration, look: &Look) -> Result<String, PreviewError> {
     let direction = if look.descending { "DESC" } else { "ASC" };
     let Some(named) = look.order_by.as_deref() else {
         return Ok(format!("{ARRIVED} {direction}"));
     };
 
-    // A declared field wins a name it shares with the arrival column: the
-    // reader is ordering by the column they can see, and nothing stops a
-    // declaration naming a field `received_at`.
     let declared = declaration.fields.iter().find(|field| field.name == named);
     if declared.is_none() && named == ARRIVED {
         return Ok(format!("{ARRIVED} {direction}"));
@@ -109,32 +88,19 @@ fn ordering(declaration: &Declaration, look: &Look) -> Result<String, PreviewErr
             .collect(),
     })?;
 
-    // A record that does not carry the field reads as NULL, and ClickHouse
-    // sorts NULL above every value: without this the first page of a sparse
-    // field is nothing but blanks.
     Ok(format!(
         "{} {direction} NULLS LAST",
         read(field, Form::Raw, PAYLOAD_COLUMN)
     ))
 }
 
-/// What one look at a dataset shows: a page of its records, how many there
-/// are in all, and how wide the page was.
 #[derive(Debug)]
 pub(crate) struct Preview {
     pub(crate) records: Vec<Record>,
     pub(crate) total: u64,
-    /// How many records this page could hold. A reader paging by offset needs
-    /// it: the cap is an installation's setting, not a number a caller knows.
     pub(crate) limit: u64,
 }
 
-/// How many records a look shows: what was asked for, or the cap when nothing
-/// was asked.
-///
-/// SAFETY: a size outside the range is refused rather than quietly brought
-/// into it. A caller paging by the size it asked for would step over the
-/// records a smaller page left behind, and nothing in the answer would say so.
 fn shown(wanted: Option<u64>, cap: u64) -> Result<u64, PreviewError> {
     match wanted {
         None => Ok(cap),
@@ -175,8 +141,6 @@ mod tests {
         );
     }
 
-    /// A direction that is accepted, validated and then dropped is a lie the
-    /// caller cannot see.
     #[test]
     fn a_direction_is_honoured_even_where_no_field_is_named() {
         assert_eq!(
@@ -189,8 +153,6 @@ mod tests {
         );
     }
 
-    /// The declaration says how a field is read; ordering reads it the same
-    /// way a metric would, so the page is ordered by the value, not the text.
     #[test]
     fn a_named_field_is_ordered_by_the_value_the_declaration_reads() {
         let Ok(ordered) = ordering(&declaration(), &look(Some("lines"), true)) else {
@@ -203,9 +165,6 @@ mod tests {
         );
     }
 
-    /// A record that does not carry the field reads as NULL, and ClickHouse
-    /// sorts NULL above every value: without NULLS LAST the first page of a
-    /// sparse field is nothing but blanks.
     #[test]
     fn a_page_ordered_by_a_field_puts_the_records_missing_it_last() {
         for descending in [true, false] {
@@ -229,9 +188,6 @@ mod tests {
         assert_eq!(shown(Some(50), 50).ok(), Some(50));
     }
 
-    /// Cutting a page down quietly would let a caller paging by the size it
-    /// asked for step over the records the smaller page left behind. A page
-    /// of none is no page at all, and the catalogue refuses it too.
     #[test]
     fn a_page_of_a_size_this_installation_does_not_serve_is_refused() {
         for asked in [0, 51, 10_000] {

@@ -1,9 +1,4 @@
 #!/bin/sh
-# Gateway entrypoint: compile the mounted routes.yaml into nginx.conf with
-# routegen (deployment settings from the environment), validate, then exec
-# OpenResty. Nothing is baked or committed -- routes.yaml is the single source
-# of truth (a ConfigMap in k8s, a bind-mount in compose) and every
-# deployment-specific value arrives as an env var (gateway DESIGN DD-GW-02).
 set -eu
 
 ROUTES="${GATEWAY_ROUTES_FILE:-/etc/gateway/routes.yaml}"
@@ -29,7 +24,6 @@ set -- --routes "$ROUTES" -o "$OUT"
 [ -n "${GATEWAY_AUTHZ_CONNECT_TIMEOUT_MS:-}" ] && set -- "$@" --authz-connect-timeout-ms "$GATEWAY_AUTHZ_CONNECT_TIMEOUT_MS"
 [ -n "${GATEWAY_AUTHZ_READ_TIMEOUT_MS:-}" ]    && set -- "$@" --authz-read-timeout-ms "$GATEWAY_AUTHZ_READ_TIMEOUT_MS"
 
-# Trusted ingress CIDRs (comma-separated) -> one --set-real-ip-from each.
 if [ -n "${GATEWAY_SET_REAL_IP_FROM:-}" ]; then
     OLD_IFS=$IFS; IFS=','
     for cidr in $GATEWAY_SET_REAL_IP_FROM; do
@@ -41,10 +35,8 @@ fi
 echo "gateway: generating $OUT from $ROUTES"
 routegen "$@"
 
-# Fail fast on a bad config (also loads the Lua module + lua-resty-http).
 openresty -p /tmp -c "$OUT" -t
 
-# CI validation path: generate + `nginx -t` only, then exit (never serve).
 if [ -n "${GATEWAY_VALIDATE_ONLY:-}" ]; then
     echo "gateway: validate-only, config is valid"
     exit 0

@@ -1,12 +1,3 @@
-//! Connector health handlers — `/v1/connector-health*`.
-//!
-//! Both routes are operator-gated and instance-wide: bronze schemas are not
-//! tenant-partitioned, so the surface cannot be scoped by tenant and is gated
-//! on the admin role instead. Neither handler calls anything but the warehouse,
-//! and neither assembles its own answer — the response shapes are pure
-//! functions over recorded facts, so what the page claims is decided somewhere
-//! a test can reach without an `AppState`.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -75,11 +66,6 @@ pub async fn get_connector_syncs(
     )))
 }
 
-/// Both halves or neither.
-///
-/// One alone is refused rather than ignored: silently widening the window back
-/// to the whole connector would answer a question about one instance with rows
-/// from all of them, and the answer would look right.
 fn parse_scope(scope: &SyncScopeQuery) -> Result<Option<(TenantId, SourceId)>, CanonicalError> {
     match (scope.tenant_id.as_deref(), scope.source_id.as_deref()) {
         (None, None) => Ok(None),
@@ -93,8 +79,6 @@ fn parse_scope(scope: &SyncScopeQuery) -> Result<Option<(TenantId, SourceId)>, C
     }
 }
 
-/// Names the surface it refused, so an operator who followed a link knows what
-/// to ask for rather than guessing which page rejected them.
 fn admin_only() -> CanonicalError {
     ConnectorHealthError::permission_denied()
         .with_reason(ADMIN_ONLY)
@@ -131,9 +115,6 @@ fn half_an_instance(missing: &'static str) -> CanonicalError {
         .create()
 }
 
-/// The reader's own failure never names the relation it could not read: a
-/// warehouse error message on an admin surface is still a warehouse error
-/// message on the wire.
 #[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
 fn read_error(error: clickhouse::error::Error) -> CanonicalError {
     tracing::error!(error = %error, "connector health read failed");

@@ -137,8 +137,6 @@ fn a_record_whose_identity_is_incomplete_is_collapsed_with_nothing() {
 
     let relation = collapsed(&declared, "insight_datasets", "ds_commits_1");
 
-    // An absent key is not evidence that two events are the same event, so
-    // such a record stands alone under its own id.
     assert!(relation.contains("isNotNull("), "{relation}");
     assert!(relation.contains("'', toString(id))"), "{relation}");
 }

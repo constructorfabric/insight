@@ -1,7 +1,3 @@
-//! TTL sweep: a plain interval task (the service runs a single replica) that
-//! deletes every experiment past its `expires-at` annotation. Spawned once at
-//! gear init; a failed pass logs and waits for the next tick.
-
 use std::time::Duration;
 
 use chrono::Utc;

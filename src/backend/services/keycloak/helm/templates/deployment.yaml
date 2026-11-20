@@ -57,21 +57,16 @@ spec:
                 secretKeyRef:
                   name: {{ required "database.passwordSecret.name is required" .Values.database.passwordSecret.name | quote }}
                   key: {{ required "database.passwordSecret.key is required" .Values.database.passwordSecret.key | quote }}
-            # TLS terminates at the ingress; trust its X-Forwarded-* headers.
             - name: KC_PROXY_HEADERS
               value: xforwarded
             - name: KC_HEALTH_ENABLED
               value: "true"
-            # Advertised (browser + authenticator) issuer base. MUST include /kc.
             - name: KC_HOSTNAME
               value: {{ tpl (required "keycloak.hostname is required (the URL both the browser and the authenticator reach, e.g. https://<host>/kc)" .Values.hostname) . | quote }}
             # Serve back-channel (token/JWKS) on the reached host too, so an
             # in-cluster caller works alongside the advertised issuer.
             - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
               value: "true"
-            # Admin console base. The ingress does not expose /kc/admin, so
-            # the console is advertised on the port-forward URL (default
-            # localhost:<service.port>) instead of KC_HOSTNAME.
             - name: KC_HOSTNAME_ADMIN
               value: {{ default (printf "http://localhost:%v/kc" .Values.service.port) .Values.adminHostname | quote }}
             - name: KC_HTTP_ENABLED

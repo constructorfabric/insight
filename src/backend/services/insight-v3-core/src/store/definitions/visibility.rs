@@ -1,19 +1,9 @@
-//! The clauses keeping only the dashboards and folders one caller sees.
-//!
-//! INVARIANT: each keeps exactly the rows [`crate::domain::access::access`]
-//! and [`crate::domain::access::folder_access`] answer some access for. Every
-//! query that lists, counts or finds dashboards or folders for a caller
-//! carries one of them.
-
 use sea_orm::Value;
 
 use crate::domain::access::{Caller, Role};
 
-/// A clause with the values its `?`s bind, in order.
 pub(super) type Clause = (String, Vec<Value>);
 
-/// The role as a SQL literal: substituted from our own enum, never from
-/// anything a request carries.
 fn administrator(caller: Caller) -> &'static str {
     match caller.role {
         Role::Administrator => "TRUE",
@@ -25,9 +15,6 @@ fn person(caller: Caller) -> Value {
     caller.person.to_string().into()
 }
 
-/// Whether the folder row aliased `folder` is one `caller` sees: an
-/// ownerless one for an administrator, their own, or one granted to them or
-/// to everyone. Aliases its grants `{folder}_grants`.
 pub(super) fn folder_visible(folder: &str, caller: Caller) -> Clause {
     let sql = format!(
         "(({folder}.owner_person_id IS NULL AND {admin})
@@ -40,8 +27,6 @@ WHERE {folder}_grants.folder_id = {folder}.id AND {folder}_grants.grantee IN (?,
     (sql, vec![person(caller), person(caller)])
 }
 
-/// Whether the owned folder row aliased `folder` gives `caller` something
-/// to carry: their own, or one granted to them or to everyone.
 fn folder_carrying(folder: &str, caller: Caller) -> Clause {
     let sql = format!(
         "({folder}.owner_person_id IS NOT NULL AND ({folder}.owner_person_id = ?
@@ -52,9 +37,6 @@ WHERE {folder}_grants.folder_id = {folder}.id AND {folder}_grants.grantee IN (?,
     (sql, vec![person(caller), person(caller)])
 }
 
-/// Whether the `dashboards` row is one `caller` sees: an ownerless one for
-/// an administrator, their own while they are one, one granted to them or to
-/// everyone, or one a folder they see carries.
 pub(super) fn dashboard_visible(caller: Caller) -> Clause {
     let (carrying, carrying_values) = folder_carrying("visible_folder", caller);
     let sql = format!(
@@ -73,7 +55,6 @@ WHERE visible_entries.dashboard = dashboards.id AND visible_entries.carries AND 
     (sql, values)
 }
 
-/// Whether the `dashboards` row is in none of the folders `caller` sees.
 pub(super) fn dashboard_unfiled(caller: Caller) -> Clause {
     let (visible, values) = folder_visible("unfiled_folder", caller);
     let sql = format!(
@@ -85,8 +66,6 @@ WHERE unfiled_entries.dashboard = dashboards.id AND {visible})"
     (sql, values)
 }
 
-/// Whether the `dashboards` row is in the folder `{folder}`, a `?` or a
-/// column, which `caller` sees. Binds the folder first when it is a `?`.
 pub(super) fn dashboard_in(folder: &str, caller: Caller) -> Clause {
     let (visible, values) = folder_visible("filter_folder", caller);
     let sql = format!(
@@ -99,12 +78,10 @@ AND {visible})"
     (sql, values)
 }
 
-/// Whether the role literal of `caller` keeps an administrator's rows.
 pub(super) fn administrator_literal(caller: Caller) -> &'static str {
     administrator(caller)
 }
 
-/// Whether a statement binds a value to every `?` it holds, and no more.
 #[cfg(test)]
 pub(super) fn assert_bound(statement: &sea_orm::Statement) {
     let bound = statement.values.as_ref().map_or(0, |values| values.0.len());

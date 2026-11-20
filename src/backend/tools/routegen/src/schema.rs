@@ -1,23 +1,10 @@
-//! `routes.yaml` schema -- the configurator's input contract, salvaged nearly
-//! verbatim from the deleted Router spec (gateway DESIGN section 3.8). One field
-//! was dropped from that schema (`websocket_max_lifetime_seconds`): nginx cannot
-//! enforce an absolute socket lifetime, so it is enforced downstream instead.
-
 use serde::Deserialize;
 
-/// The only schema version this configurator understands.
 pub const SUPPORTED_VERSION: u32 = 1;
 
-/// The MCP server paths the edge may front, and the scope a route carries when
-/// it does not declare one.
-///
-/// INVARIANT: mirrors the authenticator's `MCP_RESOURCES`. A path here that the
-/// authenticator does not declare cannot be authorized, and the reverse cannot
-/// be reached.
 pub const MCP_PREFIXES: [&str; 2] = ["/mcp", "/mcp/v3"];
 pub const DEFAULT_MCP_SCOPE: &str = "mcp:query";
 
-/// Top-level `routes.yaml` document.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteConfig {
@@ -28,7 +15,6 @@ pub struct RouteConfig {
     pub routes: Vec<Route>,
 }
 
-/// Table-wide defaults; every field is overridable per route.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
@@ -38,14 +24,10 @@ pub struct Defaults {
     pub strip_prefix: bool,
     #[serde(default)]
     pub websocket: bool,
-    /// Operator-extensible deny-list of request headers, stripped from every
-    /// upstream request in addition to the hardcoded gateway-reserved set.
     #[serde(default)]
     pub strip_request_headers: Vec<String>,
 }
 
-/// Default per-route upstream timeout when neither the route nor `defaults`
-/// sets one.
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -74,7 +56,6 @@ fn default_timeout_ms() -> u64 {
     DEFAULT_TIMEOUT_MS
 }
 
-/// A single operator-defined edge route.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Route {
@@ -88,12 +69,10 @@ pub struct Route {
     pub strip_prefix: Option<bool>,
     #[serde(default)]
     pub websocket: Option<bool>,
-    /// The scope a challenge from this route asks for. Bearer routes only.
     #[serde(default)]
     pub mcp_scope: Option<String>,
 }
 
-/// A route with its defaults folded in -- the shape the emitter consumes.
 #[derive(Debug, Clone)]
 pub struct ResolvedRoute {
     pub prefix: String,
@@ -106,7 +85,6 @@ pub struct ResolvedRoute {
 }
 
 impl Route {
-    /// Fold table defaults into this route.
     #[must_use]
     pub fn resolve(&self, defaults: &Defaults) -> ResolvedRoute {
         ResolvedRoute {
@@ -125,16 +103,10 @@ impl Route {
 }
 
 impl RouteConfig {
-    /// Parse a `routes.yaml` document.
-    ///
-    /// # Errors
-    /// Returns the parse error if the YAML is malformed or violates the schema
-    /// shape (unknown fields, wrong types).
     pub fn parse(yaml: &str) -> Result<Self, serde_yaml::Error> {
         serde_yaml::from_str(yaml)
     }
 
-    /// Every route with defaults folded in, in document order.
     #[must_use]
     pub fn resolved_routes(&self) -> Vec<ResolvedRoute> {
         self.routes

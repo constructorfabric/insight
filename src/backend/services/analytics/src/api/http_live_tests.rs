@@ -1,25 +1,3 @@
-//! HTTP-level integration tests that drive the **real** route table through
-//! `tower::oneshot` against a live MariaDB.
-//!
-//! Unlike `tenant_resolution_tests` (synthetic echo handler, no backend) these
-//! build a full [`AppState`] and mount every analytics route via
-//! [`register_routes`], so they exercise the axum handlers end-to-end — the
-//! extract → delegate → `Result`→`Response` glue that the service-layer
-//! `live_tests` cannot reach. This is what closes the handler coverage gap the
-//! service tests leave (see cf/insight#1564).
-//!
-//! All tests are `#[ignore]`d and skip silently when
-//! `INTEGRATION_TESTS_MARIADB_URL` is unset — same convention as the domain
-//! `live_tests`. Migrations are applied once up front by the CI `migrate`
-//! step; these tests never migrate or reset the DB. ClickHouse and Identity
-//! clients point at an unreachable address on purpose: handlers that touch
-//! them exercise their entry + error-mapping path and return 5xx, which is the
-//! behaviour under test here — the DB-backed handlers return real 2xx.
-//!
-//! Tenant isolation: each test picks its own tenant (either a seed row's tenant
-//! for reads, or a fresh `Uuid::now_v7()` for writes), so the suite is
-//! parallel-safe and does not collide with the domain `live_tests`.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -60,8 +38,6 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-/// Unreachable ClickHouse client — handlers that never call it (the DB-backed
-/// ones) are unaffected; the ones that do hit it 5xx by design.
 fn dead_ch() -> insight_clickhouse::Client {
     insight_clickhouse::Client::new(insight_clickhouse::Config::new(
         "http://127.0.0.1:1",
@@ -69,8 +45,6 @@ fn dead_ch() -> insight_clickhouse::Client {
     ))
 }
 
-/// An Anthropic client no test reaches: the AI routes under test refuse before
-/// any upstream call.
 fn dead_anthropic() -> crate::infra::anthropic::AnthropicClient {
     #[expect(
         clippy::expect_used,
@@ -83,7 +57,6 @@ fn dead_anthropic() -> crate::infra::anthropic::AnthropicClient {
     .expect("client builds")
 }
 
-/// Build a full `AppState` against the live DB.
 fn build_state_with_ch(
     db: DatabaseConnection,
     identity: IdentityClient,
@@ -102,8 +75,6 @@ fn build_state_with_ch(
     }
 }
 
-/// A live ClickHouse client from the same env the domain `live_tests` use;
-/// `None` (skip) when unset or empty.
 fn live_ch_or_skip() -> Option<insight_clickhouse::Client> {
     let url = std::env::var("INTEGRATION_TESTS_CLICKHOUSE_URL").unwrap_or_default();
     if url.is_empty() {
@@ -121,19 +92,10 @@ fn live_ch_or_skip() -> Option<insight_clickhouse::Client> {
     Some(insight_clickhouse::Client::new(config))
 }
 
-/// Fixed test subject id. Handlers filter by tenant, not subject (subject only
-/// surfaces in audit `actor_subject`).
 const TEST_PERSON: Uuid = Uuid::from_u128(0x018f_0000_0000_7000_8000_0000_0000_0001);
-/// A person the loopback identity reports as visible to the caller.
 const VISIBLE_PERSON: Uuid = Uuid::from_u128(0x018f_0000_0000_7000_8000_0000_0000_0002);
-/// A person it does not — the gate's 403 case.
 const HIDDEN_PERSON: Uuid = Uuid::from_u128(0x018f_0000_0000_7000_8000_0000_0000_0003);
 
-/// Mount the real operation table with the `SecurityContext` injected directly
-/// for `tenant`, **bypassing** the host authn pipeline — the
-/// `cf-gears-oidc-authn-plugin` verification needs a live JWKS, and that path is
-/// covered by the plugin's own tests + the compose e2e. This suite is about the
-/// handler -> DB glue for a known caller.
 fn app(db: DatabaseConnection, tenant: Uuid) -> Router {
     let Ok(identity) = IdentityClient::new("http://127.0.0.1:1") else {
         unreachable!("the static identity url builds a client")
@@ -157,14 +119,10 @@ fn app_with_identity_and_ch(
         .layer(from_fn_with_state(tenant, inject_host_context))
 }
 
-/// Loopback identity serving `POST /v1/visible-persons` — answers with the
-/// intersection of the requested person ids and `visible` — and `GET /v1/me`
-/// reporting no roles (a non-admin caller).
 async fn spawn_identity(visible: &[Uuid]) -> Result<IdentityClient, Box<dyn std::error::Error>> {
     spawn_identity_with_roles(visible, false).await
 }
 
-/// The seeded identity `admin` role id mirrored from `infra::identity`.
 const ADMIN_ROLE_ID: &str = "a4d11000-0000-4000-8000-000000000001";
 
 async fn spawn_identity_with_roles(
@@ -250,7 +208,6 @@ fn drilldown_export_body(person_id: Uuid) -> Value {
     })
 }
 
-/// Seed a `SecurityContext` (subject + tenant) the way `authverify` would.
 async fn inject_host_context(
     axum::extract::State(tenant): axum::extract::State<Uuid>,
     mut req: Request<Body>,
@@ -277,8 +234,6 @@ fn json_req(method: &str, uri: &str, body: &Value) -> Result<Request<Body>, axum
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
-        // The gateway always forwards a bearer on authenticated routes; handlers
-        // that fan out to identity read it off the request.
         .header("authorization", "Bearer test-gateway-jwt")
         .body(Body::from(
             serde_json::to_vec(body).unwrap_or_else(|e| panic!("serialize body: {e}")),
@@ -289,8 +244,6 @@ async fn body_json(resp: Response) -> Result<Value, Box<dyn std::error::Error>> 
     let bytes = to_bytes(resp.into_body(), 256 * 1024).await?;
     Ok(serde_json::from_slice(&bytes)?)
 }
-
-// ── Reads (real 2xx against MariaDB) ─────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
@@ -319,11 +272,6 @@ async fn metric_results_forbids_a_person_outside_the_callers_visible_set() -> Te
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn metric_results_does_not_deny_a_person_inside_the_callers_visible_set() -> TestResult {
-    // ClickHouse is unreachable here, so an admitted request answers 200 with
-    // an error view in the metric's slot; what this pins is that the gate did
-    // not reject it. Asserting the error view (not merely `!= 403`) is
-    // deliberate: a 400 from validation would satisfy a not-forbidden
-    // assertion and hide a request that never reached the gate at all.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -350,10 +298,6 @@ async fn metric_results_does_not_deny_a_person_inside_the_callers_visible_set() 
     );
     Ok(())
 }
-
-// Both drilldown routes gate before validation, so neither test needs a
-// `DrilldownFixture`: the metric definition is never loaded. A 404 here would
-// mean the gate had moved back behind validation.
 
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
@@ -404,15 +348,6 @@ async fn metric_drilldown_export_forbids_a_person_outside_the_callers_visible_se
     Ok(())
 }
 
-// ── Saved-query CRUD + run (#1965) ───────────────────────────────
-//
-// Covers every non-5xx response of `/v1/queries*`. CRUD is DB-only, so the
-// happy paths return real 2xx against MariaDB. `/run` reaches ClickHouse; with
-// `dead_ch` its 200 collapses to 5xx (out of scope here), so only its 404
-// (unknown id, resolved before any CH call) is asserted. Each test uses a fresh
-// `Uuid::now_v7()` tenant, so the empty-to-populated `saved_queries` table is
-// parallel-safe and needs no seed row.
-
 fn create_body() -> Value {
     json!({ "name": "coverage query", "description": "d", "sql": "SELECT 1" })
 }
@@ -433,7 +368,6 @@ async fn saved_query_crud_round_trip() -> TestResult {
     let tenant = Uuid::now_v7();
     let app = app(db, tenant);
 
-    // CREATE → 201
     let resp = app
         .clone()
         .oneshot(json_req("POST", "/v1/queries", &create_body())?)
@@ -445,7 +379,6 @@ async fn saved_query_crud_round_trip() -> TestResult {
         .unwrap_or_else(|| panic!("created payload missing string id: {created}"))
         .to_owned();
 
-    // LIST → 200, contains the new row
     let resp = app.clone().oneshot(get("/v1/queries")?).await?;
     assert_eq!(resp.status(), StatusCode::OK);
     let list = body_json(resp).await?;
@@ -457,14 +390,12 @@ async fn saved_query_crud_round_trip() -> TestResult {
         "list should contain the created query: {list}"
     );
 
-    // GET one → 200
     let resp = app
         .clone()
         .oneshot(get(&format!("/v1/queries/{id}"))?)
         .await?;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // UPDATE → 200
     let update = json!({ "name": "renamed", "sql": "SELECT 2" });
     let resp = app
         .clone()
@@ -472,14 +403,12 @@ async fn saved_query_crud_round_trip() -> TestResult {
         .await?;
     assert_eq!(resp.status(), StatusCode::OK, "update should 200");
 
-    // DELETE → 204
     let resp = app
         .clone()
         .oneshot(delete_req(&format!("/v1/queries/{id}"))?)
         .await?;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT, "delete should 204");
 
-    // GET after delete → 404
     let resp = app.oneshot(get(&format!("/v1/queries/{id}"))?).await?;
     assert_eq!(
         resp.status(),
@@ -496,7 +425,6 @@ async fn saved_query_create_with_invalid_sql_returns_400() -> TestResult {
         return Ok(());
     };
     let app = app(db, Uuid::now_v7());
-    // Non-read statement: the single-SELECT gate rejects it on write.
     let bad = json!({ "name": "bad", "sql": "DROP TABLE t" });
     let resp = app.oneshot(json_req("POST", "/v1/queries", &bad)?).await?;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -520,7 +448,6 @@ async fn saved_query_update_with_invalid_sql_returns_400() -> TestResult {
     let created = body_json(resp).await?;
     let id = created["id"].as_str().unwrap_or_default().to_owned();
 
-    // Multiple statements are rejected by the gate on update.
     let bad = json!({ "sql": "SELECT 1; SELECT 2" });
     let resp = app
         .oneshot(json_req("PUT", &format!("/v1/queries/{id}"), &bad)?)
@@ -578,8 +505,6 @@ async fn delete_unknown_saved_query_returns_404() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn run_unknown_saved_query_returns_404() -> TestResult {
-    // The run handler resolves the saved query (tenant-scoped) before touching
-    // ClickHouse, so an unknown id is a clean 404 that never reaches `dead_ch`.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -655,8 +580,6 @@ async fn saved_query_is_tenant_scoped() -> TestResult {
     Ok(())
 }
 
-// ── Handlers that reach ClickHouse / Identity (5xx by design) ────
-
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_down() -> TestResult
@@ -667,11 +590,6 @@ async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &["repository"]).await?;
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
-        // A visible person id, not an email: since the identity cutover an email
-        // is refused by validation, which would give a 4xx before the request
-        // ever reached the ClickHouse failure this test is about. Every view
-        // kind is requested so each query shape — batched, single, and the
-        // group-ranking pre-pass — answers its own error slot.
         let app = app_with_identity(db.clone(), fixture.tenant_id, identity);
         let views = json!([
             {"view": "period"},
@@ -728,9 +646,6 @@ async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_
     result.map_err(Into::into)
 }
 
-/// Creates the identity relations a person-entity read joins, and maps one
-/// e-mail to one person. Both must exist or the read fails outright — dbt owns
-/// them in a deployment, so a live test has to stand them up itself.
 async fn seed_identity_relations(
     ch: &insight_clickhouse::Client,
     email: &str,
@@ -764,10 +679,6 @@ async fn seed_identity_relations(
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> TestResult {
-    // The isolation contract end-to-end on real backends: the observation
-    // relation exists in ClickHouse, so period and timeseries answer with
-    // data, while the peer view — whose cohort relation does not exist —
-    // answers not-ready on its own in the same response.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -780,10 +691,6 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     ch.query("CREATE DATABASE IF NOT EXISTS insight")
         .execute()
         .await?;
-    // The serving contract this build reads: `entity_id` is the SOURCE identity
-    // and the runtime resolves it through the identity relations while it
-    // serves, so the fixture seeds an e-mail and a map row rather than a
-    // pre-resolved person id.
     ch.query(&format!(
         "CREATE TABLE {relation} (tenant_id UUID, source_key String, entity_type String, \
          entity_id String, account_source_type String, account_source_id String, \
@@ -794,7 +701,6 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     ))
     .execute()
     .await?;
-    // Per-suffix so parallel runs never contend for one e-mail in the shared map.
     let person_email = format!("person-{suffix}@example.test");
     ch.query(&format!(
         "INSERT INTO {relation} SELECT '{tenant}', 'test_{suffix}', 'person', '{person_email}', \
@@ -866,11 +772,6 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn a_drilldown_over_an_unbuilt_relation_answers_an_empty_page_and_a_file() -> TestResult {
-    // The page a fresh install serves: 200 with the columns the plan declares,
-    // no rows, and the marker saying why — and the same selection downloads as
-    // the file it will be once a connector has synced. The evidence relation is
-    // never created here, which is what a warehouse looks like before its first
-    // sync.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -950,8 +851,6 @@ async fn a_drilldown_over_an_unbuilt_relation_answers_an_empty_page_and_a_file()
     result.map_err(Into::into)
 }
 
-/// The relations a drilldown pins its cursor to, beside the evidence itself:
-/// the persons journal and the claims the identity watermark is read from.
 async fn seed_identity_watermark_relations(
     ch: &insight_clickhouse::Client,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -976,10 +875,6 @@ async fn seed_identity_watermark_relations(
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure() -> TestResult {
-    // The other side of the same contract: once the evidence relation and the
-    // relations its cursor pins exist, the read answers with records and no
-    // marker. Without this the not-ready path above would pass against a
-    // handler that never answers anything else.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -993,8 +888,6 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
     ch.query("CREATE DATABASE IF NOT EXISTS insight")
         .execute()
         .await?;
-    // The serving contract, column for column — a shape a test invents would
-    // pass here and fail on the relation a deployment actually reads.
     ch.query(&format!(
         "CREATE TABLE {evidence} (tenant_id String, source_key String, entity_type String, \
          entity_id String, account_source_type String, account_source_id String, \
@@ -1056,9 +949,6 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn a_saved_query_over_an_unbuilt_relation_answers_no_rows_rather_than_failing() -> TestResult
 {
-    // A saved query is the same read as any other: a relation nothing has built
-    // is "nothing yet", not a server fault. The relation is named per tenant so
-    // a parallel run cannot create it underneath this one.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -1107,8 +997,6 @@ async fn a_saved_query_over_an_unbuilt_relation_answers_no_rows_rather_than_fail
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn a_saved_query_that_reads_answers_with_its_rows_and_no_marker() -> TestResult {
-    // The other half of the contract above: an answered read carries rows and
-    // no marker, so "no rows" never has to be read as "not collected yet".
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -1202,9 +1090,6 @@ async fn metric_drilldown_validates_selection_before_clickhouse_error() -> TestR
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &["repository"]).await?;
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
-        // A visible person: the gate admits, so what these assertions pin is
-        // validation reaching the unreachable ClickHouse snapshot probe. A 403
-        // would mean the gate denied a person it was told is visible.
         let app = app_with_identity(db.clone(), fixture.tenant_id, identity);
         let body = json!({
             "metric_key": "git.commits",
@@ -1228,8 +1113,6 @@ async fn metric_drilldown_validates_selection_before_clickhouse_error() -> TestR
             )?)
             .await?;
         anyhow::ensure!(resp.status() == StatusCode::BAD_REQUEST);
-        // The pre-cutover email shape fails in the entity parse, which runs
-        // ahead of the gate — so it stays a 400 rather than becoming a 403.
         let export = json!({
             "metric_key": "git.commits",
             "entity": {"type": "person", "id": "person@example.com"},
@@ -1255,9 +1138,6 @@ async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> Test
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    // Only the reversed-period case carries a parseable person id and so reaches
-    // the gate; the rest fail in the entity parse ahead of it. The identity has
-    // to be real either way, or that one case would fail closed with a 500.
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let app = app_with_identity(db, Uuid::now_v7(), identity);
     for body in [
@@ -1279,8 +1159,6 @@ async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> Test
             "period": {"from": "2026-07-28", "to": "2026-07-01"},
             "limit": 100
         }),
-        // The pre-cutover email shape and the nil UUID: entity.id is a
-        // canonical person id here like on every other person-keyed route.
         json!({
             "metric_key": "git.commits",
             "entity": {"type": "person", "id": "person@example.com"},
@@ -1307,14 +1185,9 @@ async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> Test
     Ok(())
 }
 
-// ── Usage monitoring (#2573) ─────────────────────────────────────
-
-/// The seeded `admin` role id, mirrored from identity's `roles_repo`.
 const ADMIN_ROLE: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
 const SOME_OTHER_ROLE: Uuid = Uuid::from_u128(0x018f_0000_0000_7000_8000_0000_0000_0009);
 
-/// Loopback identity serving `GET /v1/me` with the roles it is given — the only
-/// endpoint the usage admin gate reads.
 async fn spawn_identity_me(roles: &[Uuid]) -> Result<IdentityClient, Box<dyn std::error::Error>> {
     let roles: Vec<Value> = roles
         .iter()
@@ -1359,7 +1232,6 @@ fn app_with_usage_collection_off(db: DatabaseConnection, tenant: Uuid) -> Router
         .layer(from_fn_with_state(tenant, inject_host_context))
 }
 
-/// One SDK v2 beacon carrying a single page view.
 fn beacon(path: &str) -> Value {
     json!({
         "meta": {},
@@ -1465,8 +1337,6 @@ async fn the_usage_summary_fails_closed_when_the_role_check_cannot_be_made() -> 
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    // Identity is unreachable here: an admin surface must not open because the
-    // service that knows who is an admin is down.
     let app = app(db, Uuid::now_v7());
 
     let resp = app
@@ -1485,8 +1355,6 @@ async fn the_usage_summary_admits_an_admin_and_reaches_the_store() -> TestResult
     let identity = spawn_identity_me(&[ADMIN_ROLE]).await?;
     let app = app_with_identity(db, Uuid::now_v7(), identity);
 
-    // ClickHouse is unreachable, so an admitted caller cannot reach a 200; a
-    // 500 rather than a 403 is what shows the gate let them through.
     let resp = app
         .oneshot(json_req("GET", "/v1/usage/summary", &json!({}))?)
         .await?;
@@ -1539,7 +1407,6 @@ async fn every_usage_list_admits_an_admin_and_reaches_the_store() -> TestResult 
     for path in USAGE_LISTS {
         let app = app_with_identity(db.clone(), Uuid::now_v7(), identity.clone());
 
-        // ClickHouse is unreachable in this harness, so admission surfaces as a 500.
         let resp = app.oneshot(get(&format!("{path}?direction=asc"))?).await?;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR, "{path}");
     }

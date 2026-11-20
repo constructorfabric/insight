@@ -17,41 +17,22 @@ pub const SOURCE_HEADER: &str = "x-source-id";
 pub const GIT_USER_HEADER: &str = "x-git-username";
 pub const GIT_TOKEN_HEADER: &str = "x-git-token";
 pub const STALENESS_HEADER: &str = "x-max-staleness";
-/// Optional: the repository's size in bytes as its host reports it. A cold
-/// clone reserves cache headroom from it instead of the per-repository cap.
 pub const SIZE_HINT_HEADER: &str = "x-repo-size-hint";
 
-/// Ceiling and default are the same on purpose. Every memory bound on the
-/// request path scales linearly with the page, so headroom above the default
-/// is pure exposure: `page_size` is a
-/// service-to-connector knob rather than tenant configuration, and the row
-/// caps cut an oversized page at emit time anyway — after the memory was
-/// already spent reading it. Smaller pages remain available for debugging.
 const MAX_PAGE_SIZE: usize = 1_000;
 const DEFAULT_PAGE_SIZE: usize = 1_000;
 const MAX_PATCH_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_PATCH_BYTES: usize = 1024 * 1024;
 
 const MIN_SHA_PREFIX: usize = 7;
-/// A full object id: 40 hex characters under SHA-1, 64 under SHA-256. Anything
-/// longer is not a prefix of any object id and can only ever select nothing.
 const MAX_SHA_PREFIX: usize = 64;
 
-/// Explicit commit selection: full ids or hex prefixes of at least
-/// [`MIN_SHA_PREFIX`] characters, comma separated. A prefix selects
-/// every commit it matches — it is not required to be unique, and the service
-/// does not resolve it against the repository. A debugging and incident-review
-/// affordance; the sync path pages by cursor instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaFilter {
     prefixes: Vec<String>,
 }
 
 impl ShaFilter {
-    /// # Errors
-    ///
-    /// [`BadRequest`] when an entry is not hex or is too short to identify a
-    /// commit.
     pub fn parse(raw: &str) -> Result<Self, BadRequest> {
         let prefixes: Vec<String> = raw
             .split(',')
@@ -79,19 +60,12 @@ impl ShaFilter {
         self.prefixes.iter().any(|prefix| sha.starts_with(prefix))
     }
 
-    /// The lowercase prefixes, for the index reader, whose query type cannot
-    /// carry a borrow into `spawn_blocking`.
     #[must_use]
     pub fn prefixes(&self) -> Vec<String> {
         self.prefixes.clone()
     }
 }
 
-/// Parse the optional `sha` query parameter.
-///
-/// # Errors
-///
-/// [`BadRequest`] when the value is present but malformed.
 pub fn parse_sha_filter(raw: Option<&str>) -> Result<Option<ShaFilter>, BadRequest> {
     match raw.filter(|value| !value.trim().is_empty()) {
         Some(value) => ShaFilter::parse(value).map(Some),
@@ -119,12 +93,9 @@ pub enum BadRequest {
     MalformedInstant(&'static str),
 }
 
-/// `Query<T>`, but a rejection leaves through [`ApiError`] like every other
-/// failure this API has.
-///
-/// Axum's own rejection is `text/plain` and escapes the RFC 9457 envelope the
-/// contract promises — and it happens BEFORE the handler runs, so nothing
-/// downstream can repair it.
+// Axum's own rejection is `text/plain` and escapes the RFC 9457 envelope the
+// contract promises — and it happens BEFORE the handler runs, so nothing
+// downstream can repair it.
 pub struct ValidatedQuery<T>(pub T);
 
 impl<T, S> FromRequestParts<S> for ValidatedQuery<T>
@@ -135,8 +106,6 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // The rejection's own message is not forwarded: it quotes the caller's
-        // query string back at them, and this envelope is not the place for it.
         Query::<T>::from_request_parts(parts, state)
             .await
             .map(|Query(value)| Self(value))
@@ -144,11 +113,6 @@ where
     }
 }
 
-/// A query parameter the route cannot proceed without.
-///
-/// # Errors
-///
-/// [`BadRequest::MissingParam`] naming `name` when it is absent or blank.
 pub fn required_param<'a>(
     value: Option<&'a str>,
     name: &'static str,
@@ -159,8 +123,6 @@ pub fn required_param<'a>(
         .ok_or(BadRequest::MissingParam(name))
 }
 
-/// Everything a data request carries besides its own filters: who is asking,
-/// which repository, and how fresh the snapshot must be.
 #[derive(Debug)]
 pub struct RequestContext {
     pub key: CacheKey,
@@ -170,10 +132,6 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
-    /// # Errors
-    ///
-    /// [`BadRequest`] when an identity/credential header is absent or empty, or
-    /// when `repo` is not an origin this service will clone from.
     pub fn from_parts(
         headers: &HeaderMap,
         clone_url: &str,
@@ -197,8 +155,6 @@ impl RequestContext {
     }
 }
 
-/// Who is asking, for a route that spans every repository of a source rather
-/// than naming one.
 #[derive(Debug)]
 pub struct Caller {
     pub tenant_id: String,
@@ -207,10 +163,6 @@ pub struct Caller {
 }
 
 impl Caller {
-    /// # Errors
-    ///
-    /// [`BadRequest::MissingHeader`] when an identity or credential header is
-    /// absent or empty.
     pub fn from_headers(headers: &HeaderMap) -> Result<Self, BadRequest> {
         Ok(Self {
             tenant_id: required_header(headers, TENANT_HEADER)?,
@@ -223,7 +175,6 @@ impl Caller {
     }
 }
 
-/// Paging inputs shared by the cursor-paginated endpoints.
 #[derive(Debug)]
 pub struct Paging {
     pub token: Option<PageToken>,
@@ -231,9 +182,6 @@ pub struct Paging {
 }
 
 impl Paging {
-    /// # Errors
-    ///
-    /// [`BadRequest`] when the token is not one this service issued.
     pub fn parse(page_token: Option<&str>, page_size: Option<u32>) -> Result<Self, BadRequest> {
         let token = match page_token.filter(|raw| !raw.is_empty()) {
             Some(raw) => Some(PageToken::decode(raw).map_err(|_| BadRequest::MalformedToken)?),
@@ -278,8 +226,6 @@ fn staleness(headers: &HeaderMap) -> Result<Option<Duration>, BadRequest> {
     Ok(optional_u64(headers, STALENESS_HEADER)?.map(Duration::from_secs))
 }
 
-/// An optional numeric header: absent or blank is `None`, anything else must
-/// parse as an unsigned integer.
 fn optional_u64(headers: &HeaderMap, name: &'static str) -> Result<Option<u64>, BadRequest> {
     let Some(raw) = headers
         .get(name)
@@ -446,8 +392,6 @@ mod tests {
             ("not hex", "zzzzzzzz"),
             ("only separators", ",,"),
             ("empty", ""),
-            // Longer than any object id: it can never prefix-match, so
-            // accepting it would silently return no rows.
             ("longer than an object id", long.as_str()),
         ];
         for (name, raw) in cases {

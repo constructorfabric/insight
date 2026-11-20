@@ -1,6 +1,3 @@
-//! Slack, through a bot's `chat.postMessage`. The answer carries the message
-//! timestamp, which is the receipt.
-
 use async_trait::async_trait;
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;

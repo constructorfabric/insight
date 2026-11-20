@@ -1,18 +1,9 @@
-//! A dataset as a reader is told it.
-//!
-//! What a reader needs is what the records mean: the fields, their types, what
-//! each is for, and which date a window selects by. Where a value sits in a
-//! record, which table holds it and how it is read are this service's own
-//! business and are left out.
-
 use std::fmt::Write as _;
 
 use super::declaration::{Declaration, Field, FieldRole, FieldType};
 
-/// What the assistant is told when no dataset has been declared.
 const NOTHING_DECLARED: &str = "No datasets have been declared yet. An administrator declares one before there is anything to query.";
 
-/// Every declared dataset, rendered for the assistant and for MCP.
 pub(crate) fn describe_all(declared: &[(String, Declaration)]) -> String {
     if declared.is_empty() {
         return NOTHING_DECLARED.to_owned();
@@ -25,7 +16,6 @@ pub(crate) fn describe_all(declared: &[(String, Declaration)]) -> String {
         .join("\n")
 }
 
-/// One dataset: what it is, and what each of its fields holds.
 pub(crate) fn describe(name: &str, declaration: &Declaration) -> String {
     let mut written = String::new();
 

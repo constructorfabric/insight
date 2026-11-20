@@ -65,8 +65,6 @@ impl TestHarness {
         }
     }
 
-    /// Stores the metric under an id the case chooses, replacing what it
-    /// held when it is already there.
     async fn store(&self, id: &str, body: serde_json::Value) {
         let parsed =
             DefinitionId::parse(id).unwrap_or_else(|error| panic!("test id must parse: {error}"));
@@ -110,9 +108,6 @@ impl TestHarness {
     }
 }
 
-/// A warehouse that answers three rows to a first page and one to a resumed
-/// one, and remembers what it was asked. The key's cells come back as the
-/// wrapper projects them: the flag, the sorted cell, then every column.
 async fn upstream() -> (String, Seen) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -263,9 +258,6 @@ async fn the_next_page_resumes_past_the_cursor_and_ends_where_the_rows_do() -> R
     );
     assert!(body["next_cursor"].is_null(), "{body}");
 
-    // The client writes the bound values into the statement it sends, so the
-    // warehouse saw the cursor's key in tuple order: the flag, the sorted
-    // cell, then every column as text.
     let sql = last_read(&seen);
     assert!(sql.contains(") AS __m WHERE tuple("), "{sql}");
     assert!(
@@ -295,8 +287,6 @@ async fn a_page_ordered_by_a_column_the_metric_does_not_produce_is_refused() -> 
     Ok(())
 }
 
-/// A cursor holds a position in one ordering over one metric. Replayed into
-/// another it would serve a page out of a result that never existed.
 #[tokio::test]
 async fn a_cursor_issued_over_another_order_or_another_body_is_refused() -> R {
     let (url, _) = upstream().await;
@@ -326,8 +316,6 @@ async fn a_cursor_issued_over_another_order_or_another_body_is_refused() -> R {
     Ok(())
 }
 
-/// The bytes are the caller's to edit. A key that no longer fits the order
-/// is refused as the caller's mistake, not sent on to fail as ours.
 #[tokio::test]
 async fn a_cursor_whose_key_was_edited_is_refused_rather_than_run() -> R {
     let (url, _) = upstream().await;
@@ -387,8 +375,6 @@ async fn what_cannot_be_asked_for_is_refused_by_name() -> R {
     Ok(())
 }
 
-/// `P7D` names a different seven days tomorrow. A walk is over one period,
-/// so the second page reads the window the first one resolved.
 #[tokio::test]
 async fn a_continued_walk_reads_the_window_its_first_page_resolved() -> R {
     let (url, seen) = upstream().await;

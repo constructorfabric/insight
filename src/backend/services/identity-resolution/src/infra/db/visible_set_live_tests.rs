@@ -1,6 +1,3 @@
-//! INVARIANT: never `#[ignore]` these — the identity CI job runs `cargo test`
-//! without `--include-ignored`, so an ignored case silently stops running.
-
 use uuid::Uuid;
 
 use super::test_fixture::fixture_or_skip;
@@ -62,10 +59,6 @@ async fn an_explicit_grant_reaches_outside_the_reporting_line() -> TestResult {
 
 #[tokio::test]
 async fn the_wildcard_echo_is_bounded_by_the_tenant() -> TestResult {
-    // A wildcard grant covers everyone IN THE TENANT: an id from another
-    // tenant or from nowhere must not come back from the batch existence
-    // filter, or the visible-persons wildcard branch would confirm foreign
-    // UUIDs as visible — and analytics reads that answer as authorization.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -83,9 +76,6 @@ async fn the_wildcard_echo_is_bounded_by_the_tenant() -> TestResult {
 
 #[tokio::test]
 async fn a_person_exists_only_inside_their_own_tenant() -> TestResult {
-    // The existence probe behind `value_type='person_id'`: a person another
-    // tenant observed must read as unknown here, or the profile lookup would
-    // answer 404-vs-200 differently depending on data the caller cannot see.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -112,8 +102,6 @@ async fn a_person_exists_only_inside_their_own_tenant() -> TestResult {
 
 #[tokio::test]
 async fn a_person_with_no_email_still_exists() -> TestResult {
-    // The person_id key exists to reach exactly this person; an existence probe
-    // that keyed on the email observation would report them missing.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -223,10 +211,6 @@ async fn a_flat_policy_answers_the_single_target_probe_within_the_tenant() -> Te
 
 #[tokio::test]
 async fn a_wildcard_grant_confirms_only_persons_of_the_tenant() -> TestResult {
-    // A wildcard grant covers everyone IN THE TENANT. Confirming an id from
-    // another tenant — or one that names nobody — would answer about a person
-    // the grant never reached, and `GET /v1/subchart/{id}` reads this predicate
-    // to decide between a subtree and a 404.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };

@@ -1,7 +1,3 @@
-//! Each adapter against a local server that plays the provider: what it
-//! answers on acceptance, on a rate limit, on a rejection, and when it
-//! does not answer at all.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;

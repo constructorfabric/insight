@@ -3,7 +3,6 @@ use std::path::Path;
 
 use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
-/// Per-file unified diff text for one commit, keyed by the post-image path.
 pub type CommitPatches = HashMap<String, Patch>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,33 +13,11 @@ pub struct Patch {
 
 const COMMIT_MARK: &str = "\u{1e}commit ";
 
-/// Commits per `git log --patch` invocation.
-///
-/// The runner materialises a child's whole stdout before anything parses it,
-/// so the invocation itself is the bound that matters: asking for a
-/// ten-thousand-commit page in one go buffers every diff in that page at once,
-/// which no per-file cap can undo after the fact.
 #[cfg(not(test))]
 const PATCH_BATCH: usize = 128;
-/// Small under test so batching is observable without a fixture of hundreds of
-/// commits; the logic does not depend on the value.
 #[cfg(test)]
 pub(super) const PATCH_BATCH: usize = 2;
 
-/// Per-file patches for `shas`. Text over `max_bytes` is cut at a character
-/// boundary and flagged, so a consumer recomputing line counts can tell an
-/// incomplete diff from a complete one.
-///
-/// Two bounds, because the per-file cap alone bounds nothing at page scale:
-/// the walk is split into [`PATCH_BATCH`] invocations so git's own buffered
-/// stdout stays small, and retention stops once `total_budget` bytes have been
-/// kept. A commit after that point is absent from the result, which the
-/// caller must treat as unread rather than as a commit without text. `shas`
-/// must be in page order for that to hold.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
 pub async fn read(
     runner: &GitRunner,
     git_dir: &Path,
@@ -80,8 +57,6 @@ pub async fn read(
         );
         collected.extend(parsed);
 
-        // Whole batches only: stopping mid-commit would hand the caller a row
-        // with its patch text silently missing rather than withheld.
         if retained >= total_budget {
             break;
         }
@@ -89,13 +64,6 @@ pub async fn read(
     Ok(collected)
 }
 
-/// A per-file diff accumulated up to `max` bytes.
-///
-/// `seen` counts every byte the diff would have occupied, so truncation is
-/// decided on the true size while only the retained prefix is held. A single
-/// generated file — a lockfile, a vendored bundle — can carry a diff orders of
-/// magnitude larger than the cap, and buffering it whole to then throw it away
-/// is the difference between a bounded reader and an OOM.
 struct Bounded {
     buf: String,
     seen: usize,
@@ -156,10 +124,6 @@ fn parse(text: &str, max_bytes: usize) -> HashMap<String, CommitPatches> {
             continue;
         }
 
-        // A rename or copy is the one case the header cannot resolve on its
-        // own, and the one case git spells out on a line of its own. It
-        // arrives before any hunk, so correcting the key here still keys the
-        // whole diff correctly.
         if let Some(exact) = rename_target(line) {
             path = Some(exact);
             continue;
@@ -191,15 +155,13 @@ fn flush(
         .insert(path, Patch { text, truncated });
 }
 
-/// The post-image path of a `diff --git a/<old> b/<new>` header.
-///
-/// The header is genuinely ambiguous for an unquoted path holding a space:
-/// `a/has b/x b/has b/x` contains three ` b/`, and the last one is inside the
-/// filename. Two facts resolve every case. Git C-quotes BOTH halves when
-/// either needs quoting, so a leading quote means the halves can be read as
-/// escaped strings. Otherwise the two halves are the same path unless this is
-/// a rename or a copy — and those spell their post-image out on a
-/// `rename to`/`copy to` line of their own ([`rename_target`]).
+// The header is genuinely ambiguous for an unquoted path holding a space:
+// `a/has b/x b/has b/x` contains three ` b/`, and the last one is inside the
+// filename. Two facts resolve every case. Git C-quotes BOTH halves when
+// either needs quoting, so a leading quote means the halves can be read as
+// escaped strings. Otherwise the two halves are the same path unless this is
+// a rename or a copy — and those spell their post-image out on a
+// `rename to`/`copy to` line of their own (`rename_target`).
 fn diff_header_path(line: &str) -> Option<String> {
     let rest = line.strip_prefix("diff --git ")?;
 
@@ -210,16 +172,12 @@ fn diff_header_path(line: &str) -> Option<String> {
     }
 
     symmetric_post_image(rest).or_else(|| {
-        // A rename or copy: a guess good enough to open the section, which the
-        // `rename to` line then corrects.
         let marker = rest.rfind(" b/")?;
         let guess = &rest[marker + 3..];
         (!guess.is_empty()).then(|| guess.to_owned())
     })
 }
 
-/// `a/<path> b/<path>` where both halves are the same, which is every diff
-/// but a rename or a copy. The split point follows from the length alone.
 fn symmetric_post_image(rest: &str) -> Option<String> {
     let span = rest.len().checked_sub(5)?;
     if span % 2 != 0 {
@@ -232,11 +190,6 @@ fn symmetric_post_image(rest: &str) -> Option<String> {
     (pre_image == post_image).then(|| post_image.to_owned())
 }
 
-/// The post-image path of a `rename to`/`copy to` extended-header line.
-///
-/// Unambiguous where the `diff --git` header is not: one path, the rest of the
-/// line. Hunk content cannot be confused with it — every content line carries
-/// a ` `, `+`, `-` or `\` prefix.
 fn rename_target(line: &str) -> Option<String> {
     let path = line
         .strip_prefix("rename to ")
@@ -248,9 +201,6 @@ fn rename_target(line: &str) -> Option<String> {
     (!path.is_empty()).then(|| path.to_owned())
 }
 
-/// Read one C-quoted string, returning it and whatever follows the closing
-/// quote. Git's own `quote_c_style`, in reverse: the named escapes plus
-/// three-digit octal for every byte outside printable ASCII.
 fn unquote(quoted: &str) -> Option<(String, &str)> {
     let body = quoted.strip_prefix('"')?;
     let mut bytes: Vec<u8> = Vec::new();
@@ -298,8 +248,6 @@ mod tests {
 
     #[test]
     fn a_diff_header_names_the_file_however_it_is_spelled() {
-        // Exactly the header lines git emits for these paths; a wrong key
-        // silently detaches the patch from the row `--numstat` produced.
         let cases: Vec<(&str, &str, &str)> = vec![
             ("plain", "diff --git a/src/a.rs b/src/a.rs", "src/a.rs"),
             (
@@ -425,8 +373,6 @@ mod tests {
         );
     }
 
-    /// Reference reader: accumulate the whole diff, then truncate — the oracle
-    /// the bounded reader must match byte for byte.
     fn unbounded_reference(lines: &[&str], max_bytes: usize) -> (String, bool) {
         let mut buffer = String::new();
         for line in lines {

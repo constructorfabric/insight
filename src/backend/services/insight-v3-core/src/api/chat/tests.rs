@@ -37,7 +37,6 @@ fn replacing(id: &str, name: &str, body: serde_json::Value) -> Proposed {
     }
 }
 
-/// The one dataset the assistant reads in these cases.
 fn a_ready_dataset(url: &str) -> crate::api::Datasets {
     let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
     let name = crate::domain::definition::DefinitionId::parse("commits")
@@ -82,8 +81,6 @@ impl TestHarness {
         Self::with_metrics(chat, None).await
     }
 
-    /// A harness whose metric queries go somewhere that answers them, for the
-    /// cases about what an answer does with the rows it got back.
     #[expect(
         clippy::unused_async,
         clippy::unused_async_trait_impl,
@@ -119,14 +116,10 @@ impl TestHarness {
         }
     }
 
-    /// The only ClickHouse read a chat request makes before it answers: the
-    /// list of ingest tables for the prompt. The definitions it reads come
-    /// from the store, which needs no priming.
     fn queue_chat_context(&self) {
         self.mock.add(handlers::provide(Vec::<String>::new()));
     }
 
-    /// Whether the store holds any definition of this kind.
     async fn holds_any(&self, kind: DefinitionKind) -> bool {
         !self
             .definitions
@@ -136,8 +129,6 @@ impl TestHarness {
             .is_empty()
     }
 
-    /// What the store holds under `id`, for the cases about what a request
-    /// wrote rather than what it answered.
     async fn stored(&self, kind: DefinitionKind, id: &str) -> serde_json::Value {
         let parsed = crate::domain::definition::DefinitionId::parse(id)
             .unwrap_or_else(|error| panic!("the id must parse: {error}"));
@@ -159,7 +150,6 @@ impl TestHarness {
             .unwrap_or_else(|error| panic!("the store must accept it: {error}"));
     }
 
-    /// Posts `message` to `/v1/chat`.
     async fn post_chat(&self, message: &str) -> TestResponse {
         let request = Request::builder()
             .method("POST")
@@ -212,7 +202,6 @@ impl TestResponse {
     }
 }
 
-/// The id the response reports for a written item, as a string.
 fn reported_id(written: &serde_json::Value) -> String {
     written["id"]
         .as_str()
@@ -220,7 +209,6 @@ fn reported_id(written: &serde_json::Value) -> String {
         .to_owned()
 }
 
-/// An answer that promises rows over a table with none in it.
 fn empty_answer_proposal() -> Proposal {
     Proposal::Answer {
         reply: "Here is who has committed the most overall.".to_owned(),
@@ -239,7 +227,6 @@ fn empty_answer_proposal() -> Proposal {
 fn single_existing_widget_proposal() -> Proposal {
     Proposal::Create {
         reply: "ok".to_owned(),
-        // The metric arrives with the widget, as a chat request builds them.
         metric: Some(proposed(
             "m",
             json!({
@@ -328,8 +315,6 @@ async fn an_item_replacing_an_id_nobody_holds_stores_none_of_the_proposal() {
     assert!(!harness.holds_any(DefinitionKind::Widget).await);
 }
 
-/// A metric, two widgets over it and a dashboard holding both: everything one
-/// proposal can carry, so the handler's whole store path is exercised.
 fn whole_board_proposal() -> Proposal {
     Proposal::Create {
         reply: "here it is".to_owned(),
@@ -414,7 +399,6 @@ async fn an_instance_with_no_key_refuses_the_ask_rather_than_inventing_a_reply()
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// Serves one ClickHouse JSON result, and hands back where to reach it.
 async fn upstream_returning(
     result: serde_json::Value,
 ) -> Result<(String, tokio::task::JoinHandle<Result<(), std::io::Error>>), Box<dyn std::error::Error>>
@@ -438,9 +422,6 @@ async fn upstream_returning(
 #[tokio::test]
 async fn an_answer_whose_query_found_nothing_says_there_is_no_data()
 -> Result<(), Box<dyn std::error::Error>> {
-    // The stand holds empty tables beside full ones, and the reply is written
-    // before the query runs - so the model's sentence claimed rows it never
-    // saw, and the panel showed prose with nothing under it.
     let (metrics, server) = upstream_returning(json!({
         "meta": [{ "name": "author", "type": "String" }],
         "data": []
@@ -546,7 +527,6 @@ async fn a_proposed_metric_that_cannot_be_read_as_a_query_is_refused_before_it_i
     assert!(!harness.holds_any(DefinitionKind::Metric).await);
 }
 
-/// Who the fixed identity says is chatting.
 fn chatting() -> crate::domain::access::PersonId {
     crate::domain::access::PersonId::new(uuid::Uuid::nil())
 }

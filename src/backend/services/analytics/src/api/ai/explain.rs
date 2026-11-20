@@ -1,5 +1,3 @@
-//! `POST /v1/ai/explain` — one metric, read back in plain language.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -62,10 +60,6 @@ pub async fn explain_metric(
 
     // INVARIANT: the permit is held across the upstream await on purpose — the
     // cap is on calls in flight, not on calls started.
-    //
-    // Refused rather than queued: waiting for a permit would hold the request
-    // task and the decrypted key in memory behind a slow upstream, and the
-    // caller would see a hang where the contract promises a "busy" answer.
     let Ok(_permit) = state.ai_calls.try_acquire() else {
         tracing::warn!("explain refused: every in-flight slot is taken");
         return Err(AiError::resource_exhausted(
@@ -102,11 +96,6 @@ pub async fn explain_metric(
     }))
 }
 
-/// The key this call is paid for with.
-///
-/// The stand's own key wins where one is set: the deployment is buying the
-/// answers, and a personal key left over from before should not quietly start
-/// paying again.
 async fn caller_token(
     state: &AppState,
     tenant: uuid::Uuid,
@@ -148,9 +137,6 @@ async fn caller_token(
 
 fn upstream_error(error: &AnthropicError, stand_key: bool) -> CanonicalError {
     match error {
-        // Whose key was rejected decides who can do anything about it: telling
-        // a reader to replace a key in settings they have no field for sends
-        // them looking for a control that is not there.
         AnthropicError::TokenRejected if stand_key => AiError::invalid_argument()
             .with_field_violation(
                 "token",

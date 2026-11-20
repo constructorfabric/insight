@@ -1,24 +1,16 @@
-//! The turn: how many round trips the model gets, and what ends one.
-
 use super::anthropic::{Message, MessagesResponse};
 use super::proposal::Proposal;
 use super::{ChatError, Schemas, Turn};
 use crate::domain::query::metric_query::People;
 
-/// How many times one message may ask what a table holds before answering.
-/// Three is room to look at a handful of tables across two or three layers;
-/// past that the model is circling rather than converging.
 const MAX_LOOKUPS: usize = 3;
 
-/// One round trip to the model.
 #[async_trait::async_trait]
 pub(super) trait ModelTransport: Send + Sync {
     async fn send(&self, system: &str, messages: &[Message])
     -> Result<MessagesResponse, ChatError>;
 }
 
-/// The conversation as the API takes it: the turns so far, then the new
-/// message. A turn with any other role is dropped rather than trusted.
 pub(super) fn thread(turns: &[Turn], message: &str) -> Vec<Message> {
     let mut messages: Vec<Message> = turns
         .iter()
@@ -34,13 +26,6 @@ pub(super) fn thread(turns: &[Turn], message: &str) -> Vec<Message> {
     messages
 }
 
-/// The turn, which may take several round trips.
-///
-/// The model sees the map of every table but not their columns, so it may ask
-/// what a handful of them hold before it answers. Each answer is fed back as a
-/// tool result and the conversation continues; the reply that is not a lookup
-/// ends it. A reply this service refuses buys one repair round: the schema
-/// stops malformed arguments, this catches what only our own validation knows.
 pub(super) async fn converse(
     transport: &dyn ModelTransport,
     schemas: &dyn Schemas,
@@ -80,8 +65,6 @@ pub(super) async fn converse(
     Err(ChatError::TooManyLookups)
 }
 
-/// The rejection, addressed to the call that earned it when there was one.
-///
 /// INVARIANT: the API requires every `tool_use` to be answered by a
 /// `tool_result`; following one with a plain message is a 400.
 fn refusal(called: Option<&str>, detail: &str) -> Message {

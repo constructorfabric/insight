@@ -15,7 +15,6 @@ spec:
         {{- include "insight-v3-core.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
         checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -64,9 +63,6 @@ spec:
             - name: APP__gears__insight_v3_core__config__alerts__redis_url
               value: {{ printf "redis://%s:%v" $host $redis.port | quote }}
             {{- if $redis.passwordSecret }}
-            # SAFETY: the password travels as its own setting and the service joins it to
-            # the URL percent-encoded, so any character is fine and it is never copied
-            # into another Secret.
             - name: APP__gears__insight_v3_core__config__alerts__redis_password
               valueFrom:
                 secretKeyRef:

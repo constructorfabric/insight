@@ -1,14 +1,3 @@
-//! The git-cli-proxy gear: validates config fail-fast, builds the repo store,
-//! owns the HTTP host, and serves `/v1` behind the service's own bearer token
-//! (Airbyte-only consumer, never behind the platform gateway).
-//!
-//! INVARIANT: this service is its own `rest_host`, not a guest of the
-//! `api-gateway` gear, because that gear wraps every route in a hardcoded 30s
-//! `tower` timeout with no config knob — and a page read legitimately runs for
-//! minutes fetching blobs from origin ([`crate::engine::runner::Timeouts`]),
-//! so under that host a working request would answer `504` and lose its work.
-//! Re-adding the gear silently reinstates the ceiling.
-
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -27,8 +16,6 @@ use crate::config::GearConfig;
 use crate::engine::disk::Budget;
 use crate::engine::store::RepoStore;
 
-/// Config key is the gear name `git-cli-proxy`; env overrides are
-/// `APP__gears__git_cli_proxy__config__*`.
 #[derive(Default)]
 #[toolkit::gear(
     name = "git-cli-proxy",
@@ -99,8 +86,6 @@ impl Gear for GitCliProxyGear {
             )
         })?;
 
-        // The gauges observe a cached snapshot the store refreshes on
-        // every admission check, so the collector's callback does no I/O.
         crate::engine::metrics::register_disk_gauges(store.gauges());
 
         let serves = Arc::new(tokio::sync::Semaphore::new(config.serve_concurrency));
@@ -155,11 +140,7 @@ fn prepared_router(router: Router) -> Router {
     router.route("/healthz", get(|| async { "ok" }))
 }
 
-/// Layer the router and persist it for [`GitCliProxyGear::serve`]; a second
-/// finalize is a wiring bug and errors.
 fn finalize_router(router: Router, slot: &OnceLock<Router>) -> anyhow::Result<Router> {
-    // Panics are caught below the canonical layer, so the 500 it produces
-    // is rendered like every other failure.
     let router = router
         .layer(CatchPanicLayer::new())
         .layer(axum::middleware::from_fn(

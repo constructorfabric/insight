@@ -59,9 +59,6 @@ fn a_create_intent_is_read_out_of_the_model_reply() {
     }
 }
 
-/// A body that cannot be read as a metric at all is caught here, where the
-/// repair round can still fix it. What the dataset makes of a readable metric
-/// is answered where the declaration is, which is the write and the run.
 #[test]
 fn a_metric_body_that_is_not_one_is_refused_before_anything_is_stored() {
     let reply = r#"{"intent":"create","reply":"x","metric":{"name":"bad","body":{"dataset":"commits","fields":[{"as_name":"x"}]}},"widgets":[],"dashboard":null}"#;
@@ -74,9 +71,6 @@ fn a_metric_body_that_is_not_one_is_refused_before_anything_is_stored() {
 
 #[test]
 fn a_question_about_the_data_itself_answers_without_a_query() {
-    // The tool used to require a query, so a question the data cannot
-    // answer got an invented one - and the reply carried a table of 31
-    // rows of `count: 0` beneath it.
     let reply = json!({
         "intent": "answer",
         "reply": "You have events, with author, day, event and lines."
@@ -89,7 +83,6 @@ fn a_question_about_the_data_itself_answers_without_a_query() {
     assert!(matches!(proposal, Proposal::Answer { query: None, .. }));
 }
 
-/// The tool of that name, so a test does not break when the list grows.
 fn tool(name: &str) -> Value {
     proposal_tools()
         .into_iter()
@@ -114,14 +107,11 @@ fn the_answer_tool_asks_only_for_the_reply() {
     let answer = tool(ANSWER_TOOL);
 
     assert_eq!(answer["input_schema"]["required"], json!(["reply"]));
-    // Still described, so the model knows a query is how it reads data.
     assert!(answer["input_schema"]["properties"]["query"].is_object());
 }
 
 #[test]
 fn a_reply_the_model_encoded_twice_is_read_back_as_prose() {
-    // Seen live: the whole reply arrived as a quoted JSON string, so the
-    // panel showed literal \n between paragraphs and a trailing quote.
     let reply = json!({
         "intent": "answer",
         "reply": r#""One.\n\nTwo.""#
@@ -262,8 +252,6 @@ fn an_empty_catalogue_says_nothing_is_built_yet() {
     assert!(prompt.contains("Nothing is built yet"), "{prompt}");
 }
 
-/// A model whose answers are decided in advance, so the conversation is
-/// exercised without an HTTP server standing in for the API.
 struct ScriptedModel {
     answers: std::sync::Mutex<std::collections::VecDeque<Value>>,
     seen: std::sync::Mutex<Vec<Vec<Message>>>,
@@ -355,8 +343,6 @@ async fn a_schema_lookup_is_answered_and_the_turn_continues() {
     };
     assert_eq!(reply, "There are 12 commits.");
 
-    // The second call carries the question, the model's own tool_use, and
-    // the result addressed to it — the API refuses any other order.
     let second = &model.turns()[1];
     assert_eq!(second.len(), 3);
     assert_eq!(second[1].role, "assistant");
@@ -376,8 +362,6 @@ async fn a_schema_lookup_is_answered_and_the_turn_continues() {
 
 #[tokio::test]
 async fn a_rejected_proposal_is_refused_to_the_call_that_made_it() {
-    // The API answers 400 when a tool_use is followed by anything but a
-    // tool_result for it, which is how the repair round used to fail.
     let model = ScriptedModel::new(vec![
         json!({ "content": [
             { "type": "tool_use", "id": "bad", "name": ANSWER_TOOL, "input": {} },
@@ -414,8 +398,6 @@ async fn a_rejected_proposal_is_refused_to_the_call_that_made_it() {
 
 #[tokio::test]
 async fn a_model_that_only_ever_looks_up_is_stopped() {
-    // Four lookups is one past the budget, so the turn ends rather than
-    // spending the reader's money in a circle.
     let model = ScriptedModel::new(vec![
         look_up_turn("t1", &json!(["silver.a"])),
         look_up_turn("t2", &json!(["silver.b"])),
@@ -457,7 +439,6 @@ async fn an_answer_needs_no_lookup_at_all() {
 
 #[test]
 fn a_lookup_asking_for_nothing_is_not_a_lookup() {
-    // An empty list would spend a round trip and teach the model nothing.
     let empty: MessagesResponse = serde_json::from_value(look_up_turn("t1", &json!([])))
         .unwrap_or_else(|error| panic!("the fixture parses: {error}"));
 
@@ -473,7 +454,6 @@ fn the_prompt_carries_the_datasets_and_how_to_name_their_fields() {
 
     assert!(prompt.contains("commits: Commits"), "{prompt}");
     assert!(prompt.contains("lines (whole number)"), "{prompt}");
-    // Which name space a reference belongs to is the thing it gets wrong.
     assert!(prompt.contains("`dataset`"), "{prompt}");
     assert!(prompt.contains("`field`"), "{prompt}");
     assert!(prompt.contains("as_name"), "{prompt}");
@@ -482,9 +462,6 @@ fn the_prompt_carries_the_datasets_and_how_to_name_their_fields() {
 
 #[test]
 fn the_widget_schema_offers_exactly_the_kinds_the_renderer_draws() {
-    // The schema the model writes against and the switch that draws the
-    // result are two views of one vocabulary. Every bug here came from
-    // those two drifting apart.
     let created = tool(CREATE_TOOL);
     let widget = &created["input_schema"]["properties"]["widgets"]["items"]["properties"]["body"]["properties"];
 
@@ -519,9 +496,6 @@ fn the_query_schema_names_a_dataset_and_its_fields() {
     );
     assert_eq!(field["percent"]["type"], json!("boolean"));
     assert_eq!(field["exact"]["type"], json!("boolean"));
-    // The field a metric reads is not required: counting rows names none, and
-    // no JSON schema this API accepts can say "required unless counting", so
-    // the compiler refuses what the schema lets through.
     assert_eq!(
         query["fields"]["items"]["required"],
         json!(["type", "as_name"])
@@ -568,8 +542,6 @@ fn an_answer_naming_a_dataset_the_reader_does_not_have_is_refused() {
         panic!("a dataset that does not exist must not reach the warehouse");
     };
 
-    // The message is what the repair round hands back, so it has to name
-    // the datasets that DO exist.
     let feedback = rejection.feedback();
     assert!(feedback.contains("information_schema_tables"), "{feedback}");
     assert!(feedback.contains("commits"), "{feedback}");
@@ -596,9 +568,6 @@ fn a_dataset_the_stand_declares_passes_the_check() {
     ));
 }
 
-/// A query addressing a warehouse relation is how metrics read data before
-/// datasets. It goes back to the model with the list, so the conversation
-/// corrects it rather than the reader meeting a refusal.
 #[test]
 fn a_query_naming_a_table_instead_of_a_dataset_is_sent_back_for_repair() {
     let known = ["commits".to_owned()];
@@ -622,8 +591,6 @@ fn a_query_naming_a_table_instead_of_a_dataset_is_sent_back_for_repair() {
     );
 }
 
-/// A stand whose dataset listing came back empty answers nothing, so a
-/// proposal over any dataset is refused rather than run against nothing.
 #[test]
 fn with_nothing_declared_every_proposal_is_refused() {
     let reply = json!({
@@ -648,14 +615,10 @@ fn with_nothing_declared_every_proposal_is_refused() {
 fn one_tool_per_intent_carries_the_name_charset() {
     let tools = proposal_tools();
 
-    // One tool per intent, plus the lookup that ends no turn.
     assert_eq!(tools.len(), 3);
     assert!(tools.iter().any(|tool| tool["name"] == json!(ANSWER_TOOL)));
     assert!(tools.iter().any(|tool| tool["name"] == json!(CREATE_TOOL)));
 
-    // Not strict on purpose: the nested MetricQuery exceeds the API's
-    // compiled-grammar budget and a strict request is refused outright.
-    // Verified by hand against the live API before this was written.
     for offered in &tools {
         assert!(offered.get("strict").is_none(), "strict must stay off");
         assert_eq!(

@@ -14,9 +14,6 @@ spec:
       labels:
         {{- include "insight-gateway.selectorLabels" . | nindent 8 }}
       annotations:
-        # Roll the pods when the route table changes; the container regenerates
-        # nginx.conf from it on start (DESIGN 3.13). A broken table never ships
-        # -- the entrypoint runs `nginx -t` and fails the pod before serving.
         checksum/routes: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -28,7 +25,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- end }}
-      # No Docker-link env-vars; the gateway reaches everything by DNS.
       enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -40,8 +36,6 @@ spec:
         - name: gateway
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # Deployment settings -> routegen flags at startup (entrypoint). The
-          # route table itself is the mounted ConfigMap; nothing is baked.
           env:
             - name: GATEWAY_ROUTES_FILE
               value: /etc/gateway/routes.yaml
@@ -65,9 +59,6 @@ spec:
             - name: routes
               mountPath: /etc/gateway
               readOnly: true
-            # Writable tmp: routegen writes nginx.conf here and nginx keeps its
-            # pid + temp paths here (the config points them at /tmp). Everything
-            # else is stateless (DESIGN 3.7).
             - name: tmp
               mountPath: /tmp
           ports:
@@ -94,7 +85,6 @@ spec:
           image: "{{ .Values.metrics.image.repository }}:{{ .Values.metrics.image.tag }}"
           imagePullPolicy: {{ .Values.metrics.image.pullPolicy }}
           args:
-            # Matches the loopback-only stub_status listener routegen emits.
             - --nginx.scrape-uri=http://127.0.0.1:8090/stub_status
             - --web.listen-address=:{{ .Values.metrics.port }}
           ports:

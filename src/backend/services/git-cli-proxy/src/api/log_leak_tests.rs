@@ -1,7 +1,3 @@
-//! Seeded-leak checks: write the proxy token and a vendor
-//! git credential through the logging path — each must render as a redaction
-//! marker, never as its value.
-
 use insight_log_context::test_support::capture_output;
 
 use crate::config::GearConfig;

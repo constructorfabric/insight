@@ -19,11 +19,6 @@ pub(crate) enum Bounds {
     },
 }
 
-/// The window a run reads over.
-///
-/// A caller who named no range gets [`Window::Unwindowed`], which is not the
-/// same as an unbounded one they did name: `inf` buckets its rows and leaves
-/// out the undated, and a maximum range refuses it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Window {
     Unwindowed,
@@ -157,7 +152,6 @@ impl RequestedRange {
                     .ok_or(WindowError::Overflow)?;
                 (midnight(previous)?, midnight(this_quarter)?)
             }
-            // Both answered above, before the clock was needed.
             Self::AllTime | Self::Interval { .. } => return Ok(Bounds::Unbounded),
         };
 
@@ -200,8 +194,6 @@ fn midnight(date: NaiveDate) -> Result<DateTime<Utc>, WindowError> {
         .and_utc())
 }
 
-/// What a caller asked a run for, before any data is read. Naming no
-/// range asks for the legacy window: unbounded, unbucketed and UTC.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WindowRequest {
     range: Option<RequestedRange>,
@@ -264,8 +256,6 @@ impl MaximumRange {
         }
     }
 
-    /// Whether this cap admits the window. A run that named no range is
-    /// not capped.
     pub(crate) fn allows(self, window: &Window) -> bool {
         let Window::Requested { bounds, .. } = window else {
             return true;

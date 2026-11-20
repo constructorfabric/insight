@@ -17,9 +17,6 @@ insight-http-metrics = { workspace = true }
 insight-log-context = { workspace = true }
 insight-openapi = { workspace = true }
 insight-migration = { workspace = true }
-# Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
-# rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
-# but doesn't re-export the row-deserialization derives.
 clickhouse = { workspace = true }
 
 sqlparser = { workspace = true, features = ["visitor"] }
@@ -28,19 +25,10 @@ rmcp = { workspace = true }
 axum = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
-# ToolKit host runtime. analytics runs as a gears-rust host: routes are
-# declared via `OperationBuilder` and served by the `api-gateway` system gear
-# (the REST host) under `toolkit::bootstrap::run_server`. Auth is ENABLED: the
-# `oidc-authn-plugin` (cf-gears-oidc-authn-plugin) verifies the ES256 gateway JWT
-# against the authenticator's JWKS and maps its claims to a SecurityContext via
-# configured claim_mapping (sub→subject_id, tenant_id→subject_tenant_id,
-# roles→token_scopes) — no bespoke wrapper (NGINX_BFF R1 / G2).
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 
-# System gears linked for the REST host + auth pipeline. Discovered at link time
-# via inventory; mirrors the api-gateway service's authenticated gear set.
 api_gateway = { workspace = true }
 authn-resolver = { workspace = true }
 authz-resolver = { workspace = true }
@@ -60,11 +48,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 schemars = { workspace = true }
 url = { workspace = true }
-# OpenAPI schemas for request/response DTOs. Version pinned to 5.5 to match the
-# `utoipa::ToSchema` the toolkit (`OperationBuilder::json_request` /
-# `json_response_with_schema`) is compiled against (already in Cargo.lock via
-# the toolkit). `chrono` + `uuid` features cover the timestamp / UUID fields on
-# the DTOs; no `time` types are used here.
 utoipa = { workspace = true, features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -89,14 +72,8 @@ clap = { workspace = true }
 [dev-dependencies]
 insight-log-context = { workspace = true, features = ["test-support"] }
 sea-orm = { workspace = true, features = ["mock"] }
-# `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
-# integration tests. Same dev-dep pattern as api-gateway's proxy tests.
 tower = { version = "0.5", features = ["util"] }
-# `clickhouse::test::Mock` for exercising ClickHouse read paths (the
-# contract-version sweep) against an in-process server in unit tests.
 clickhouse = { workspace = true, features = ["test-util"] }
-# Paused-time `#[tokio::test]` for the semaphore acquire-timeout refusals —
-# the 2 s acquire window elapses instantly instead of being slept through.
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.27"
 zip = { version = "9.0", default-features = false, features = ["deflate"] }

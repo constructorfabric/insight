@@ -2,10 +2,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
-/// Where the next page of one change-feed walk resumes.
-///
-/// The high-water mark is fixed by the walk's first page, so a change
-/// recorded while the caller pages is read by its next walk, never skipped.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangesCursor {
     #[serde(rename = "h")]
@@ -16,7 +12,6 @@ pub struct ChangesCursor {
     pub after_us: i64,
     #[serde(rename = "e")]
     pub after_email: String,
-    /// The walk's `committed_since`, carried so every page applies one bound.
     #[serde(rename = "m", default)]
     pub committed_since_us: Option<i64>,
 }
@@ -28,25 +23,19 @@ pub struct MalformedCursor;
 impl ChangesCursor {
     #[must_use]
     pub fn encode(&self) -> String {
-        // Serialising plain fields cannot fail.
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default())
     }
 
-    /// # Errors
-    ///
-    /// [`MalformedCursor`] when `raw` is not a cursor this service issued.
     pub fn decode(raw: &str) -> Result<Self, MalformedCursor> {
         let bytes = URL_SAFE_NO_PAD.decode(raw).map_err(|_| MalformedCursor)?;
         serde_json::from_slice(&bytes).map_err(|_| MalformedCursor)
     }
 }
 
-/// Microseconds since the UNIX epoch; saturates at zero on a pre-epoch clock.
 pub(super) fn now_us() -> i64 {
     chrono::Utc::now().timestamp_micros().max(0)
 }
 
-/// A change stamp as the feed renders it: UTC, microsecond precision.
 #[must_use]
 pub fn format_stamp(stamp_us: i64) -> String {
     chrono::DateTime::from_timestamp_micros(stamp_us).map_or_else(
@@ -55,9 +44,8 @@ pub fn format_stamp(stamp_us: i64) -> String {
     )
 }
 
-/// An RFC 3339 instant — or the colon-less offset Python's `%z` renders, or a
-/// bare `YYYY-MM-DD` read as midnight UTC — as microseconds since the UNIX
-/// epoch.
+// Python's `strftime` renders an offset only as `%z`, without the colon, and
+// has no directive that inserts one.
 #[must_use]
 pub fn parse_instant_us(raw: &str) -> Option<i64> {
     let raw = raw.trim();
@@ -73,7 +61,6 @@ pub fn parse_instant_us(raw: &str) -> Option<i64> {
         })
 }
 
-/// An instant as the fixed-width UTC ordinal the index orders commits by.
 #[must_use]
 pub fn ordinal_of_us(stamp_us: i64) -> Option<String> {
     chrono::DateTime::from_timestamp_micros(stamp_us)

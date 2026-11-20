@@ -1,11 +1,3 @@
-"""Shared render harness for the Helm contract tests in this directory.
-
-The umbrella must be rendered from a SYNTHETIC values set, never from a
-`deploy/gitops/environments/*` overlay: an overlay is free to change what it
-enables, and a contract test that follows it stops asserting silently instead
-of failing.
-"""
-
 from __future__ import annotations
 
 import subprocess
@@ -14,14 +6,12 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve()
-SUBCHART = HERE.parents[1]  # .../previews/helm
+SUBCHART = HERE.parents[1]
 REPO_ROOT = HERE.parents[6]
 UMBRELLA = REPO_ROOT / "charts" / "insight"
 
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
-# Minimum viable umbrella install (same synthetic set as the sibling
-# identity-resolution harness, plus the tenant the seed guard demands).
 UMBRELLA_BASE = [
     "--set",
     f"global.tenantDefaultId={TENANT}",
@@ -63,7 +53,6 @@ UMBRELLA_BASE = [
 
 
 def render(chart: Path, *extra: str) -> tuple[int, str, str]:
-    """`helm template` a chart; returns (returncode, stdout, stderr)."""
     proc = subprocess.run(
         ["helm", "template", "contract-test", str(chart), *extra],
         capture_output=True,
@@ -76,11 +65,6 @@ def render(chart: Path, *extra: str) -> tuple[int, str, str]:
 
 @pytest.fixture(scope="session")
 def umbrella_deps() -> Path:
-    """Vendor the subcharts once per session.
-
-    Session-scoped on purpose: every module that renders the umbrella needs
-    this, and each run rewrites `charts/insight/charts/`.
-    """
     proc = subprocess.run(
         ["helm", "dependency", "update", str(UMBRELLA)], capture_output=True, text=True, timeout=300, check=False
     )

@@ -1,8 +1,3 @@
-//! `/v1/ai/settings` — the tenant's system prompt.
-//!
-//! Readable by anyone signed in: it is part of every explanation they get.
-//! Writable by admins. Unset means the shipped default, and DELETE is Reset.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -23,7 +18,6 @@ use crate::domain::ai::dto::{AiSettingsResponse, Prose, PutSettingsRequest};
 use crate::domain::ai::prompt::DEFAULT_SYSTEM_PROMPT;
 use crate::infra::db::entities::ai_settings;
 
-/// `GET /v1/ai/settings` — the prompt in force for this tenant.
 pub async fn get_settings(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -35,7 +29,6 @@ pub async fn get_settings(
     Ok(Json(response(stored)))
 }
 
-/// `PUT /v1/ai/settings` — replace the shipped default for this tenant.
 pub async fn put_settings(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -59,8 +52,6 @@ pub async fn put_settings(
     let now = Utc::now();
     let stored = prompt.into_inner();
 
-    // One statement, not read-then-write — two admins saving at once would
-    // otherwise race on the insert.
     let row = ai_settings::ActiveModel {
         insight_tenant_id: Set(tenant),
         system_prompt: Set(Some(stored.clone())),
@@ -86,7 +77,6 @@ pub async fn put_settings(
     }))
 }
 
-/// `DELETE /v1/ai/settings` — back to the shipped default.
 pub async fn reset_settings(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

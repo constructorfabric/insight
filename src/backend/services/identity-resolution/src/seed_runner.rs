@@ -1,28 +1,3 @@
-//! CLI persons-seed runner — the engine behind the `seed` subcommand
-//! (issue #1690: the org tree froze because nothing re-ran the seed).
-//!
-//! The seed is CLI-only: a Helm `CronJob` (and manual `kubectl create job`)
-//! runs `identity-resolution seed` inside the cluster — no HTTP trigger, no
-//! auth. One run is: advisory lock → zombie sweep → `operations` journal row
-//! → input read → guards → the same domain pipeline the removed
-//! `POST /v1/persons-seed` used → journal completed/failed.
-//!
-//! Concurrency: runs serialize on a per-tenant MariaDB `GET_LOCK` owned by an
-//! RAII guard for the whole run (see `infra::db::SeedLockGuard` — every exit
-//! path releases it) — covers cron-vs-manual overlap and
-//! multiple Insight instances sharing one database. A concurrent run fails
-//! fast ([`SeedRunError::LockBusy`], exit code 2) instead of queueing a stale
-//! re-run behind the active one.
-//!
-//! Guards (both overridable with `--force`, both recorded as a `failed`
-//! operation so the journal explains why nothing was written):
-//!   * empty input — 0 `identity_inputs` rows means a broken/misconfigured
-//!     pipeline (wrong ClickHouse URL/database, wiped stand), not "no people";
-//!   * wrong tenant — `persons` rows exist under OTHER tenants and none under
-//!     the configured one: seeding would mint a parallel person universe
-//!     under the wrong tenant (the HOTFIX(#1550) failure mode), which the append-only
-//!     log cannot undo. A genuinely fresh install (empty `persons`) passes.
-
 use std::time::Duration;
 
 use uuid::Uuid;
@@ -34,52 +9,22 @@ use crate::infra::db::{self, ops_repo, seed_repo};
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
 use crate::infra::metrics;
 
-/// Author stamped on CLI-run operations and seed-minted observation rows.
-/// Continues the established convention: the retired Python seed stamped
-/// system-written rows with the nil UUID, so existing installs already carry
-/// it. No FK constrains `author_person_id`, and the API-layer nil-caller
-/// check (`api::gate`) inspects the JWT subject, not data rows.
 pub const SYSTEM_AUTHOR: Uuid = Uuid::nil();
 
-/// The only seed mode the pipeline implements.
 pub const LINK_BY_EMAIL_MODE: &str = "link-by-email";
 
-/// Upper bound on the read + pipeline — same ceiling the removed queue
-/// worker used; a hung ClickHouse/MariaDB call fails the Job (with the
-/// journal row updated to `failed`) instead of wedging it past the
-/// `CronJob`'s next tick (the advisory lock would hold that tick off).
 const SEED_TIMEOUT: Duration = Duration::from_mins(10);
 
-/// Backstop over the WHOLE lock-held critical section — the zombie sweep and
-/// the journal writes are MariaDB calls outside [`SEED_TIMEOUT`]'s scope, and
-/// a hang in any of them would hold the advisory lock just as effectively as
-/// a hung pipeline. A run cut off by THIS timeout may leave its `operations`
-/// row `running`; the next run's zombie sweep reclaims it. The chart's
-/// `activeDeadlineSeconds` (900s) stays the final out-of-process backstop.
 const RUN_TIMEOUT: Duration = Duration::from_mins(12);
 
-/// How long a run waits for the per-tenant lock before reporting `LockBusy`.
-/// Unlike the publish lock, a busy seed lock never means "covered": the
-/// holder read `identity_inputs` at its own start, so a pipeline seed that
-/// gave up here would let gold build over identities its sync just landed.
 const LOCK_WAIT_SECS: u32 = 15;
 
-/// How stale a `queued`/`running` operation must be before the pre-run sweep
-/// reclaims it. A killed Job pod leaves its row `running` forever otherwise —
-/// the in-process state is gone, only the next run can clean up.
 const ZOMBIE_CUTOFF_HOURS: i64 = 1;
 
-/// Why a seed run did not complete — the `seed` subcommand maps each variant
-/// to a distinct exit code so a `CronJob` failure is diagnosable from the Job
-/// status alone (0 ok / 1 failed / 2 lock busy / 3 guard).
 #[derive(Debug)]
 pub enum SeedRunError {
-    /// Another run holds the per-tenant advisory lock.
     LockBusy,
-    /// An input guard refused the run (message is operator-facing and is
-    /// persisted verbatim as the operation's `error_message`).
     Guard(String),
-    /// The run itself failed (connect, read, pipeline, or journal write).
     Failed(anyhow::Error),
 }
 
@@ -89,11 +34,6 @@ impl From<anyhow::Error> for SeedRunError {
     }
 }
 
-/// Run one CLI persons-seed end to end. See the module docs for the shape.
-///
-/// # Errors
-///
-/// [`SeedRunError`] — lock busy, guard refusal, or a failed run.
 pub async fn run(
     config: &GearConfig,
     mode: &str,
@@ -104,30 +44,11 @@ pub async fn run(
             "unsupported mode '{mode}'; only '{LINK_BY_EMAIL_MODE}' is available"
         )));
     }
-    // SINGLE-TENANT BY DESIGN, gated on HOTFIX(#1550): one run seeds exactly
-    // one tenant — the configured one. A true multi-tenant mode ("enumerate
-    // tenants, seed each") is NOT possible yet: the identity_inputs reader
-    // deliberately reads the WHOLE table with no tenant filter (see the
-    // HOTFIX(#1550) block in `infra::identity_inputs` — the dbt producer
-    // hashes tenant ids, so there is nothing to filter on), which means every
-    // tenant's run would ingest every other tenant's rows and mint duplicate
-    // person universes. Once the producer writes real tenant UUIDs and the
-    // reader filter returns, this becomes a loop over tenants — the runner is
-    // already per-tenant everywhere below (lock name, journal row, writes).
+    // SAFETY: tenancy shortcut (#1550): one run seeds only the configured tenant. Looping over tenants
+    // needs the `identity_inputs` tenant filter back first.
     let db = db::connect(&config.database_url).await?;
-    // Same boot gate as the server: a seed against a schema behind this build
-    // would fail per-query mid-run instead of upfront.
     db::assert_schema_compatible(&db).await?;
 
-    // Tenant resolution: the configured tenant_default_id wins; when it is
-    // EMPTY (existing installs whose pre-created config Secret predates the
-    // seed and cannot be touched right now — dev is one), fall back to the
-    // single tenant the persons log already holds. Inference is deliberately
-    // narrow: exactly ONE distinct tenant is the only unambiguous case —
-    // writing under the sole tenant the data already lives under is what an
-    // operator would configure anyway. Zero (fresh install) or several
-    // tenants → refuse and demand explicit config; guessing there recreates
-    // the HOTFIX(#1550) wrong-tenant hazard the guards exist to prevent.
     let distinct = seed_repo::distinct_tenants(&db, 2).await?;
     let tenant = match resolve_tenant(&config.tenant_default_id, &distinct) {
         Ok(t) => t,
@@ -140,8 +61,6 @@ pub async fn run(
              from the persons log; configure it explicitly to silence this"
         );
     }
-    // RAII: the guard owns the lock's dedicated session — every exit path
-    // (return, cancellation, crash) releases the lock, see `SeedLockGuard`.
     let Some(lock) =
         db::SeedLockGuard::acquire(&config.database_url, tenant, LOCK_WAIT_SECS).await?
     else {
@@ -161,8 +80,6 @@ pub async fn run(
     result
 }
 
-/// Everything that happens while the advisory lock is held: zombie sweep,
-/// journal row, guarded seed, journal resolution.
 async fn run_locked(
     db: &sea_orm::DatabaseConnection,
     config: &GearConfig,
@@ -170,8 +87,6 @@ async fn run_locked(
     mode: &str,
     force: bool,
 ) -> Result<SeedSummary, SeedRunError> {
-    // Reclaim rows a killed run left behind. Log-only failure: a broken sweep
-    // must not block the seed itself.
     let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::hours(ZOMBIE_CUTOFF_HOURS);
     match ops_repo::sweep_zombies(db, cutoff).await {
         Ok(n) if n > 0 => tracing::warn!(swept = n, "persons-seed: reclaimed zombie operations"),
@@ -179,8 +94,6 @@ async fn run_locked(
         Err(e) => tracing::error!(error = %e, "persons-seed: zombie sweep failed"),
     }
 
-    // Journal row first, so every later failure (guard included) is recorded
-    // and visible over the GET /v1/persons-seed endpoints.
     let operation_id = Uuid::now_v7();
     let request_json =
         serde_json::json!({ "mode": mode, "trigger": "cli", "force": force }).to_string();
@@ -213,7 +126,6 @@ async fn run_locked(
             Ok(summary)
         }
         Err(SeedRunError::Guard(msg)) => {
-            // Deliberate operator-facing text — safe to persist verbatim.
             tracing::warn!(%operation_id, %msg, "persons-seed: refused by input guard");
             if let Err(e) = ops_repo::fail(db, operation_id, &msg).await {
                 tracing::error!(error = %e, %operation_id, "fail update failed");
@@ -221,9 +133,6 @@ async fn run_locked(
             Err(SeedRunError::Guard(msg))
         }
         Err(e) => {
-            // Persist only a generic message: `error_message` is returned
-            // verbatim by the GET endpoints, so raw driver/anyhow text must
-            // not leak to callers (same rule the queue worker followed).
             if let Err(e2) =
                 ops_repo::fail(db, operation_id, "persons-seed failed; see job logs").await
             {
@@ -234,16 +143,10 @@ async fn run_locked(
     }
 }
 
-/// The roster the configuration names, if any.
-///
-/// Split out to be testable: it sits beside `org_chart_source_type`, which is
-/// also a single source type, and reading the wrong one of the two has no
-/// symptom at all — the run succeeds and mints nothing.
 fn roster_source(config: &GearConfig) -> Option<RosterSource> {
     RosterSource::parse(&config.roster_source_type)
 }
 
-/// Input read → guards → pipeline, bounded by [`SEED_TIMEOUT`].
 async fn guarded_seed(
     db: &sea_orm::DatabaseConnection,
     config: &GearConfig,
@@ -298,12 +201,6 @@ async fn guarded_seed(
         })
 }
 
-/// The pure tenant-resolution decision (split out for unit tests): an
-/// explicitly configured tenant always wins; an empty config falls back to
-/// the SOLE tenant present in the persons log; anything ambiguous refuses
-/// with an operator-facing message. `pub(crate)`: the sync runner journals
-/// its runs under the same resolved tenant (its GET journal routes are
-/// tenant-scoped, so a made-up tenant would hide the rows from admins).
 pub(crate) fn resolve_tenant(
     configured: &str,
     distinct_in_persons: &[Uuid],
@@ -329,10 +226,6 @@ pub(crate) fn resolve_tenant(
     }
 }
 
-/// The pure guard decision (see the module docs): refuse an empty input and
-/// refuse a wrong-tenant run; `--force` overrides both. The returned message
-/// is operator-facing — it lands verbatim in the operation's `error_message`
-/// and the Job log.
 fn input_guards(
     input_rows: usize,
     presence: seed_repo::TenantPresence,
@@ -400,7 +293,6 @@ mod tests {
 
     #[test]
     fn fresh_install_passes_unforced() {
-        // Non-empty input, persons entirely empty — the bootstrap shape.
         assert!(input_guards(10, presence(false, false), tenant(), false).is_ok());
     }
 
@@ -470,8 +362,6 @@ mod tests {
     fn the_roster_comes_from_its_own_configuration_field() {
         let config = GearConfig {
             roster_source_type: "bamboohr".to_owned(),
-            // Deliberately different: this field is the neighbour a mistyped
-            // read would land on, and both hold a bare source type.
             org_chart_source_type: "ms-entra".to_owned(),
             ..GearConfig::default()
         };

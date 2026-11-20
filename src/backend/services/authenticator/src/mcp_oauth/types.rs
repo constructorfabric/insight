@@ -4,9 +4,6 @@ use url::Url;
 pub const MCP_SCOPE: &str = "mcp:query";
 pub const MCP_AUTHOR_SCOPE: &str = "mcp:author";
 
-/// One MCP server this deployment fronts, with the only scope a grant for it
-/// may carry. Pairing them here is what stops a grant for the read-only
-/// warehouse server carrying authoring scope, or the reverse.
 #[derive(Debug, Clone, Copy)]
 pub struct McpResource {
     pub path: &'static str,
@@ -30,8 +27,6 @@ pub const MCP_RESOURCES: [McpResource; 2] = [
     },
 ];
 
-/// The resource a client asked to be authorized for, if this deployment serves
-/// it. A resource belonging to another origin is not one of ours.
 pub fn mcp_resource_for(origin: &str, resource: &str) -> Option<&'static McpResource> {
     MCP_RESOURCES
         .iter()

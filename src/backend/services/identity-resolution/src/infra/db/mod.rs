@@ -1,23 +1,3 @@
-//! `MariaDB` connection.
-//!
-//! **Self-managed `SeaORM` pool — we deliberately do NOT use the toolkit `db`
-//! capability** (same as the analytics gear). The identity queries need SQL that
-//! `cf-gears-toolkit-db` (v0.8.4) can neither express via its scoped
-//! entity-builder nor run as raw SQL (it intentionally exposes no raw-SQL path —
-//! `DbConn`/`DbTx` are builder-only). Specifically:
-//!   * window functions (`ROW_NUMBER()` / `LEAD() OVER (…)`) — the resolver reads
-//!     and the SCD2 `org_chart` rebuild;
-//!   * `WITH RECURSIVE` — the org-subchart / visibility traversals;
-//!   * atomic conditional DML with a correlated subquery — the role in-use and
-//!     last-admin lockout guards.
-//!
-//! See constructorfabric/gears-rust#4239 for the capability request.
-//!
-//! The raw SQL here is injection-safe: every value is a **bound parameter**
-//! (`Statement::from_sql_and_values`, no string interpolation) and the tenant is
-//! always pinned in the `WHERE`. The `identity` database schema is owned by THIS
-//! service's migrator (`crate::migration`).
-
 pub mod bootstrap;
 pub mod entities;
 pub mod ops_repo;
@@ -56,11 +36,6 @@ use std::time::Duration;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
-/// Connect to `MariaDB` and return a connection pool.
-///
-/// # Errors
-///
-/// Returns an error if the connection cannot be established.
 pub async fn connect(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     let mut opts = ConnectOptions::new(database_url);
     opts.max_connections(10)
@@ -72,16 +47,8 @@ pub async fn connect(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     Ok(db)
 }
 
-/// Connect with a SINGLE pooled connection, for callers that hold a
-/// session-scoped `GET_LOCK` advisory lock.
-///
 /// `GET_LOCK` binds to the session, so the lock, the work it guards, and the
-/// release must all execute on the same connection — hence the pool of one. See
-/// [`SeedLockGuard`], which owns such a session for the length of a seed run.
-///
-/// # Errors
-///
-/// Returns an error if the connection cannot be established.
+/// release must all execute on the same connection.
 pub async fn connect_single(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     let mut opts = ConnectOptions::new(database_url);
     opts.max_connections(1)
@@ -93,66 +60,23 @@ pub async fn connect_single(database_url: &str) -> anyhow::Result<DatabaseConnec
     Ok(db)
 }
 
-/// Name of the cross-process advisory lock serializing schema migration runs.
 pub const MIGRATION_LOCK: &str = "identity_resolution_migrations";
-/// How long a second migrator waits for the lock before giving up.
 pub const MIGRATION_LOCK_TIMEOUT: Duration = Duration::from_mins(5);
 
-/// Refuse to serve unless the live schema carries every migration this build
-/// embeds.
-///
-/// The server never applies migrations — the `migrate` entrypoint does. Rows
-/// applied by a newer release are tolerated so an application image can be
-/// rolled back over a forward-only schema. Without this gate an older image
-/// starts and then fails per-query on columns it does not know about.
-///
-/// # Errors
-///
-/// Returns error if the ledger cannot be read or the schema is behind this
-/// build.
 pub async fn assert_schema_compatible(db: &DatabaseConnection) -> anyhow::Result<()> {
     Ok(insight_migration::assert_compatible::<crate::migration::Migrator>(db).await?)
 }
 
-/// Prefix of the per-tenant advisory lock serializing persons-seed runs.
-/// Cross-process AND cross-instance: the lock lives on the MariaDB server, so
-/// a cron Job, a manual Job, and a second Insight instance sharing the same
-/// database all serialize through it.
 const SEED_LOCK_PREFIX: &str = "persons-seed:";
 
-/// RAII holder of the per-tenant persons-seed advisory lock.
-///
-/// The lock is `GET_LOCK`-session-scoped, and this guard OWNS the dedicated
-/// single-connection session it was acquired on — so the lock's lifetime is
-/// tied to the guard's scope by construction. Every exit path is covered:
-///   * happy path — [`SeedLockGuard::release`] issues `RELEASE_LOCK`
-///     (fastest handover to the next run);
-///   * early return / future cancellation — the guard drops, the session
-///     closes, MariaDB releases the lock server-side;
-///   * process crash (panic, OOM-kill, node death) — the TCP session dies
-///     and MariaDB releases the lock the same way.
-///
-/// A stale lock is therefore impossible; no explicit `Drop` impl is needed —
-/// dropping the owned connection IS the release.
+/// Dropping the owned connection closes the session, and MariaDB releases a
+/// `GET_LOCK` lock server-side when its session ends.
 pub struct SeedLockGuard {
     conn: DatabaseConnection,
     tenant_id: uuid::Uuid,
 }
 
 impl SeedLockGuard {
-    /// Take the per-tenant lock, waiting up to `wait_secs` for the holder to
-    /// finish (`GET_LOCK` waits server-side). A seed that lost this lock has
-    /// NO covered-by-the-holder guarantee — the holder read `identity_inputs`
-    /// at its own start, possibly before this caller's rows landed — so a
-    /// waiter must run its own seed rather than treat busy as done. Opens its
-    /// own single-connection session (see [`connect_single`]; a pooled
-    /// connection could be swapped mid-run, silently dropping the
-    /// session-scoped lock). Returns `None` when the lock is still held
-    /// after the wait.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the connection or the query fails.
     pub async fn acquire(
         database_url: &str,
         tenant_id: uuid::Uuid,
@@ -183,10 +107,6 @@ impl SeedLockGuard {
         }
     }
 
-    /// Explicit best-effort release (the happy path — hands the lock over
-    /// without waiting for the session teardown). Consumes the guard; a
-    /// failure is not worth propagating, dropping the session releases the
-    /// lock anyway.
     pub async fn release(self) {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let _ = self
@@ -200,31 +120,13 @@ impl SeedLockGuard {
     }
 }
 
-/// Name of the GLOBAL advisory lock serializing persons-sync runs (the sync
-/// copies the whole log regardless of tenant, so unlike the seed there is no
-/// per-tenant suffix). Same cross-process/cross-instance properties as the
-/// seed lock; distinct from it so a sync never contends with a seed.
 const SYNC_LOCK: &str = "persons-sync";
 
-/// RAII holder of the persons-sync advisory lock — the global sibling of
-/// [`SeedLockGuard`], with identical lifetime semantics (owns its dedicated
-/// single-connection session; every exit path up to and including process
-/// death releases the lock server-side).
 pub struct SyncLockGuard {
     conn: DatabaseConnection,
 }
 
 impl SyncLockGuard {
-    /// Take the global sync lock, waiting up to `wait_secs` for the holder to
-    /// finish (`GET_LOCK` waits server-side). Waiting is safe where failing
-    /// fast was not: the holder's quiescence re-check means its snapshot
-    /// covers every row committed before it released, so a waiter that then
-    /// acquires publishes at-least-as-fresh — never a regression. Returns
-    /// `None` when the lock is still held after the wait.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the connection or the query fails.
     pub async fn acquire(database_url: &str, wait_secs: u32) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
@@ -247,8 +149,6 @@ impl SyncLockGuard {
         }
     }
 
-    /// Explicit best-effort release (the happy path); dropping the session
-    /// releases the lock anyway.
     pub async fn release(self) {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let _ = self
@@ -262,19 +162,6 @@ impl SyncLockGuard {
     }
 }
 
-/// Run pending migrations AND the first-admin bootstrap under one advisory lock.
-///
-/// The lock serializes concurrent migrators — MariaDB DDL is not
-/// transactional, so without it two racers could double-apply a pending script.
-/// The bootstrap runs INSIDE the same critical section: its
-/// `INSERT … WHERE NOT EXISTS` has no unique constraint backing the active
-/// `(tenant, person, role)` triple, so two replicas racing after the lock was
-/// released could insert two active bootstrap assignments.
-///
-/// # Errors
-///
-/// Returns an error if the connection cannot be established, the lock cannot be
-/// acquired within the timeout, a migration fails, or the bootstrap fails.
 pub async fn run_migrations(
     database_url: &str,
     config: &crate::config::GearConfig,
@@ -304,16 +191,12 @@ mod tests {
     use super::*;
     use crate::config::GearConfig;
 
-    /// Serializes the tests in this module: each mutates `seaql_migrations`
-    /// transiently, and one test's in-flight ledger state would fail another's
-    /// compatibility assertion under the harness's default parallelism.
     static LEDGER_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
         LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     const BASELINE: &str = "m20261030_000001_baseline";
     const PARTIAL: &str = "m20260724_000012_org_chart_nullable_parent";
 
-    /// Delete `versions` from the ledger, as if they had never been applied.
     async fn forget(db: &DatabaseConnection, versions: &[&str]) -> anyhow::Result<()> {
         for version in versions {
             db.execute_raw(Statement::from_sql_and_values(
@@ -346,10 +229,6 @@ mod tests {
         Ok(row.try_get_by_index::<i64>(0)?)
     }
 
-    /// Live migration + bootstrap test against the CI-provisioned MariaDB
-    /// (`INTEGRATION_TESTS_MARIADB_URL`; the CI job applies migrations once
-    /// via the CLI before tests, so the first `run_migrations` here is
-    /// already a re-run). Skips cleanly when the env var is unset.
     #[tokio::test]
     async fn migrations_and_bootstrap_are_idempotent_against_live_mariadb() -> anyhow::Result<()> {
         let Ok(url) = std::env::var("INTEGRATION_TESTS_MARIADB_URL") else {
@@ -367,9 +246,6 @@ mod tests {
         run_migrations(&url, &cfg).await?;
         run_migrations(&url, &cfg).await?;
 
-        // `embedded ⊆ applied`, not equality: the shared DB may already carry
-        // migrations from a newer build, and tolerating them is the contract
-        // that makes an application rollback possible.
         assert_schema_compatible(&db).await?;
         let applied = count(&db, "SELECT COUNT(*) FROM seaql_migrations").await?;
         let embedded = i64::try_from(crate::migration::Migrator::migrations().len())?;
@@ -378,10 +254,6 @@ mod tests {
             "ledger must hold at least the embedded set (applied {applied} < embedded {embedded})"
         );
 
-        // With an embedded migration missing from the ledger, the schema is
-        // behind this build and the server must refuse to boot. Over a ledger
-        // that walked the squashed history the baseline applies nothing, so a
-        // re-run only records it.
         forget(&db, &[BASELINE]).await?;
         assert!(
             assert_schema_compatible(&db).await.is_err(),
@@ -390,8 +262,6 @@ mod tests {
         run_migrations(&url, &cfg).await?;
         assert_schema_compatible(&db).await?;
 
-        // A ledger holding only part of the squashed history is refused: no
-        // migration left in this build can bring that schema forward.
         forget(&db, &[BASELINE, PARTIAL]).await?;
         let refused = run_migrations(&url, &cfg).await;
         db.execute_raw(Statement::from_sql_and_values(
@@ -410,8 +280,6 @@ mod tests {
         run_migrations(&url, &cfg).await?;
         assert_schema_compatible(&db).await?;
 
-        // A first migrate interrupted inside the baseline leaves its tables
-        // with no ledger row; the re-run must converge over them.
         let mut whole_history = vec![BASELINE];
         whole_history.extend_from_slice(crate::migration::SQUASHED);
         forget(&db, &whole_history).await?;
@@ -430,11 +298,6 @@ mod tests {
         let roles = count(&db, "SELECT COUNT(*) FROM roles").await?;
         assert!(roles >= 2, "the baseline re-run must keep the seeded roles");
 
-        // Bootstrap admin ran under the lock on EVERY successful
-        // run_migrations call above — exactly one active assignment must exist
-        // for THIS test's (tenant, person, role) triple. Scoped, not a
-        // global reason='bootstrap' count: a legitimate bootstrap for a
-        // different tenant/person in the same database must not fail this.
         let tenant = uuid::Uuid::parse_str(&cfg.tenant_default_id)?;
         let person = uuid::Uuid::parse_str(&cfg.bootstrap_admin_person_id)?;
         let admins = count_with(
@@ -453,9 +316,6 @@ mod tests {
         Ok(())
     }
 
-    /// The rollback case: a ledger carrying a migration this build does not
-    /// embed must still boot. Without this the forward-only contract has no
-    /// escape hatch and an application image can never be rolled back.
     #[tokio::test]
     async fn newer_ledger_rows_do_not_block_boot() -> anyhow::Result<()> {
         const FUTURE: &str = "m99999999_000001_from_a_newer_release";

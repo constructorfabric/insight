@@ -4,8 +4,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// Per-repo bookkeeping stored as `meta.json` next to `repo.git`. Losing it is
-/// equivalent to evicting the entry (the cache is rebuildable by design).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoMeta {
     pub clone_url: String,
@@ -14,53 +12,22 @@ pub struct RepoMeta {
     pub last_fetched_at_epoch_s: u64,
     pub last_accessed_at_epoch_s: u64,
     pub size_bytes: u64,
-    /// Size right after a clone or a blob purge — the blobless skeleton.
-    /// Anything above it is transient blob weight a purge can reclaim.
     pub skeleton_bytes: u64,
-    /// Bumped on every successful clone/fetch. Page tokens carry it so a
-    /// paginating caller is pinned to one ref snapshot.
     pub generation: u64,
-    /// Identifies THIS clone of the entry, for the entry's whole life on disk.
-    ///
-    /// The generation cannot do that job alone: every clone starts at `1`, so
-    /// an entry evicted and re-cloned between two pages hands the second page
-    /// the same generation over a different repository state, and the
-    /// continuation is sliced against a snapshot it never saw. An empty value
-    /// is a pre-incarnation entry and matches no token.
     #[serde(default)]
     pub incarnation: String,
-    /// Fingerprints of the credentials that have proved origin access for
-    /// THIS clone — a set, not a slot: two callers holding different valid
-    /// tokens (a rotation mid-sync) would otherwise evict each other's proof
-    /// on every fetch and ping-pong a full origin fetch per page.
-    /// INVARIANT: a warm read is served only to a caller presenting matching
-    /// credentials — the cache key alone is not an authorization claim.
-    /// Reset by a re-clone; bounded, oldest proof dropped first.
     #[serde(default, alias = "cred_fingerprint", deserialize_with = "one_or_many")]
     pub cred_fingerprints: Vec<String>,
-    /// Set once the entry was promoted out of a partial clone because origin
-    /// refuses to serve explicitly requested objects. Purged blobs cannot be
-    /// fetched back on such an entry, so it skips the blob-purge reclaim tier
-    /// and is only ever evicted whole.
     #[serde(default)]
     pub full_clone: bool,
-    /// Packs holding the blobless skeleton: the clone's, every fetch's, and
-    /// the last consolidation's. Any other pack is a served window.
-    /// INVARIANT: empty means unknown, never "no skeleton" — a post-serve
-    /// purge then repacks and a reclaim evicts, instead of deleting packs
-    /// neither can classify.
     #[serde(default)]
     pub skeleton_packs: Vec<String>,
 }
 
 const META_FILE: &str = "meta.json";
 
-/// Proofs kept per entry. Rotation scenarios need two; the bound exists so a
-/// caller cycling many tokens cannot grow the document without limit.
 const MAX_PROVEN_FINGERPRINTS: usize = 8;
 
-/// Accepts the single-string `cred_fingerprint` shape too, so an entry holding
-/// it stays warm.
 fn one_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -77,13 +44,8 @@ where
     })
 }
 
-/// INVARIANT: every in-flight `store` targets a distinct temporary path.
-/// Concurrent writers to one entry (LRU access bumps run under the read lock)
-/// would otherwise interleave into a shared `meta.json.tmp.<pid>` and rename a
-/// spliced document into place, which `load` rejects and the caller re-clones.
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Seconds since the UNIX epoch; saturates at zero on a pre-epoch clock.
 #[must_use]
 pub fn now_epoch_s() -> u64 {
     SystemTime::now()
@@ -92,15 +54,12 @@ pub fn now_epoch_s() -> u64 {
 }
 
 impl RepoMeta {
-    /// Read `meta.json` from the entry dir. A missing or unparsable file is
-    /// `None` — the entry is then treated as absent and re-cloned.
     #[must_use]
     pub fn load(entry_dir: &Path) -> Option<Self> {
         let bytes = std::fs::read(entry_dir.join(META_FILE)).ok()?;
         serde_json::from_slice(&bytes).ok()
     }
 
-    /// Whether `fingerprint` has proved origin access for this clone.
     #[must_use]
     pub fn proven(&self, fingerprint: &str) -> bool {
         self.cred_fingerprints
@@ -108,8 +67,6 @@ impl RepoMeta {
             .any(|proof| proof == fingerprint)
     }
 
-    /// The prior proofs plus `fingerprint`, newest last, oldest dropped past
-    /// the bound.
     #[must_use]
     pub fn proofs_with(previous: Option<&Self>, fingerprint: String) -> Vec<String> {
         let mut proofs: Vec<String> = previous
@@ -128,12 +85,6 @@ impl RepoMeta {
         proofs
     }
 
-    /// Atomically persist to `meta.json` (tmp + rename — a crashed writer
-    /// never leaves a truncated file behind).
-    ///
-    /// # Errors
-    ///
-    /// I/O failure writing or renaming inside `entry_dir`.
     pub fn store(&self, entry_dir: &Path) -> std::io::Result<()> {
         let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
         let tmp = entry_dir.join(format!("{META_FILE}.tmp.{}.{seq}", std::process::id()));
@@ -143,9 +94,6 @@ impl RepoMeta {
             use std::io::Write as _;
             let mut file = std::fs::File::create(&tmp)?;
             file.write_all(&bytes)?;
-            // The rename can survive a power loss whose data blocks did not;
-            // torn JSON at least fails to parse (safe re-clone), but paying
-            // one fsync beats paying a re-clone.
             file.sync_all()?;
         }
 
@@ -191,8 +139,6 @@ mod tests {
 
     #[test]
     fn a_pre_set_document_with_one_fingerprint_still_proves_access() {
-        // A single-string `cred_fingerprint` document must still prove access,
-        // or every such entry cold-refetches.
         let dir = temp_dir("legacy-fingerprint");
         let legacy = r#"{
             "clone_url": "https://example.com/a.git",

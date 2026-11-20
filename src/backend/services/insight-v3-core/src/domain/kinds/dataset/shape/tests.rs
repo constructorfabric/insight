@@ -30,9 +30,6 @@ fn a_declaration_that_reads_as_one_has_nothing_to_say_about_its_shape() {
     assert!(places(&sound).is_empty(), "{:?}", check(&sound));
 }
 
-/// The reason this check exists: a body the deserialiser stops on used to be
-/// answered with one message about the text, and every other mistake in it
-/// went unsaid.
 #[test]
 fn a_type_nothing_knows_does_not_hide_the_rest_of_the_body() {
     let body = json!({
@@ -103,7 +100,6 @@ fn a_body_that_is_not_a_declaration_at_all_is_said_so_once() {
     );
 }
 
-/// What is admissible is said in the refusal, so a form can offer it.
 #[test]
 fn a_refusal_names_what_would_be_admissible() {
     let body = json!({

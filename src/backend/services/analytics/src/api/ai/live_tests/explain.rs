@@ -45,9 +45,6 @@ async fn a_stand_key_answers_for_a_caller_who_stored_none() -> TestResult {
         return Ok(());
     };
 
-    // Nothing is stored for this tenant, so without the stand's own key this
-    // is the 400 the test above asserts. Reaching the upstream instead is the
-    // evidence that the stand key was used.
     let resp = app(db, Uuid::now_v7(), stand_key_config())
         .oneshot(json_req("POST", "/v1/ai/explain", &snapshot())?)
         .await?;

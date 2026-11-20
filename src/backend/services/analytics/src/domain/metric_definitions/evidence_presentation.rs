@@ -11,9 +11,6 @@ pub enum EvidenceColumnType {
     Date,
 }
 
-/// One human-facing column the drilldown projects out of an evidence row's
-/// `details` map. `key` names the map entry the gold model writes; the label
-/// and type are what the reader sees.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceDetailColumn {
@@ -23,12 +20,6 @@ pub struct EvidenceDetailColumn {
     pub r#type: EvidenceColumnType,
 }
 
-/// How a measure's evidence reads: the detail columns its rows carry, in the
-/// order the reader sees them, and whether the contributed number earns a
-/// column of its own. Declared per measure in the builtin registry, stored on
-/// the measure row, and probed against the evidence relation by the validator —
-/// so the gold model and the serving layer agree through one declaration
-/// instead of parallel edits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidencePresentation {
@@ -44,8 +35,6 @@ pub struct EvidencePresentation {
 pub(crate) const RECORD_REF_KEY: &str = "ref";
 
 impl EvidencePresentation {
-    /// What a measure presents when it declares nothing: no detail columns, and
-    /// a value column everywhere the row is not itself the thing counted.
     pub fn undeclared(granularity: EvidenceGranularity) -> Self {
         Self {
             detail_columns: Vec::new(),
@@ -92,10 +81,6 @@ fn is_column_key(key: &str) -> bool {
         && !key.starts_with(|first: char| first.is_ascii_digit() || first == '_')
 }
 
-/// What a measure row holds under `evidence_presentation`. Three states rather
-/// than an `Option`, because stored JSON that does not describe a presentation
-/// is a configuration fault to report — not the absence of a declaration, which
-/// is ordinary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredPresentation {
     Absent,
@@ -111,9 +96,6 @@ impl StoredPresentation {
         EvidencePresentation::parse(stored).map_or(Self::Unreadable, Self::Declared)
     }
 
-    /// How the measure presents, given the granularity its rows carry. `None`
-    /// where the declaration is unreadable — the caller decides what an
-    /// unusable declaration costs it.
     pub fn or_undeclared(&self, granularity: EvidenceGranularity) -> Option<EvidencePresentation> {
         match self {
             Self::Absent => Some(EvidencePresentation::undeclared(granularity)),

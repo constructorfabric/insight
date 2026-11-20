@@ -1,8 +1,3 @@
-//! Render contract: the object builders must produce the same three-object
-//! shape as `deploy/preview/templates/*` — the same facts
-//! `deploy/preview/tests/test_render.py` pins on the chart. Assertions run on
-//! the serialized JSON so they check what the API server would receive.
-
 use chrono::{TimeZone, Utc};
 use serde_json::{Value, json};
 

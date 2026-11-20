@@ -1,16 +1,3 @@
-//! `ServiceTokenClient` — the client side of the service-token flow (§10 G1 /
-//! DD-AUTH-05). This is what analytics and background jobs use (step 07) to
-//! obtain a gateway JWT without a user request.
-//!
-//! It holds the service's private key, mints a short-lived RFC 7523
-//! `private_key_jwt` assertion (`iss = sub = <service>`, `aud = <token endpoint
-//! URL>`, `jti`, `exp`), exchanges it at the authenticator's `POST
-//! /internal/token` for a normal gateway JWT, caches that token, and re-requests
-//! it ahead of expiry (at 4/5 of the token's TTL — the same reissue-ahead
-//! pattern the authenticator uses everywhere). The private key never leaves the
-//! process; only the short-lived assertion travels, and only public keys live
-//! in the authenticator's registry.
-
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,17 +8,11 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::crypto::signature::EcdsaP256KeyPair;
 use uuid::Uuid;
 
-/// Default lifetime of a minted client assertion (seconds). Well within the
-/// authenticator's 60 s cap, with room for a little clock skew.
 const DEFAULT_ASSERTION_TTL_SECONDS: u64 = 30;
 
-/// Connect timeout for the token endpoint — bound so a hung authenticator can
-/// never wedge a caller.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// Overall request timeout for the token exchange.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// A token fetched from the authenticator: the raw JWT and its lifetime.
 #[derive(Debug, Clone)]
 pub struct FetchedToken {
     /// The gateway JWT (no `Bearer ` prefix).
@@ -40,7 +21,6 @@ pub struct FetchedToken {
     pub expires_in: u64,
 }
 
-/// The token-endpoint response shape (OAuth2 `client_credentials`).
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -48,7 +28,6 @@ struct TokenResponse {
     expires_in: u64,
 }
 
-/// The RFC 7523 assertion claims this client signs.
 #[derive(Serialize)]
 struct AssertionClaims<'a> {
     iss: &'a str,
@@ -59,35 +38,20 @@ struct AssertionClaims<'a> {
     exp: u64,
 }
 
-/// A cached bearer value with its refresh and hard-expiry times.
 #[derive(Clone)]
 struct Cached {
-    /// The full `Bearer <jwt>` header value.
     bearer: String,
-    /// Epoch second at/after which `bearer()` re-fetches (4/5 of the TTL).
     refresh_at: u64,
-    /// Epoch second at which the token truly expires — after this it must not
-    /// be served even as a stale fallback.
     expires_at: u64,
 }
 
 /// Mints assertions, fetches + caches service tokens, and hands out bearers.
-///
-/// Construct once per (service, key) and share it (`Arc`). The cache is a
-/// read-mostly `RwLock` keyed by tenant scope: `bearer()` takes only a short
-/// read lock to check the cache, releases it, does the network fetch with **no
-/// lock held**, then takes a brief write lock to store. Concurrent refreshes
-/// may each fetch (no single-flight) — an acceptable trade for never blocking a
-/// caller behind another's HTTP round-trip.
 pub struct ServiceTokenClient {
     service: String,
-    /// Token endpoint URL; also the `aud` the assertion is minted for.
     endpoint: String,
     signing: EcdsaP256KeyPair,
     assertion_ttl_seconds: u64,
     http: reqwest::Client,
-    /// Cache keyed by the (sorted) requested tenant scope. Service tokens are
-    /// always tenant-scoped, so there is one entry per tenant set in use.
     cache: RwLock<HashMap<String, Cached>>,
 }
 
@@ -152,9 +116,7 @@ impl ServiceTokenClient {
         self
     }
 
-    /// Mint and sign a fresh RFC 7523 client assertion. Public so tests (and
-    /// advanced callers) can drive the raw endpoint — e.g. to exercise replay
-    /// by posting the same assertion twice.
+    /// Mint and sign a fresh RFC 7523 client assertion.
     ///
     /// # Errors
     /// Fails only on an internal signing error.
@@ -242,16 +204,12 @@ impl ServiceTokenClient {
     /// expired, the stale-but-valid token is served (resilience across a short
     /// authenticator outage).
     ///
-    /// The lock is held only to read and to write the cache — never across the
-    /// network fetch.
-    ///
     /// # Errors
     /// As [`fetch`](Self::fetch), when a refresh is needed and both the fetch
     /// and the stale fallback are unavailable.
     pub async fn bearer(&self, tenant_id: &str) -> Result<String, CanonicalError> {
         let key = tenant_id.to_owned();
 
-        // Fast path: short read lock, then release before any await.
         {
             let cache = self.cache.read().await;
             if let Some(c) = cache.get(&key)
@@ -261,15 +219,9 @@ impl ServiceTokenClient {
             }
         }
 
-        // Refresh with no lock held.
         match self.fetch(tenant_id).await {
             Ok(token) => {
                 let bearer = format!("Bearer {}", token.access_token);
-                // Anchor the cache times to when the token was RECEIVED, not to
-                // before the fetch — the round-trip can take up to the request
-                // timeout, and using a pre-fetch `now` would expire the entry
-                // early. Reissue once 4/5 of the lifetime has passed, leaving
-                // the last fifth as travel margin.
                 let received_at = now_secs();
                 let entry = Cached {
                     bearer: bearer.clone(),
@@ -280,7 +232,6 @@ impl ServiceTokenClient {
                 Ok(bearer)
             }
             Err(e) => {
-                // Serve stale-but-valid on a refresh failure.
                 let cache = self.cache.read().await;
                 if let Some(c) = cache.get(&key)
                     && now_secs() < c.expires_at

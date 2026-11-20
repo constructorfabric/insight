@@ -1,6 +1,3 @@
-//! A dashboard's widgets, drawn through the dashboard: whoever sees the
-//! dashboard reads and runs them without reaching the library.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,7 +53,6 @@ impl ApiErrors for DashboardWidgetApiError {
     }
 }
 
-/// What a member is told when a widget cannot be drawn; the cause is logged.
 const NOT_DRAWN: &str = "this widget could not be drawn";
 
 const NOT_ON_DASHBOARD: &str = "this widget is not on the dashboard";

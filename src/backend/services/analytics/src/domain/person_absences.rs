@@ -111,8 +111,6 @@ mod tests {
     type R = Result<(), Box<dyn std::error::Error>>;
 
     const CLICKHOUSE_URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
-    /// The shape dbt gives `silver.class_person_absences` (#3853 retired the
-    /// migration that used to create it; the model is the only creator).
     const ABSENCE_TABLE: &str = "CREATE TABLE IF NOT EXISTS silver.class_person_absences
          (insight_tenant_id String, unique_key String, account_source_type String,
           account_source_id String, account_id String, start_date Date, end_date Date)

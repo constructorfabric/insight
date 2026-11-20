@@ -12,11 +12,6 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# ToolKit host runtime. This service runs as a gears-rust host: routes are
-# served by the `api-gateway` system gear (the REST host) under
-# `toolkit::bootstrap::run_server`. Auth is ENABLED (NGINX_BFF R1): the
-# `oidc-authn-plugin` verifies the ES256 gateway JWT and maps its claims into
-# the request SecurityContext — same set as the `analytics` host.
 toolkit = { workspace = true, features = ["bootstrap"] }
 
 # System gears linked for the REST host + auth pipeline. Discovered at link time
@@ -36,8 +31,6 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 
-# Domain gear: config deserialization, async trait impls, HTTP router type,
-# and logging. (DB/serde-heavy deps — sea-orm, uuid — land with the DB step.)
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
@@ -46,17 +39,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 
-# MariaDB via SeaORM — connection pool + entities + raw resolve queries.
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
-# UUIDs: person_id / tenant / source ids (binary(16) in the DB).
 uuid = { workspace = true }
-# Timestamps: `now` for the in-memory 202 body + the zombie-sweep cutoff.
 chrono = { workspace = true }
-# Opaque page cursors for the list endpoints (URL-safe, no padding).
 base64 = { workspace = true }
 
-# ClickHouse: read the raw `identity_inputs` stream (persons-seed input source).
 # `insight-clickhouse` wraps the client; the direct `clickhouse` dep is for the
 # `Row` derive on the query row struct.
 insight-clickhouse = { workspace = true }
@@ -66,14 +54,10 @@ insight-openapi = { workspace = true }
 insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 
-# Domain instruments (#2891). The seed/sync CLI jobs run outside the toolkit
-# server bootstrap, so they build and flush their own meter provider — hence the
-# sdk/otlp deps beyond the bare `opentelemetry` facade.
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 
-# HTTP surface: tenant SecurityContext, RFC-9457 canonical errors, OpenAPI schemas.
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 # utoipa pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
@@ -81,6 +65,4 @@ utoipa = { workspace = true, features = ["chrono", "uuid"] }
 
 [dev-dependencies]
 insight-log-context = { workspace = true, features = ["test-support"] }
-# `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
-# integration tests. Same dev-dep pattern as the analytics service.
 tower = { version = "0.5", features = ["util"] }

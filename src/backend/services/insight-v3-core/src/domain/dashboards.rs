@@ -1,5 +1,3 @@
-//! The dashboards one caller sees, one at a time and a page at a time.
-
 use std::fmt;
 
 use async_trait::async_trait;
@@ -13,14 +11,11 @@ use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreErr
 use crate::domain::folders::{FolderError, FolderFilter};
 use crate::domain::tags::{TagError, TagFilter};
 
-/// A dashboard the caller sees, and how.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Seen {
     pub(crate) owner: Owner,
     pub(crate) access: Access,
-    /// What an entry the caller adds now carries.
     pub(crate) entry: Entry,
-    /// The strongest of its grants to the caller or to everyone.
     granted: Option<Level>,
 }
 
@@ -36,18 +31,14 @@ impl Seen {
         })
     }
 
-    /// Whether the caller may list, add, change and withdraw its grants.
     pub(crate) fn share(&self) -> Result<(), Refused> {
         self.access.share(self.granted)
     }
 }
 
-/// Which of the visible dashboards a listing keeps by who owns them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Owned {
-    /// The caller's own.
     Me,
-    /// Not the caller's own, reaching them through a grant or a folder.
     Shared,
 }
 
@@ -102,10 +93,8 @@ pub(crate) enum OrderError {
     Unsorted(&'static str),
 }
 
-/// What a listing of dashboards keeps, beyond being visible to the caller.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DashboardQuery {
-    /// Text to find in a name or a body; blank keeps every one.
     pub(crate) needle: String,
     pub(crate) folder: Option<FolderFilter>,
     pub(crate) tags: Option<TagFilter>,
@@ -114,8 +103,6 @@ pub(crate) struct DashboardQuery {
 }
 
 impl DashboardQuery {
-    /// The filters a listing of `kind` was asked for; any of them on a kind
-    /// other than dashboards is refused.
     pub(crate) fn parse(
         kind: DefinitionKind,
         needle: &str,
@@ -187,7 +174,6 @@ impl Visibility {
     }
 }
 
-/// One dashboard in a listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ListedDashboard {
     pub(crate) id: String,
@@ -203,27 +189,17 @@ pub(crate) struct ListedDashboard {
 #[derive(Debug)]
 pub(crate) struct DashboardPage {
     pub(crate) items: Vec<ListedDashboard>,
-    /// Every visible match, not the page.
     pub(crate) total: u64,
 }
 
-/// What the store answers about dashboards for one caller.
-///
-/// INVARIANT: every page, count and lookup here keeps only the dashboards
-/// [`access`] lets the caller see, so a dashboard they may not see is never
-/// counted, listed or told apart from a missing one.
 #[async_trait]
 pub(crate) trait DashboardCatalogue: Send + Sync + fmt::Debug {
-    /// What decides `caller`'s access to the dashboard, or none when no
-    /// dashboard has the id.
     async fn standing(
         &self,
         dashboard: &DefinitionId,
         caller: Caller,
     ) -> Result<Option<DashboardStanding>, DefinitionStoreError>;
 
-    /// One page of the dashboards `caller` sees that match `query`, ordered
-    /// by name, then id.
     async fn page_dashboards(
         &self,
         caller: Caller,
@@ -231,16 +207,12 @@ pub(crate) trait DashboardCatalogue: Send + Sync + fmt::Debug {
         page: Page,
     ) -> Result<DashboardPage, DefinitionStoreError>;
 
-    /// Who beyond its owner sees the dashboard, or none when no dashboard has
-    /// the id.
     async fn visibility(
         &self,
         dashboard: &DefinitionId,
     ) -> Result<Option<Visibility>, DefinitionStoreError>;
 }
 
-/// How `caller` sees the dashboard, or none when they cannot or it is not
-/// there - which the caller is never told apart.
 pub(crate) async fn sight(
     catalogue: &dyn DashboardCatalogue,
     dashboard: &DefinitionId,

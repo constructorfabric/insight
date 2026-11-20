@@ -1,20 +1,12 @@
-//! Experiment domain values: the validated name and image tag, TTL, the
-//! record served by the API, and the status derivation. Pure — no I/O.
-
 use std::sync::LazyLock;
 
 use chrono::{DateTime, Utc};
 use regex_lite::Regex;
 
-/// Resource-name prefix; `preview-` is 8 chars, so a 55-char name never
-/// trunc-collides at the 63-char Kubernetes name limit.
 pub const RESOURCE_PREFIX: &str = "preview-";
 const MAX_NAME_LEN: usize = 55;
 const MAX_TAG_LEN: usize = 128;
 
-/// A validated experiment slug: a DNS-1123 label of at most 55 characters. It
-/// forms the URL segment (`/exp/<name>`) and the resource name
-/// (`preview-<name>`) — the same rule and failure text as the manual chart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExperimentName(String);
 
@@ -40,7 +32,6 @@ impl ExperimentName {
         &self.0
     }
 
-    /// The name shared by all three Kubernetes objects of this experiment.
     #[must_use]
     pub fn resource_name(&self) -> String {
         format!("{RESOURCE_PREFIX}{}", self.0)
@@ -57,11 +48,6 @@ fn is_dns1123_label(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
 }
 
-/// A validated FE image tag. The repository is hardcoded
-/// ([`super::objects::IMAGE_REPOSITORY`]); the API accepts a tag only, and only
-/// in the two shapes CI publishes — a `preview-…` tag or a
-/// `YYYY.MM.DD.HH.MM-<sha7>[.branch]` build tag — so there is no arbitrary
-/// image reference surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageTag(String);
 
@@ -87,7 +73,6 @@ impl ImageTag {
 
 static PREVIEW_TAG: LazyLock<Regex> = LazyLock::new(|| tag_pattern(r"^preview-[A-Za-z0-9._-]+$"));
 
-/// `YYYY.MM.DD.HH.MM-<sha7>` optionally followed by `.<sanitized-branch>`.
 static BUILD_TAG: LazyLock<Regex> = LazyLock::new(|| {
     tag_pattern(r"^\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}-[0-9a-fA-F]{7}(\.[A-Za-z0-9._-]+)?$")
 });
@@ -104,8 +89,6 @@ fn is_build_tag(s: &str) -> bool {
     BUILD_TAG.is_match(s)
 }
 
-/// The registry tags the create form may offer: only `preview-…` tags a
-/// create would accept, deduped and sorted.
 #[must_use]
 pub fn preview_tags(tags: Vec<String>) -> Vec<String> {
     let mut offered: Vec<String> = tags
@@ -117,8 +100,6 @@ pub fn preview_tags(tags: Vec<String>) -> Vec<String> {
     offered
 }
 
-/// A validated time-to-live in whole days, clamped nowhere: a request outside
-/// `1..=max` is refused, not adjusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TtlDays(u32);
 
@@ -137,8 +118,6 @@ impl TtlDays {
     }
 }
 
-/// One live experiment as the API serves it, read back from the annotations
-/// and status of its Deployment.
 #[derive(Debug, Clone)]
 pub struct Experiment {
     pub name: String,
@@ -160,8 +139,6 @@ pub enum ExperimentStatus {
     Expired,
 }
 
-/// Derive the served status: expiry wins over readiness, and a missing
-/// expiry annotation (an object not created by this service) never expires.
 #[must_use]
 pub fn status_of(
     expires_at: Option<DateTime<Utc>>,
@@ -175,8 +152,6 @@ pub fn status_of(
     }
 }
 
-/// The URL the experiment serves under: `https://<host><base>/<name>/`, or a
-/// host-relative path when no host is configured.
 #[must_use]
 pub fn experiment_url(host: &str, base_path: &str, name: &str) -> String {
     let base = base_path.trim_end_matches('/');
@@ -204,7 +179,6 @@ mod tests {
 
     #[test]
     fn slugs_follow_the_chart_rule() {
-        // Same accept/reject table as deploy/preview/tests/test_render.py.
         for good in ["a", "a1", "widget-alpha", "0-a-0", &"a".repeat(55)] {
             assert!(
                 ExperimentName::parse(good).is_ok(),

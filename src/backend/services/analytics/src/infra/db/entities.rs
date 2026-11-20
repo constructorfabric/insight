@@ -1,8 +1,4 @@
-//! `SeaORM` entity definitions for `MariaDB` tables.
-
 pub mod ai_context_entries {
-    //! `ai_context_entries` entity — what a tenant or a person wrote down for
-    //! the model to read before it explains a metric.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -26,11 +22,6 @@ pub mod ai_context_entries {
 }
 
 pub mod ai_credentials {
-    //! `ai_credentials` entity — one person's sealed Anthropic token.
-    //!
-    //! INVARIANT: `ciphertext` opens only through `domain::ai::crypto::open`,
-    //! which binds it to this row's tenant and person; no path returns it to a
-    //! caller.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -54,7 +45,6 @@ pub mod ai_credentials {
 }
 
 pub mod ai_settings {
-    //! `ai_settings` entity — a tenant's own system prompt, when it has one.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -73,11 +63,6 @@ pub mod ai_settings {
 }
 
 pub mod saved_queries {
-    //! `saved_queries` entity — the `presentation.queries` saved query (#1965).
-    //!
-    //! Metadata in the service DB. `sql` holds a single `SELECT`/`WITH` over
-    //! the contract, validated by the query gate on write and run; CRUD never
-    //! reaches ClickHouse.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -100,7 +85,6 @@ pub mod saved_queries {
 }
 
 pub mod feedback {
-    //! `feedback` entity — what a person told us from inside the product.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]

@@ -106,7 +106,6 @@ fn no_statement_qualifies_itself_with_a_cluster() {
     }
 }
 
-/// Only a create carries an engine, so only a create changes with the topology.
 #[test]
 fn a_drop_a_swap_and_a_rename_read_the_same_on_either_topology() {
     let statements = [

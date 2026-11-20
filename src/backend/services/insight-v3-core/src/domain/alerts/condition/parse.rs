@@ -1,6 +1,3 @@
-//! A condition as JSON, read into its typed tree against the columns the
-//! metric answers. Every refusal names the path of the part it is about.
-
 mod path;
 
 use chrono::{DateTime, Datelike as _, Utc};
@@ -16,7 +13,6 @@ use crate::domain::query::metric_query::ColumnKind;
 
 use path::{At, ROOT};
 
-/// The longest span `older_than` or `newer_than` may reach back.
 const MAX_AGE_DAYS: u64 = 36_500;
 
 const NUMBER_OPERATORS: &str = "`>`, `>=`, `<`, `<=`, `==`, `!=`, `between`";
@@ -27,14 +23,11 @@ const COUNT_OPERATORS: &str = "`>`, `>=`, `<`, `<=`, `==`, `!=`";
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{path}: {problem}")]
 pub(crate) struct ConditionError {
-    /// Where in the condition, as `where.all[1].value`; empty for the whole.
     pub(crate) path: String,
     pub(crate) problem: Problem,
 }
 
 impl ConditionError {
-    /// The draft field this is about: `condition`, then the path inside it,
-    /// as `condition.where.all[1].value`.
     pub(crate) fn field(&self) -> String {
         if self.path.is_empty() {
             "condition".to_owned()
@@ -97,7 +90,6 @@ pub(crate) enum Problem {
 }
 
 impl Condition {
-    /// The condition a draft writes, checked against the metric's columns.
     pub(crate) fn parse(
         value: &Value,
         columns: &[(String, ColumnKind)],
@@ -351,7 +343,6 @@ fn texts(value: &Value, at: &At<'_>) -> Result<Vec<String>, ConditionError> {
         .collect()
 }
 
-/// The years an RFC 3339 timestamp can be written back in once in UTC.
 const WRITABLE_YEARS: std::ops::RangeInclusive<i32> = 0..=9999;
 
 fn moment(value: &Value, at: &At<'_>) -> Result<DateTime<Utc>, ConditionError> {
@@ -395,7 +386,6 @@ fn required<'v>(
         .map_or_else(|| at.key(key).refuse(Problem::Missing), Ok)
 }
 
-/// The object, once it is one holding no key outside `allowed`.
 fn only_keys<'v>(
     value: &'v Value,
     at: &At<'_>,

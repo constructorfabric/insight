@@ -2,12 +2,10 @@ use serde_json::json;
 
 use super::*;
 
-/// A dataset store holding nothing, for the kinds that never read one.
 fn datasets() -> crate::store::datasets::memory::MemoryDatasets {
     crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now())
 }
 
-/// Where a metric would be compiled, for the kinds that are never compiled.
 fn nowhere() -> crate::domain::query::metric_query::People {
     crate::domain::query::metric_query::People::new("identity")
 }
@@ -171,8 +169,6 @@ async fn a_dashboard_is_checked_through_the_kind_it_was_stored_under() {
     );
 }
 
-/// A widget stored under a detail nobody can read would open on an empty
-/// dialog; the write is where that is caught.
 #[tokio::test]
 async fn a_widget_naming_a_detail_that_is_not_there_is_refused() {
     let store = crate::store::definitions::memory::MemoryDefinitions::new();

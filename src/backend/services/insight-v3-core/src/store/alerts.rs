@@ -1,5 +1,3 @@
-//! Alert rules and notifications as `MariaDB` holds them.
-
 #[cfg(test)]
 pub(crate) mod memory;
 
@@ -23,11 +21,9 @@ use crate::domain::alerts::{Outcome, UnknownReason, last_valid_breached, transit
 use crate::domain::definition::{DefinitionId, Page};
 use crate::store::like_escaped;
 
-/// The most of a provider's words a row keeps: the width of the columns.
 const LAST_ERROR_CHARS: usize = 1000;
 const PROVIDER_RECEIPT_CHARS: usize = 256;
 
-/// A create that lost a deadlock on the locking count goes again this often.
 const CREATE_ATTEMPTS: usize = 3;
 /// `SQLSTATE` of a deadlock: two creates both held the gap after the last
 /// rule, which an empty table makes certain, and both went to insert.
@@ -36,7 +32,6 @@ const DEADLOCK_SQLSTATE: &str = "40001";
 const RULE_COLUMNS: &str = "id, name, metric, rule_condition, context_columns, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_witness, last_valid_breached, breached_since, created_by, created_at, updated_at";
 
 const SELECT_BY_ID: &str = "SELECT {columns} FROM alert_rules WHERE id = ?";
-/// The same read, holding the row, so two writers of one rule take turns.
 const SELECT_BY_ID_HELD: &str = "SELECT {columns} FROM alert_rules WHERE id = ? FOR UPDATE";
 const SELECT_ENABLED: &str =
     "SELECT {columns} FROM alert_rules WHERE enabled = 1 ORDER BY name, id";
@@ -50,8 +45,6 @@ const COUNT_ALL_HELD: &str = "SELECT COUNT(*) AS total FROM alert_rules FOR UPDA
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 
 const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, rule_condition, context_columns, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
-/// A configuration write replaces the spec, bumps the revision and forgets
-/// every check made under the old one.
 const REPLACE_RULE: &str = "UPDATE alert_rules SET name = ?, metric = ?, rule_condition = ?, context_columns = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const SET_ENABLED: &str = "UPDATE alert_rules SET enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const DELETE_RULE: &str = "DELETE FROM alert_rules WHERE id = ?";
@@ -59,10 +52,8 @@ const DELETE_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_i
 const CANCEL_PENDING: &str =
     "UPDATE alert_notifications SET status = ?, updated_at = ? WHERE rule_id = ? AND status = ?";
 
-/// A check lands only on the revision it was scheduled for.
 const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_witness = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
 const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, metric_name, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
-/// Notifications past the kept count go, oldest first; one still owed stays.
 const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND status <> ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
 
 const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, metric_name, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
@@ -71,7 +62,6 @@ const SELECT_NOTIFICATION_HELD: &str =
     "SELECT {columns} FROM alert_notifications WHERE id = ? FOR UPDATE";
 const SELECT_PENDING: &str =
     "SELECT {columns} FROM alert_notifications WHERE status = ? ORDER BY created_at ASC, id ASC";
-/// A send lands only on a notification still owed.
 const RECORD_ATTEMPT: &str = "UPDATE alert_notifications SET status = ?, attempts = attempts + 1, last_error = ?, provider_receipt = ?, updated_at = ? WHERE id = ? AND status = ?";
 const SELECT_NOTIFICATIONS: &str = "SELECT {columns} FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?";
 
@@ -95,8 +85,6 @@ fn stamp(at: DateTime<Utc>) -> sea_orm::Value {
     at.naive_utc().into()
 }
 
-/// What one send leaves on the row, cut to what its columns hold. Shared
-/// with the in-memory store so both record the same thing.
 #[derive(Debug, PartialEq, Eq)]
 struct AttemptColumns {
     status: NotificationStatus,
@@ -195,7 +183,6 @@ impl MariaAlerts {
         Ok(rule)
     }
 
-    /// The insert, once the locking count says there is room.
     async fn insert_within(
         transaction: &sea_orm::DatabaseTransaction,
         write: &Write,
@@ -289,8 +276,6 @@ impl MariaAlerts {
             .ok_or(AlertStoreError::NotFound(current.id))
     }
 
-    /// Writes the notification a check owes, and drops the oldest past the
-    /// kept count.
     async fn owe_notification(
         &self,
         transaction: &sea_orm::DatabaseTransaction,
@@ -376,11 +361,6 @@ impl MariaAlerts {
 
 #[async_trait]
 impl AlertStore for MariaAlerts {
-    /// INVARIANT: the bound is held by the locking count inside the
-    /// transaction and nothing session-scoped, so a request dropped midway
-    /// releases it with the rollback instead of leaving it on the pooled
-    /// connection. Two creates meeting on an empty table both lock the gap
-    /// and deadlock on the insert; the one rolled back goes again.
     async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError> {
         let mut attempt = 1;
         loop {
@@ -717,7 +697,6 @@ struct RuleRow {
     updated_at: NaiveDateTime,
 }
 
-/// The most of an unreadable value an error carries into the log.
 const UNREADABLE_SHOWN_CHARS: usize = 200;
 
 fn unreadable(value: &str) -> AlertStoreError {
@@ -732,8 +711,6 @@ fn parse_condition(stored: &str) -> Result<Condition, AlertStoreError> {
     Condition::from_stored(stored).ok_or_else(|| unreadable(stored))
 }
 
-/// The columns as the row keeps them: a JSON list of names. A row written
-/// before rules carried any holds null, which is none.
 fn context_columns_stored(columns: &[String]) -> String {
     serde_json::Value::from(columns.to_vec()).to_string()
 }

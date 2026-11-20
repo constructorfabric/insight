@@ -12,15 +12,10 @@ members = [
     "services/identity-resolution",
     "services/previews",
     "services/authenticator",
-    # Build-time CLI: compiles the gateway routes.yaml into nginx.conf
-    # (gateway DESIGN DD-GW-02). Never shipped in a runtime image.
     "tools/routegen",
 ]
 resolver = "3"
 
-# Compose-stand builds (dev-compose.sh, CI e2e shards): the suites assert
-# behavior, not latency, so trade runtime speed for compile time. Shipped
-# images keep the stock `release` profile in their Dockerfiles.
 [profile.e2e]
 inherits = "release"
 opt-level = 1
@@ -45,41 +40,30 @@ expect_used = "deny"
 dbg_macro = "deny"
 
 [workspace.dependencies]
-# ClickHouse client
 clickhouse = { version = "0.15", features = ["uuid", "chrono"] }
 
 sqlparser = "0.63"
 schemars = "1.2"
 rmcp = { version = "3.2", default-features = false, features = ["macros", "server", "transport-streamable-http-server"] }
 
-# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 utoipa = "5.5"
 
-# Error handling
 thiserror = "2.0"
 anyhow = "1.0"
 
-# Async runtime
 tokio = { version = "1.47", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 async-trait = "0.1"
 futures = "0.3"
-# `Stream` + `StreamExt::next` for driving SeaORM result cursors. Already
-# pulled in transitively by sea-orm; declared at workspace scope so
-# consumers (today: analytics schema-validator) can use it explicitly
-# without leaning on a transitive dep.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
-# Web framework
 axum = "0.8"
 
-# Database (MariaDB via SeaORM)
 sea-orm = { version = "2.0", features = ["runtime-tokio", "sqlx-mysql", "with-uuid", "with-chrono", "with-json", "macros"] }
 sea-orm-migration = { version = "2.0", features = ["runtime-tokio", "sqlx-mysql"] }
 
-# IDs and time
 uuid = { version = "1.19", features = ["serde", "v7"] }
 url = "2.5"
 chrono = { version = "0.4", features = ["serde"] }
@@ -91,49 +75,35 @@ csv = "1.3"
 rust_xlsxwriter = { version = "0.102", features = ["constant_memory"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Security
 secrecy = { version = "0.10", features = ["serde"] }
 
-# HTTP client (for Identity Resolution API)
 reqwest = { version = "0.12", features = ["json"] }
 
-# Caching
 redis = { version = "1.5", features = ["tokio-comp", "connection-manager"] }
 bullmq = { package = "bullmq-official", version = "=1.4.4" }
 
-# JWT (gateway-JWT mint/verify, RFC 7523 assertions).
 # One version + one crypto provider (aws_lc_rs) across the workspace: v10 needs
 # exactly one provider process-wide under feature unification, else it panics.
 jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 
-# YAML (route configs, test fixtures).
 serde_yaml = "0.9"
 
-# CLI
 clap = { version = "4.5", features = ["derive"] }
 
-# gears-rust toolkit (crates.io, `cf-gears-toolkit-*` family)
-# Versions tracked to gears-rust HEAD (the authoritative source); the whole
-# family moves together with the opentelemetry major (see INVARIANT below).
 toolkit = { package = "cf-gears-toolkit", version = "=0.12.1" }
 toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.8.4" }
 toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.12.1", features = ["jwt"] }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.10.0", features = ["axum", "sea-orm"] }
 
-# gears-rust SDKs (crates.io)
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.41" }
 types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.5.0" }
 
-# gears-rust system gears (crates.io)
 api_gateway = { package = "cf-gears-api-gateway", version = "0.7.2" }
 authn-resolver = { package = "cf-gears-authn-resolver", version = "0.3.0" }
 authz-resolver = { package = "cf-gears-authz-resolver", version = "0.4.0" }
-# Downstream gateway-JWT verification (JWKS + configurable claim mapping). Was a
-# local fork under plugins/; now the upstream published crate.
 oidc-authn-plugin = { package = "cf-gears-oidc-authn-plugin", version = "0.4.0" }
 tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.2.0" }
 static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.42" }
@@ -142,32 +112,22 @@ grpc_hub = { package = "cf-gears-grpc-hub", version = "0.5.0" }
 service_discovery = { package = "cf-gears-service-discovery", version = "0.4.0" }
 types_registry = { package = "cf-gears-types-registry", version = "0.6.0" }
 
-# Anchored validation patterns (previews image-tag shapes). The lite build:
-# no Unicode tables, ASCII-only patterns here.
 regex-lite = "0.1"
 
-# Kubernetes client (previews gear). Same versions/features as gears-rust.
 kube = { version = "5.0", default-features = false }
 k8s-openapi = { version = "0.29", default-features = false }
 
-# Config
 figment = { version = "0.10", features = ["yaml", "env"] }
 
 # INVARIANT: must match the toolkit's opentelemetry major — a different major
 # is a different global meter provider and instruments silently no-op.
 opentelemetry = "0.32"
-# Local meter provider for the CLI job paths (seed/sync), which run outside the
-# toolkit server bootstrap and must build + flush their own provider.
 opentelemetry_sdk = { version = "0.32", features = ["metrics", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "metrics"] }
 
-# Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
 insight-http-metrics = { path = "libs/insight-http-metrics" }
 insight-log-context = { path = "libs/insight-log-context" }
 insight-migration = { path = "libs/insight-migration" }
 insight-openapi = { path = "libs/insight-openapi" }
 authenticator-sdk = { path = "libs/authenticator-sdk" }
-
-# CI rebuild marker — bumped to retrigger the analytics
-# image build on the cf → gears crate migration (2026-06-12).

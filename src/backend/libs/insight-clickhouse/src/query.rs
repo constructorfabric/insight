@@ -1,30 +1,8 @@
-//! Tenant-scoped, parameterized query builder.
-//!
-//! All values are passed via bind parameters — no string interpolation.
-//! The builder always starts with `WHERE insight_tenant_id = ?` to enforce tenant isolation.
-
 use clickhouse::{RowOwned, RowRead};
 use uuid::Uuid;
 
 use crate::{Client, Error};
 
-/// A parameterized query builder that enforces tenant isolation.
-///
-/// Created via [`Client::tenant_query`]. Automatically scopes all queries
-/// to a single tenant and applies query timeout.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let rows: Vec<Metric> = client
-///     .tenant_query("gold.pr_cycle_time", tenant_id)?
-///     .filter("org_unit_id = ?", org_unit_id)?
-///     .filter("metric_date >= ?", "2026-01-01")?
-///     .order_by("metric_date DESC")?
-///     .limit(100)
-///     .fetch_all()
-///     .await?;
-/// ```
 pub struct QueryBuilder {
     client: Client,
     table: String,
@@ -54,11 +32,6 @@ impl core::fmt::Debug for QueryBuilder {
 }
 
 impl QueryBuilder {
-    /// Creates a new query builder for the given table and tenant.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidQuery`] if `table` contains unsafe characters.
     pub(crate) fn new(client: Client, table: &str, tenant_id: Uuid) -> Result<Self, Error> {
         if !is_safe_identifier(table) {
             tracing::warn!(table = %table, "rejected unsafe table name");
@@ -80,13 +53,8 @@ impl QueryBuilder {
         })
     }
 
-    /// Adds a filter condition with a serializable value.
-    ///
     /// The condition **must** contain exactly one `?` placeholder and only
     /// safe SQL characters (identifiers, operators, parentheses for `IN(?)`).
-    ///
-    /// Accepts any type that implements `Serialize`: UUID, String, integers,
-    /// floats, dates, booleans, etc.
     ///
     /// # Errors
     ///
@@ -124,8 +92,6 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    /// Sets the ORDER BY clause.
-    ///
     /// Accepts comma-separated column references with optional `ASC`/`DESC`.
     /// Example: `"metric_date DESC, person_id ASC"`
     ///
@@ -143,14 +109,12 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    /// Sets the LIMIT.
     #[must_use]
     pub fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self
     }
 
-    /// Sets the OFFSET.
     #[must_use]
     pub fn offset(mut self, n: u64) -> Self {
         self.offset = Some(n);
@@ -158,9 +122,6 @@ impl QueryBuilder {
     }
 
     /// Sets the SELECT columns. Default is `*`.
-    ///
-    /// Accepts comma-separated column names.
-    /// Example: `"person_id, avg_hours, metric_date"`
     ///
     /// # Errors
     ///
@@ -206,8 +167,6 @@ impl QueryBuilder {
         sql
     }
 
-    /// Executes the query and returns all matching rows.
-    ///
     /// # Errors
     ///
     /// Returns [`Error`] if the query fails or times out.
@@ -220,10 +179,8 @@ impl QueryBuilder {
 
         let mut query = self.client.query(&sql);
 
-        // Bind tenant_id first (always the first `?`)
         query = query.bind(self.tenant_id);
 
-        // Bind additional filter values in order
         for value in self.bind_values {
             query = query.bind(value);
         }
@@ -233,7 +190,6 @@ impl QueryBuilder {
     }
 }
 
-/// Validates a SELECT column list. Allows: alphanumeric, `_`, `.`, `,`, `*`, spaces.
 fn validate_select(columns: &str) -> bool {
     !columns.is_empty()
         && columns
@@ -241,7 +197,6 @@ fn validate_select(columns: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ',' | '*' | ' '))
 }
 
-/// Validates an ORDER BY clause. Each part must be `column [ASC|DESC]`.
 fn validate_order_by(clause: &str) -> bool {
     if clause.is_empty() {
         return false;
@@ -259,8 +214,6 @@ fn validate_order_by(clause: &str) -> bool {
     })
 }
 
-/// Validates a filter condition fragment.
-/// Rejects: comments (`--`, `/*`), semicolons, quotes.
 fn validate_filter_condition(condition: &str) -> bool {
     if condition.is_empty() {
         return false;
@@ -280,7 +233,6 @@ fn validate_filter_condition(condition: &str) -> bool {
     })
 }
 
-/// Checks if a string is a safe SQL identifier (alphanumeric + `_` + `.`).
 fn is_safe_identifier(s: &str) -> bool {
     if s.is_empty() {
         return false;
@@ -492,8 +444,6 @@ mod tests {
         Ok(())
     }
 
-    // --- validation returns errors, not panics ---
-
     #[test]
     fn filter_no_placeholder_returns_error() -> R {
         let result = test_client()
@@ -552,8 +502,6 @@ mod tests {
         Ok(())
     }
 
-    // --- order_by validation ---
-
     #[test]
     fn order_by_simple_column() -> R {
         let sql = test_client()
@@ -601,8 +549,6 @@ mod tests {
         Ok(())
     }
 
-    // --- select validation ---
-
     #[test]
     fn select_simple_columns() -> R {
         let sql = test_client()
@@ -640,8 +586,6 @@ mod tests {
         assert!(result.is_err());
         Ok(())
     }
-
-    // --- filter condition validation ---
 
     #[test]
     fn filter_injection_comment_returns_error() -> R {

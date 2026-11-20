@@ -1,5 +1,3 @@
-// INVARIANT: the same current-time union `subchart_repo` evaluates. A second
-// rule would let a listing show a person the batch filter refuses to confirm.
 pub(super) const CURRENT_VISIBLE_SET_CTE: &str = r"
         visible_set (person_id) AS (
             SELECT ?

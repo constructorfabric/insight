@@ -1,6 +1,3 @@
-//! The schedule the handler tests use: which rules are on it, at which
-//! revision, and nothing that runs.
-
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -20,8 +17,6 @@ impl MemorySchedule {
         Self::default()
     }
 
-    /// A schedule that refuses every write, for the cases about one that is
-    /// down.
     pub(crate) fn refusing() -> Self {
         Self {
             failing: true,
@@ -71,8 +66,6 @@ impl AlertSchedule for MemorySchedule {
     }
 }
 
-/// The delivery queue the handler tests use: which notifications were
-/// queued, and nothing that sends.
 #[derive(Debug, Default)]
 pub(crate) struct MemoryDeliveries {
     queued: Mutex<Vec<Uuid>>,

@@ -1,11 +1,3 @@
-//! What a dashboard draws, and in what order.
-//!
-//! A board is a list of items: the widgets it holds, and the headings and
-//! prose that introduce them. `widgets: ["a", "b"]` is the older shorthand for
-//! a list of nothing but widgets, and every board written before there was
-//! anything else to put in one says it that way — so it is still read, and
-//! means the same thing.
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -56,10 +48,6 @@ impl Item {
     }
 }
 
-/// The widgets a body names, in both forms.
-///
-/// Both, because this answers "is this widget still in use" — a board that
-/// says it either way is still drawing it.
 fn widgets(body: &Value) -> Vec<String> {
     let mut names = Vec::new();
 
@@ -83,7 +71,6 @@ fn widgets(body: &Value) -> Vec<String> {
     names
 }
 
-/// The widgets a board draws, each once, in the order it draws them.
 pub(crate) fn drawn(body: &Value) -> Vec<String> {
     let mut drawn: Vec<String> = Vec::new();
 
@@ -96,7 +83,6 @@ pub(crate) fn drawn(body: &Value) -> Vec<String> {
     drawn
 }
 
-/// The same body, with every item drawing `from` drawing `to` instead.
 fn renamed(mut body: Value, from: &str, to: &str) -> Value {
     if let Some(Value::Array(items)) = body.get_mut("items") {
         for item in items {
@@ -112,10 +98,6 @@ fn renamed(mut body: Value, from: &str, to: &str) -> Value {
     body
 }
 
-/// The body a board has once it is laid out: its own title, and this list.
-///
-/// The list is the whole list, so the shorthand goes — left in place it would
-/// still say what the board used to draw.
 pub(crate) fn laid_out(previous: &Value, items: &[Item]) -> Result<Value, serde_json::Error> {
     let mut object = serde_json::Map::new();
     if let Some(title) = previous.get("title") {
@@ -126,9 +108,6 @@ pub(crate) fn laid_out(previous: &Value, items: &[Item]) -> Result<Value, serde_
     Ok(Value::Object(object))
 }
 
-/// What a stored dashboard says about time, checked before it is stored: a
-/// board offering a range the server cannot resolve draws a picker whose
-/// buttons refuse every widget behind them.
 pub(crate) fn check(body: &Value) -> Result<(), KindError> {
     let offered = body
         .get("time_ranges")
@@ -147,7 +126,6 @@ pub(crate) fn check(body: &Value) -> Result<(), KindError> {
     Ok(())
 }
 
-/// The widgets a board draws, in either form its body may name them.
 pub(crate) fn refers_to(body: &Value) -> Vec<Reference> {
     widgets(body)
         .into_iter()
@@ -155,8 +133,6 @@ pub(crate) fn refers_to(body: &Value) -> Vec<Reference> {
         .collect()
 }
 
-/// The same board, drawing `to` where it drew `from`, in both forms it may
-/// name a widget.
 pub(crate) fn rename_reference(body: Value, from: &str, to: &str) -> Value {
     let mut body = renamed(body, from, to);
 

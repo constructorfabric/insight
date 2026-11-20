@@ -1,17 +1,3 @@
-//! HTTP-level tests driving the **real** route table through `tower::oneshot`
-//! against a live MariaDB — the layer the repo-level `visible_set_live_tests`
-//! cannot reach: extractor → gate → handler → `Result`→`Response` mapping, and
-//! with it the status codes the analytics gate and the SPA depend on.
-//!
-//! INVARIANT: never `#[ignore]` these — the identity CI job runs `cargo test`
-//! without `--include-ignored`. They skip at runtime when
-//! `INTEGRATION_TESTS_MARIADB_URL` is unset, like every other live suite here.
-//!
-//! The host authn pipeline is bypassed: the `SecurityContext` is injected
-//! directly, because the gateway-JWT verification needs a live JWKS and is
-//! covered by the plugin's own tests plus the compose e2e. Each test mints its
-//! own tenant, so the suite is parallel-safe.
-
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -37,7 +23,6 @@ use crate::infra::db::{ops_repo, person_roles_repo, resolution_repo, roles_repo,
 
 type TestResult = anyhow::Result<()>;
 
-/// The caller the injected `SecurityContext` speaks for.
 #[derive(Clone, Copy)]
 struct Caller {
     person_id: Uuid,
@@ -128,7 +113,6 @@ async fn get(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
     Ok((status, payload))
 }
 
-/// `person_id`s of a listing page, in the order it served them.
 fn listed_ids(payload: &Value) -> Vec<String> {
     payload["items"]
         .as_array()
@@ -160,8 +144,6 @@ fn batch_person_ids(person_ids: &[Uuid]) -> Value {
     json!({"person_ids": person_ids})
 }
 
-// ── POST /v1/visible-persons ────────────────────────────────
-
 #[tokio::test]
 async fn visible_persons_answers_the_callers_subtree_and_omits_a_stranger() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
@@ -186,8 +168,6 @@ async fn visible_persons_answers_the_callers_subtree_and_omits_a_stranger() -> T
 
 #[tokio::test]
 async fn visible_persons_refuses_a_request_naming_nobody() -> TestResult {
-    // Empty and all-nil both collapse to "no ids to check". A 200 with an empty
-    // `visible` would read to analytics as "everything you asked for is hidden".
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -248,9 +228,6 @@ async fn visible_persons_rejects_a_value_that_is_not_a_uuid() -> TestResult {
 
 #[tokio::test]
 async fn a_wildcard_holder_gets_only_ids_their_own_tenant_has() -> TestResult {
-    // The wildcard branch of the handler, at the layer analytics consumes it:
-    // a grant covers everyone IN THE TENANT, so a foreign or invented id must
-    // not come back confirmed — analytics reads this answer as authorization.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -300,8 +277,6 @@ async fn visible_persons_without_a_caller_is_unauthenticated() -> TestResult {
     Ok(())
 }
 
-// ── POST /v1/profiles, value_type = person_id ───────────────
-
 #[tokio::test]
 async fn a_profile_resolves_by_person_id() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
@@ -318,7 +293,6 @@ async fn a_profile_resolves_by_person_id() -> TestResult {
 
 #[tokio::test]
 async fn a_profile_resolves_by_person_id_for_a_person_with_no_email() -> TestResult {
-    // The reason the key changed: this person is unreachable by email.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -335,8 +309,6 @@ async fn a_profile_resolves_by_person_id_for_a_person_with_no_email() -> TestRes
 
 #[tokio::test]
 async fn a_person_id_outside_the_visible_set_is_not_found() -> TestResult {
-    // Visibility applies to the person_id key exactly as it does to email: a
-    // hidden person is indistinguishable from a missing one.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -390,8 +362,6 @@ async fn an_unobserved_person_id_is_not_found() -> TestResult {
 
 #[tokio::test]
 async fn a_person_id_value_that_is_not_a_person_uuid_is_a_client_error() -> TestResult {
-    // The pre-cutover email shape and the nil UUID: both parse-level refusals,
-    // never a 404 that would read as "no such person".
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -407,8 +377,6 @@ async fn a_person_id_value_that_is_not_a_person_uuid_is_a_client_error() -> Test
 
 #[tokio::test]
 async fn a_person_id_lookup_forbids_the_source_fields() -> TestResult {
-    // A person id is tenant-wide; naming a source instance is what selects the
-    // 'id' mode instead, so the combination is a contradiction, not a filter.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -447,8 +415,6 @@ async fn an_unknown_value_type_is_a_client_error() -> TestResult {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     Ok(())
 }
-
-// ── POST /v1/profiles/batch ─────────────────────────────────
 
 #[tokio::test]
 async fn batch_profiles_preserves_order_and_omits_hidden_or_unknown_people() -> TestResult {
@@ -548,8 +514,6 @@ async fn batch_profiles_reject_duplicate_and_unknown_request_fields() -> TestRes
     Ok(())
 }
 
-// ── GET /v1/me ──────────────────────────────────────────────
-
 async fn grant_admin(f: &Fixture, person: Uuid) -> anyhow::Result<Uuid> {
     let grant = Uuid::now_v7();
     person_roles_repo::insert(
@@ -567,8 +531,6 @@ async fn grant_admin(f: &Fixture, person: Uuid) -> anyhow::Result<Uuid> {
 }
 
 fn role_names(payload: &Value) -> anyhow::Result<Vec<String>> {
-    // Fails on a missing/renamed field instead of defaulting to empty, so an
-    // "expects no roles" assertion cannot pass vacuously on shape drift.
     let roles = payload["roles"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("no `roles` array in {payload}"))?;
@@ -656,10 +618,7 @@ async fn me_without_a_caller_is_unauthenticated() -> TestResult {
     Ok(())
 }
 
-// ── GET /v1/persons ─────────────────────────────────────────
-
 fn found_ids(payload: &Value) -> anyhow::Result<Vec<String>> {
-    // Same shape-drift guard as `role_names`.
     let items = payload["items"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("no `items` array in {payload}"))?;
@@ -1111,9 +1070,6 @@ async fn persons_search_requires_the_admin_row() -> TestResult {
 
 #[tokio::test]
 async fn a_request_without_terms_lists_the_roster() -> TestResult {
-    // No terms is not a malformed search, it is the console's person mode:
-    // an operator reviewing identities needs to see who exists rather than
-    // guess a name to type.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1154,9 +1110,6 @@ async fn a_person_is_found_by_a_current_email_fragment() -> TestResult {
 
 #[tokio::test]
 async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
-    // The moved-mailbox case: the old owner observed a NEWER email from the
-    // same source, so the old address is theirs no more — only the person the
-    // address currently belongs to comes back.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1186,9 +1139,6 @@ async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
 
 #[tokio::test]
 async fn a_still_current_email_two_persons_claim_returns_both() -> TestResult {
-    // The handed-over mailbox with no fresher data for the old owner: the
-    // journal honestly says two persons currently claim it, and the operator
-    // is the one who gets to disambiguate.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1239,21 +1189,12 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
 
 #[tokio::test]
 async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
-    // Alphabetical by the label the row displays — display name, else the
-    // address — so the order can be followed down the column. A person the
-    // journal knows by nothing but a binding has no label to place, and sits
-    // after everyone who has one rather than under an id nobody reads.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
     let operator = admin_operator(&f).await?;
     let marker = Uuid::now_v7().simple().to_string();
 
-    // The addresses and the name are deliberately in opposite orders: `named`
-    // has the EARLIER address and the LATER name. Sorting by the address would
-    // put them first, sorting by the label they show puts them second — so the
-    // assertion can tell the two rules apart, which a same-direction pair
-    // cannot.
     let email_only = f
         .person(&format!("mmm-order-{marker}@http-live.test"))
         .await?;
@@ -1283,9 +1224,6 @@ async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
 
 #[tokio::test]
 async fn the_roster_leaves_out_the_person_that_stands_for_exclusion() -> TestResult {
-    // Excluding an account binds it to a sentinel person id. It is a marker, not
-    // somebody: listed, it would be a nameless row an operator could pick as a
-    // bind or merge target, and every excluded account would look like theirs.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1404,10 +1342,6 @@ async fn the_roster_lists_the_caller_and_everyone_the_policy_shows_them() -> Tes
 
 #[tokio::test]
 async fn the_roster_leaves_out_an_identity_nobody_claims() -> TestResult {
-    // The shape a git-only organisation is full of: an address a commit carried,
-    // which the journal turned into a person because that is what an observation
-    // log does. No connector ever claimed it as an account, so it is not a
-    // member, and a roster listing it is a directory of strangers.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1497,7 +1431,6 @@ async fn a_cursor_from_another_query_is_refused_rather_than_resumed() -> TestRes
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("expected a cursor: {browsed}"))?;
 
-    // The same position, presented under a narrowed query it never ordered.
     let (status, _) = get(
         flat_app(&f, caller),
         &format!("/v1/visible-persons?q=roster&limit=1&cursor={cursor}"),
@@ -1525,13 +1458,6 @@ async fn an_over_long_roster_query_is_refused_rather_than_scanned() -> TestResul
     Ok(())
 }
 
-// ── POST /v1/resolution/{bind,merge,detach,exclude} ─────────
-//
-// INVARIANT: every case seeds the account's binding first. The other way in —
-// an account no binding names, vouched for by connector evidence — is a
-// ClickHouse read, and this suite has none.
-
-/// A caller who may correct: the admin grant is what every one of these needs.
 async fn operator(f: &Fixture) -> anyhow::Result<Uuid> {
     let person = f.person("operator@http-live.test").await?;
     grant_admin(f, person).await?;
@@ -1546,10 +1472,6 @@ fn account_ref(f: &Fixture, account_id: &str) -> Value {
     })
 }
 
-/// The person the account is bound to right now. This is the by-name read the
-/// correction itself performs; the review surface asks the same question of the
-/// whole tenant through a different statement, and nothing here corroborates the
-/// two against each other.
 async fn bound_to(f: &Fixture, account_id: &str) -> anyhow::Result<Option<Uuid>> {
     let key = f.account(account_id);
     Ok(
@@ -1606,8 +1528,6 @@ async fn binding_a_decision_already_recorded_applies_nothing_further() -> TestRe
     f.bound_at("acct-again", person, FIXTURE_REASON, 60).await?;
 
     let body = bind_body(&f, "acct-again", person);
-    // The first call is the confirm act — recording the operator's agreement
-    // with what automation chose — and it must APPLY, not report nothing to do.
     let (_, first) = post(app(&f, caller), "/v1/resolution/bind", &body).await?;
     assert_eq!(
         first["applied"], 1,
@@ -1632,9 +1552,6 @@ async fn one_call_naming_an_account_twice_is_refused() -> TestResult {
     let held_by = f.person("held-by@http-live.test").await?;
     let one = f.person("one@http-live.test").await?;
     let other = f.person("other@http-live.test").await?;
-    // The seed names a THIRD person: were the first item written before the
-    // refusal, the account would move, and an assertion naming the first item's
-    // person could not tell that apart from nothing having happened.
     f.bound_at("acct-twice", held_by, FIXTURE_REASON, 60)
         .await?;
 
@@ -1879,8 +1796,6 @@ async fn a_correction_names_its_operator_in_the_journal() -> TestResult {
     )
     .await?;
 
-    // The trail an operator is answerable by: who decided, and what they asked
-    // for. Nothing else records the author of a correction.
     let trail = ops_repo::corrections_for_account(
         &f.db,
         f.tenant,
@@ -1923,8 +1838,6 @@ async fn a_bulk_call_moves_every_account_it_names() -> TestResult {
     f.bound_at("acct-bulk-2", automation_chose, FIXTURE_REASON, 60)
         .await?;
 
-    // A prepared matching table is submitted as ONE call, and the outcomes come
-    // back by position — the shape the whole bulk contract exists for.
     let (status, body) = post(
         app(&f, caller),
         "/v1/resolution/bind",
@@ -2028,9 +1941,6 @@ async fn each_verb_journals_the_decision_it_made() -> TestResult {
     )
     .await?;
 
-    // The reason code is what makes a binding's history explain itself without
-    // joining the operations log, so a verb that journals another verb's name
-    // corrupts both records at once.
     for (account, verb) in [
         ("acct-verb-merge", "operator-merge"),
         ("acct-verb-detach", "operator-detach"),
@@ -2078,13 +1988,6 @@ async fn a_correction_without_a_caller_is_unauthenticated() -> TestResult {
     Ok(())
 }
 
-// ── /v1/{roles,person-roles,visibility} ─────────────────────
-//
-// The catalogue and the two grant surfaces. Two of their rules are enforced by
-// a single conditional UPDATE rather than by a read-then-write, so only a live
-// database can say whether they hold: a role in use cannot be deleted, and the
-// last admin of a tenant cannot be revoked.
-
 async fn delete(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
     let req = Request::builder()
         .method("DELETE")
@@ -2097,7 +2000,6 @@ async fn delete(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
     Ok((status, payload))
 }
 
-/// A role nobody else's case can collide with.
 async fn a_role(f: &Fixture, caller: Uuid, name: &str) -> anyhow::Result<Uuid> {
     let unique = format!("{name}-{}", Uuid::now_v7().simple());
     let (status, body) = post(app(f, caller), "/v1/roles", &json!({"name": unique})).await?;
@@ -2108,9 +2010,6 @@ async fn a_role(f: &Fixture, caller: Uuid, name: &str) -> anyhow::Result<Uuid> {
     Ok(id.parse()?)
 }
 
-/// Remove a role this case created. `roles` has no tenant column, so one left
-/// behind is in every tenant's catalogue and in every later run's listing —
-/// the fixture's fresh tenant does not isolate it.
 async fn forget_role(f: &Fixture, role_id: Uuid) -> anyhow::Result<()> {
     let removed = roles_repo::try_delete_if_unused(&f.db, role_id).await?;
     anyhow::ensure!(removed == 1, "role {role_id} outlived its case");
@@ -2178,8 +2077,6 @@ async fn a_role_nobody_holds_can_be_deleted_and_one_in_use_cannot() -> TestResul
     let (gone, _) = delete(app(&f, caller), &format!("/v1/roles/{unused}")).await?;
     assert_eq!(gone, StatusCode::NO_CONTENT);
 
-    // The guard is a conditional UPDATE, not a read-then-write: a role somebody
-    // holds must not be removable however the two calls interleave.
     let (refused, answer) = delete(app(&f, caller), &format!("/v1/roles/{held}")).await?;
     assert_eq!(
         refused,
@@ -2195,7 +2092,6 @@ async fn a_role_nobody_holds_can_be_deleted_and_one_in_use_cannot() -> TestResul
         "and it must still be in the catalogue"
     );
 
-    // `unused` is gone already; `held` only becomes removable once nobody has it.
     person_roles_repo::soft_delete(&f.db, f.tenant, assignment, Some("http-live cleanup")).await?;
     forget_role(&f, held).await
 }
@@ -2366,13 +2262,6 @@ async fn another_tenants_visibility_grant_is_neither_listed_nor_revocable() -> T
     Ok(())
 }
 
-/// Every route behind `require_admin`, as one table — all 22 of them. Each
-/// handler calls the gate separately, so a gate removed from one of them is
-/// invisible to a case that only drives another.
-///
-/// INVARIANT: this must stay level with the `require_admin` call sites in
-/// `api/`. Nothing derives it, so a gated route added and not listed here is a
-/// gate no test drives.
 fn operator_routes(f: &Fixture, person: Uuid) -> Vec<(&'static str, String, Option<Value>)> {
     let some = Uuid::now_v7();
     let account = json!({"account": account_ref(f, "acct-gate")});
@@ -2481,9 +2370,6 @@ async fn an_admin_of_another_tenant_is_refused_here() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    // The grant is a row in THIS tenant, not a property of the person. Somebody
-    // who administers one tenant is an ordinary caller in every other, and the
-    // gate reads the row scoped to the tenant the gateway named.
     let other = f.in_another_tenant();
     let caller = other.person("admin-elsewhere@http-live.test").await?;
     other.make_admin(caller).await?;
@@ -2519,8 +2405,6 @@ async fn every_operator_route_refuses_a_caller_the_gateway_did_not_name() -> Tes
     Ok(())
 }
 
-/// The four correction verbs, each with a body its extractor accepts — so a
-/// case below varies ONE thing and the refusal is about that thing.
 fn correction_verbs(f: &Fixture, person: Uuid) -> Vec<(&'static str, Value)> {
     let account = json!({"account": account_ref(f, "acct-extractor")});
     vec![
@@ -2584,9 +2468,6 @@ async fn a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape
 
 #[tokio::test]
 async fn a_correction_without_a_json_content_type_is_refused_on_the_media_type() -> TestResult {
-    // Held before the extractor swap too — axum's own `Json` refuses on the
-    // media type as well. Kept as the guard that the swap did not trade the
-    // 415 away for a parse attempt, not as a rule this change introduced.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -2642,8 +2523,6 @@ async fn an_account_search_needle_past_the_cap_is_refused() -> TestResult {
     };
     let caller = operator(&f).await?;
 
-    // `/v1/persons` and `/v1/visible-persons` both bound their needle at 200
-    // characters; this listing handed the raw one to the evidence reader.
     let needle = "n".repeat(201);
     let (status, body) = get(
         app(&f, caller),

@@ -21,9 +21,6 @@ use crate::domain::date_window::{self, Window, WindowError};
 use crate::infra::db::entities::feedback;
 use crate::migration::feedback_schema;
 
-/// The first submissions in the requested order. A window holding more is cut
-/// without saying so — narrowing the period is the only way to reach what falls
-/// past it.
 const LIST_LIMIT: u64 = 200;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -171,8 +168,6 @@ fn to_row(
     })
 }
 
-/// Who to ask the identity mirror about: one id per person on the page, not
-/// one per row.
 fn senders(rows: &[feedback::Model]) -> Vec<Uuid> {
     rows.iter()
         .map(|row| row.person_id)
@@ -208,8 +203,6 @@ fn day_start(day: NaiveDate) -> DateTime<Utc> {
     Utc.from_utc_datetime(&day.and_time(NaiveTime::MIN))
 }
 
-/// The window names whole UTC days, so the upper bound is the midnight AFTER
-/// `until` — anything narrower drops part of that day.
 fn day_after(day: NaiveDate) -> DateTime<Utc> {
     day_start(day) + Duration::days(1)
 }

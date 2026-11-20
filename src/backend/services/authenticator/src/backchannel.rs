@@ -1,22 +1,10 @@
-//! OIDC back-channel logout token validation (PRD 5.10, OIDC BCL 1.0 §2.4–2.6).
-//!
-//! The `logout_token` is a JWT from the IdP: signature via the IdP JWKS, `iss`
-//! against the one configured issuer, `aud` against our `client_id`, `iat`
-//! freshness inside a skew/max-age window, the mandatory back-channel `events`
-//! member, at least one of `sub`/`sid`, and — per spec — **no `nonce`** (which
-//! distinguishes a logout token from a stolen id_token). Replay protection
-//! (`jti`, one-shot) lives in the session store; this module is the pure
-//! validation half, unit-tested with locally-signed tokens.
-
 use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode_header};
 use serde::Deserialize;
 
-/// The back-channel logout event URI (OIDC BCL §2.4).
 const LOGOUT_EVENT: &str = "http://schemas.openid.net/event/backchannel-logout";
 
-/// The validated claims the handler acts on.
 #[derive(Debug)]
 pub struct LogoutClaims {
     pub sub: Option<String>,
@@ -25,7 +13,6 @@ pub struct LogoutClaims {
     pub iat: u64,
 }
 
-/// Raw claim shape (aud may be a string or an array per RFC 7519).
 #[derive(Debug, Deserialize)]
 struct RawClaims {
     iss: String,
@@ -43,11 +30,6 @@ struct RawClaims {
     nonce: Option<serde_json::Value>,
 }
 
-/// Validate a `logout_token`. Returns a coarse reason on failure — the IdP
-/// gets a 400 with no more detail than it needs.
-///
-/// # Errors
-/// Returns the failure reason as a static string.
 pub fn validate_logout_token(
     jwks: &JwkSet,
     raw: &str,
@@ -63,7 +45,6 @@ pub fn validate_logout_token(
         return Err("unsupported_alg");
     }
 
-    // Pick the key by kid when present; otherwise try every key of the set.
     let keys: Vec<&jsonwebtoken::jwk::Jwk> = match &header.kid {
         Some(kid) => jwks
             .keys
@@ -94,7 +75,6 @@ pub fn validate_logout_token(
                 claims = Some(data.claims);
                 break;
             }
-            // A backend failure is not a bad token; stop and say so.
             Err(error) if matches!(error.kind(), ErrorKind::Provider(_)) => {
                 return Err("crypto_unavailable");
             }
@@ -103,7 +83,6 @@ pub fn validate_logout_token(
     }
     let claims = claims.ok_or("signature_verification_failed")?;
 
-    // iat freshness: not from the future (beyond skew), not older than max age.
     if claims.iat > now + clock_skew_seconds {
         return Err("iat_in_future");
     }
@@ -111,7 +90,6 @@ pub fn validate_logout_token(
         return Err("token_too_old");
     }
 
-    // The mandatory events member (OIDC BCL §2.4).
     let has_event = claims
         .events
         .as_ref()
@@ -126,12 +104,10 @@ pub fn validate_logout_token(
         return Err("nonce_present");
     }
 
-    // At least one of sub / sid must name the target.
     if claims.sub.is_none() && claims.sid.is_none() {
         return Err("no_sub_or_sid");
     }
 
-    // `iss` was validated by the decoder; keep the claim only for logging.
     let _ = claims.iss;
     let _ = claims.aud;
 
@@ -143,8 +119,6 @@ pub fn validate_logout_token(
     })
 }
 
-/// TTL for the one-shot `(iss, jti)` replay guard: the token's remaining
-/// acceptability window, `(iat + max_age + skew) − now`, floored at 1 s.
 #[must_use]
 pub fn replay_guard_ttl(iat: u64, now: u64, clock_skew_seconds: u64, max_age_seconds: u64) -> u64 {
     (iat + max_age_seconds + clock_skew_seconds)
@@ -166,7 +140,6 @@ mod tests {
     const AUD: &str = "insight-authenticator";
     const NOW: u64 = 1_000_000;
 
-    /// A P-256 keypair as (signing key, single-key JWKS with kid "k1").
     fn material() -> (EncodingKey, JwkSet) {
         use base64::Engine as _;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -224,7 +197,6 @@ mod tests {
         c["aud"] = "someone-else".into();
         assert!(validate(&jwks, &sign(&enc, &c)).is_err());
 
-        // Signed by a key the JWKS does not hold.
         let (other_enc, _) = material();
         assert_eq!(
             validate(&jwks, &sign(&other_enc, &base_claims())).unwrap_err(),
@@ -254,14 +226,14 @@ mod tests {
     fn rejects_stale_and_future_iat() {
         let (enc, jwks) = material();
         let mut c = base_claims();
-        c["iat"] = (NOW - 1000).into(); // past max_age (300) + skew (60)
+        c["iat"] = (NOW - 1000).into();
         assert_eq!(
             validate(&jwks, &sign(&enc, &c)).unwrap_err(),
             "token_too_old"
         );
 
         let mut c = base_claims();
-        c["iat"] = (NOW + 500).into(); // beyond the future skew
+        c["iat"] = (NOW + 500).into();
         assert_eq!(
             validate(&jwks, &sign(&enc, &c)).unwrap_err(),
             "iat_in_future"
@@ -279,7 +251,6 @@ mod tests {
             "no_sub_or_sid"
         );
 
-        // sub-only and sid-only are each sufficient.
         let mut c = base_claims();
         c.as_object_mut().unwrap().remove("sid");
         assert!(validate(&jwks, &sign(&enc, &c)).is_ok());
@@ -290,9 +261,7 @@ mod tests {
 
     #[test]
     fn replay_ttl_covers_the_acceptability_window() {
-        // iat 10 s ago, max_age 300, skew 60 → guard lives (300+60)−10 = 350 s.
         assert_eq!(replay_guard_ttl(NOW - 10, NOW, 60, 300), 350);
-        // Long-past iat still yields the 1 s floor.
         assert_eq!(replay_guard_ttl(0, NOW, 60, 300), 1);
     }
 }

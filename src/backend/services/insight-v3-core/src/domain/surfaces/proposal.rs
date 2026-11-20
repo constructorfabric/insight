@@ -9,14 +9,12 @@ use crate::domain::definition::{
 };
 use crate::domain::kinds;
 
-/// Whether an item of a proposal made a definition or rewrote one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Arrival {
     Created,
     Replaced,
 }
 
-/// One item of a stored proposal.
 #[derive(Debug)]
 pub(crate) struct StoredItem {
     pub(crate) kind: DefinitionKind,
@@ -37,24 +35,16 @@ pub(crate) enum ProposalError {
     Store(DefinitionStoreError),
 }
 
-/// One proposed item, once its name and id are known good.
 #[derive(Debug)]
 struct Landing {
     kind: DefinitionKind,
     id: DefinitionId,
-    /// Also what the other items of the proposal call it by.
     name: DefinitionLabel,
     arrival: Arrival,
     body: Value,
 }
 
 impl Surfaces<'_> {
-    /// Stores what the assistant proposed, or none of it.
-    ///
-    /// Every name and id is parsed and every body checked before anything is
-    /// written, so one refusal leaves the reader what they had rather than
-    /// half a dashboard. A dashboard it creates is the caller's; one it
-    /// replaces must be one the caller may change.
     pub(crate) async fn store_proposal(
         &self,
         metric: Option<Proposed>,
@@ -103,8 +93,6 @@ impl Surfaces<'_> {
         Ok(stored)
     }
 
-    /// Refuses a proposal replacing a dashboard the caller may not change,
-    /// as missing when they cannot see it.
     async fn replaceable(&self, landing: &[Landing]) -> Result<(), ProposalError> {
         let replaced = landing
             .iter()
@@ -134,7 +122,6 @@ impl Surfaces<'_> {
     }
 }
 
-/// The id an item is stored under: the one it replaces, or a fresh one.
 fn landed(kind: DefinitionKind, proposed: Proposed) -> Result<Landing, ProposalError> {
     let name = DefinitionLabel::parse(&proposed.name).map_err(ProposalError::Name)?;
     let (id, arrival) = match proposed.id {
@@ -156,9 +143,6 @@ fn landed(kind: DefinitionKind, proposed: Proposed) -> Result<Landing, ProposalE
     })
 }
 
-/// Every body, with each reference to another item of the proposal by its
-/// name now naming that item's id. A reference to anything else is an id of
-/// something built already, and is left as it is.
 fn pointed_at_ids(landing: Vec<Landing>) -> Vec<Landing> {
     let keys: Vec<(DefinitionKind, String, String)> = landing
         .iter()

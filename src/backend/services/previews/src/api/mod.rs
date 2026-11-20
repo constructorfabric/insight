@@ -1,5 +1,3 @@
-//! HTTP API layer — shared state, route table, offline OpenAPI emit.
-
 pub(crate) mod canonical_json;
 pub mod error;
 pub mod experiments;
@@ -16,22 +14,13 @@ use crate::config::GearConfig;
 use crate::infra::cluster::Cluster;
 use crate::infra::registry::Registry;
 
-/// Shared application state, injected into handlers via `Extension` (as one
-/// `Arc`, never cloned per request).
 pub struct AppState {
-    /// Kubernetes access, scoped to the one configured namespace.
     pub cluster: Cluster,
-    /// `None` when tag listing is disabled (empty registry URL).
     pub registry: Option<Registry>,
     pub config: GearConfig,
-    /// Serializes create admission (count-then-create); see the INVARIANT at
-    /// its lock site.
     pub create_gate: tokio::sync::Mutex<()>,
 }
 
-/// Mount the previews routes onto the host's router. Gateway-JWT identity is
-/// enforced entirely by the host authn pipeline (`oidc-authn-plugin` →
-/// `SecurityContext`) — no bespoke JWT code.
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -49,8 +38,6 @@ mod log_context_tests;
 #[cfg(test)]
 mod log_leak_tests;
 
-/// Title/version/description of the emitted document. Kept in step with the
-/// `openapi` block of `config/insight.yaml`.
 fn openapi_info() -> OpenApiInfo {
     OpenApiInfo {
         title: "Insight Previews API".to_owned(),
@@ -66,14 +53,6 @@ fn openapi_info() -> OpenApiInfo {
     }
 }
 
-/// Build the previews `OpenAPI` document **offline** — no `AppState`, cluster
-/// or HTTP listener. Backs the `previews openapi` subcommand (committed-doc
-/// regeneration + drift gate), reusing the exact `build_operations` route
-/// table the live gear serves, so the two cannot diverge.
-///
-/// # Errors
-///
-/// Returns an error if the registry cannot assemble the document.
 pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let openapi = OpenApiRegistryImpl::new();
     let _ = build_operations(Router::new(), &openapi);
@@ -83,8 +62,6 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
         .map_err(|e| anyhow::anyhow!("failed to build previews OpenAPI document: {e}"))
 }
 
-/// Declare each operation via the toolkit `OperationBuilder` (records the
-/// route + its OpenAPI spec + auth/error metadata).
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = OperationBuilder::get("/v1/experiments")
         .operation_id("previews.experiments.list")

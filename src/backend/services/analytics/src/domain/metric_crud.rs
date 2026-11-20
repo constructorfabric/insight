@@ -1,14 +1,3 @@
-//! Custom-metric authoring model — the `origin='custom'` counterpart to the
-//! builtin `registry.yaml` reconcile.
-//!
-//! A custom metric is a tenant-scoped metric graph (definition + one custom
-//! observation source carrying inline SQL + its measures/dimensions + the
-//! role→measure inputs) authored at runtime through `/v1/metrics*`. The graph
-//! is validated as pure data here; the repository writes it as raw SQL in one
-//! transaction, always `origin='custom'` and scoped to the session tenant.
-//! Builtins are invisible to every query in this module, so the API can never
-//! mutate a `registry.yaml`-owned row.
-
 use std::collections::BTreeMap;
 
 use sea_orm::{
@@ -27,23 +16,15 @@ use crate::domain::query_gate::validate_custom_observation_sql;
 #[path = "metric_crud_live_tests.rs"]
 mod live_tests;
 
-/// Upper bounds on an authored graph — every unbounded input is capped at the
-/// edge so one request cannot fan out into an unbounded write.
 const MAX_MEASURES: usize = 64;
 const MAX_DIMENSIONS: usize = 64;
 const MAX_TAGS: usize = 64;
 const MAX_INPUTS: usize = 2;
 const MAX_OBSERVATION_SQL_BYTES: usize = 64 * 1024;
 
-/// Maximum metrics accepted by a single import request.
 pub const MAX_IMPORT_METRICS: usize = 500;
 
-/// Upper bound on how many custom metrics `GET /v1/metrics` and
-/// `GET /v1/metrics/export` return, so neither the response nor the export's
-/// per-metric fetch fan-out is unbounded.
 const MAX_LIST_METRICS: usize = 1000;
-
-// ── DTOs ─────────────────────────────────────────────────────
 
 /// A portable custom-metric graph — the create/update body, the export item,
 /// and the get/list detail shape. `origin` is response-only: always `"custom"`
@@ -141,20 +122,12 @@ impl toolkit::api::api_dto::ResponseApiDto for ExportCustomMetricsResponse {}
 impl toolkit::api::api_dto::RequestApiDto for ImportCustomMetricsRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for ImportCustomMetricsResponse {}
 
-// ── Validation (pure) ────────────────────────────────────────
-
-/// A rejected field of an authored graph: the wire field name and a short,
-/// user-facing reason. Mapped to a 400 `field_violation` by the handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphViolation {
     pub field: &'static str,
     pub reason: String,
 }
 
-/// Strip trailing whitespace and statement terminators from observation SQL.
-/// The single-SELECT gate accepts a trailing `;`, but the compiler wraps the
-/// SQL as `FROM (<sql>)`, where a trailing `;` is a syntax error — so it is
-/// removed once, at the write boundary, for both the probe and every render.
 pub fn normalize_observation_sql(sql: &str) -> String {
     sql.trim().trim_end_matches(';').trim_end().to_owned()
 }
@@ -166,21 +139,12 @@ fn violation(field: &'static str, reason: impl Into<String>) -> GraphViolation {
     }
 }
 
-/// A source/measure/dimension key: `^[a-z][a-z0-9_]*$`.
 fn is_simple_key(value: &str) -> bool {
     let mut chars = value.chars();
     let leads = chars.next().is_some_and(|c| c.is_ascii_lowercase());
     leads && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Validate an authored graph as pure data. The first violation wins so the
-/// caller gets one precise field to fix.
-///
-/// # Errors
-///
-/// Returns a [`GraphViolation`] for a malformed key, an out-of-bounds list, a
-/// computation/scale/inputs mismatch, or observation SQL that is not a single
-/// read statement.
 pub fn validate_graph(graph: &CustomMetric) -> Result<(), GraphViolation> {
     parse_metric_key(&graph.metric_key).map_err(|e| violation("metric_key", e.to_string()))?;
 
@@ -327,7 +291,6 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
                     "percentile takes exactly one value input",
                 ));
             }
-            // `scale` doubles as the quantile for percentile metrics.
             match graph.scale {
                 None => {
                     return Err(violation(
@@ -361,30 +324,18 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
     Ok(())
 }
 
-// ── Repository (I/O) ─────────────────────────────────────────
-
-/// Outcome of a create/import attempt for one metric.
 #[derive(Debug)]
 pub enum WriteOutcome {
     Created,
     AlreadyExists,
 }
 
-/// Insert a validated graph as an `origin='custom'` metric for `tenant_id` in
-/// one transaction. Returns [`WriteOutcome::AlreadyExists`] (no write) when the
-/// tenant already has that `metric_key` or `source_key`.
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure other than a uniqueness conflict.
 pub async fn create_custom_metric(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     graph: &CustomMetric,
 ) -> Result<WriteOutcome, DbErr> {
     let txn = db.begin().await?;
-    // The existence checks run inside the transaction that inserts, so two
-    // concurrent creates of the same key cannot both pass them.
     if metric_exists(&txn, tenant_id, &graph.metric_key).await?
         || source_exists(&txn, tenant_id, &graph.source_key).await?
     {
@@ -398,9 +349,6 @@ pub async fn create_custom_metric(
     Ok(WriteOutcome::Created)
 }
 
-/// The result of a replace: the metric was replaced, no custom metric existed
-/// under the key, or the new graph's `source_key` already belongs to another of
-/// the tenant's custom metrics.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReplaceOutcome {
     Replaced,
@@ -408,13 +356,6 @@ pub enum ReplaceOutcome {
     SourceConflict,
 }
 
-/// Replace an existing custom metric with a validated graph, in one
-/// transaction. The path `metric_key` is authoritative; the body's is
-/// overwritten with it before this call.
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure.
 pub async fn replace_custom_metric(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -427,9 +368,6 @@ pub async fn replace_custom_metric(
         txn.rollback().await?;
         return Ok(ReplaceOutcome::NotFound);
     }
-    // The old source is gone with the old graph, so a reused source_key is fine;
-    // a source_key belonging to a *different* custom metric is a conflict, the
-    // same invariant create enforces.
     if source_exists(&txn, tenant_id, &graph.source_key).await? {
         txn.rollback().await?;
         return Ok(ReplaceOutcome::SourceConflict);
@@ -439,14 +377,6 @@ pub async fn replace_custom_metric(
     Ok(ReplaceOutcome::Replaced)
 }
 
-/// Import a validated batch as `origin='custom'` metrics for `tenant_id` in one
-/// transaction — either every new graph lands or none does. Returns the
-/// `metric_key`s skipped because the tenant already owns them (or the same key
-/// appears twice in the batch).
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure; on error nothing is written.
 pub async fn import_custom_metrics(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -467,12 +397,6 @@ pub async fn import_custom_metrics(
     Ok(skipped)
 }
 
-/// Delete a tenant's custom metric (definition + its custom source) by
-/// `metric_key`. Returns `false` when none exists. Builtins never match.
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure.
 pub async fn delete_custom_metric(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -484,9 +408,6 @@ pub async fn delete_custom_metric(
     Ok(deleted)
 }
 
-// One INSERT per graph table (source, measures, source dimensions,
-// definition, inputs, definition dimensions); keeping them in one function
-// makes the write order and the shared generated ids explicit in one place.
 #[expect(
     clippy::too_many_lines,
     reason = "one INSERT per graph table; splitting hides the write order"
@@ -508,9 +429,6 @@ async fn insert_graph<C: ConnectionTrait>(
             uuid_value(source_id),
             uuid_value(tenant_id),
             Value::from(graph.source_key.as_str()),
-            // source_ref is the managed relation name for a managed source; a
-            // custom source reads from its observation_sql, so its source_ref
-            // is the (unused-at-read) source key, satisfying the NOT NULL column.
             Value::from(graph.source_key.as_str()),
             Value::from(graph.observation_sql.as_str()),
         ],
@@ -574,8 +492,6 @@ async fn insert_graph<C: ConnectionTrait>(
             Value::from(graph.direction.as_db()),
             Value::from(graph.entity_type.as_str()),
             Value::from(graph.computation.as_db()),
-            // The scale column is the definition's one numeric computation
-            // parameter: the ratio multiplier, or the percentile quantile.
             nullable_f64(graph.scale),
             nullable_f64(graph.transform.and_then(|t| t.multiplier)),
             nullable_f64(graph.transform.and_then(|t| t.offset)),
@@ -648,13 +564,6 @@ async fn insert_graph<C: ConnectionTrait>(
     Ok(())
 }
 
-/// Delete a tenant's custom definition and its source. The definition is
-/// resolved from `metric_definitions` directly (not through the inputs join),
-/// so a definition whose input rows are gone is still deletable rather than a
-/// listed-but-unremovable ghost. The source is resolved through the inputs
-/// while they still exist and dropped best-effort afterward; the definition
-/// delete cascades its inputs and dimension links first, so the source delete
-/// then cascades the measures/source-dimensions no input still references.
 async fn delete_graph<C: ConnectionTrait>(
     conn: &C,
     tenant_id: Uuid,
@@ -685,11 +594,6 @@ async fn delete_graph<C: ConnectionTrait>(
     Ok(true)
 }
 
-/// The tenant's custom metric graphs, ordered by `metric_key`.
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure.
 pub async fn list_custom_metrics(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -730,12 +634,6 @@ pub async fn list_custom_metrics(
     Ok(items)
 }
 
-/// A tenant's custom metric graph by `metric_key`, or `None` when absent
-/// (including when the key is a builtin — builtins never match `origin='custom'`).
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure.
 pub async fn fetch_custom_metric(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -757,11 +655,6 @@ pub async fn fetch_custom_metric(
     ))
 }
 
-/// The tenant's full custom metric graphs (for export).
-///
-/// # Errors
-///
-/// Returns [`DbErr`] on any database failure.
 pub async fn export_custom_metrics(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -770,15 +663,12 @@ pub async fn export_custom_metrics(
     let mut metrics = Vec::with_capacity(summaries.len());
     for summary in summaries {
         if let Some(mut graph) = fetch_custom_metric(db, tenant_id, &summary.metric_key).await? {
-            // Exports are portable: no tenant, no origin.
             graph.origin = None;
             metrics.push(graph);
         }
     }
     Ok(metrics)
 }
-
-// ── Repository helpers ───────────────────────────────────────
 
 #[derive(FromQueryResult)]
 struct DefinitionRow {
@@ -810,10 +700,6 @@ struct SourceRow {
 }
 
 impl DefinitionRow {
-    /// Rebuild the portable graph from stored rows, failing loud on any value
-    /// that does not round-trip. A corrupt row must not be silently reshaped
-    /// into a different metric — export would otherwise carry the substitute to
-    /// another stand.
     fn into_graph(
         self,
         source: SourceRow,
@@ -865,8 +751,6 @@ impl DefinitionRow {
     }
 }
 
-/// A stored custom-metric value that does not round-trip through its `from_db`
-/// parser: a corrupt row, surfaced loud rather than reshaped.
 fn corrupt_value(field: &str, value: &str) -> DbErr {
     DbErr::Custom(format!("corrupt custom metric row: {field} = {value:?}"))
 }
@@ -1134,8 +1018,6 @@ mod tests {
 
     #[test]
     fn normalize_strips_trailing_terminator() {
-        // A trailing `;` passes the single-SELECT gate but breaks the compiler's
-        // FROM (<sql>) wrap; it must be gone before the SQL is stored.
         assert_eq!(normalize_observation_sql("SELECT 1;"), "SELECT 1");
         assert_eq!(normalize_observation_sql("  SELECT 1 ;  "), "SELECT 1");
         assert_eq!(normalize_observation_sql("SELECT 1"), "SELECT 1");

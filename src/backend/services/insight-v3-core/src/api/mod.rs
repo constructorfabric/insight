@@ -1,5 +1,3 @@
-//! HTTP API endpoints.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -38,25 +36,16 @@ use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
 
-/// What a refused surface says.
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
 
-/// What a surface open to every signed-in person says to anyone else.
 pub(crate) const UNIDENTIFIED: &str = "the caller could not be identified";
 
-/// The caller's own authorization, as the gateway passed it on.
 pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
 }
 
-/// Who is asking, and in what role, for a surface open to every signed-in
-/// person.
-///
-/// Roles live in the identity service, so the caller's authorization is
-/// forwarded there. An identity that is absent or unreachable is a server
-/// error, never a permit: a check that cannot be made has not passed.
 pub(crate) async fn caller(
     state: &AppState,
     headers: &axum::http::HeaderMap,
@@ -89,12 +78,6 @@ pub(crate) async fn caller(
     caller.ok_or_else(denied)
 }
 
-/// Refuses a caller without the administrator role, before anything is
-/// looked up.
-///
-/// The library, authoring and sharing surfaces read and write one tenant's
-/// definitions and spend the configured model budget, so they are
-/// administrator-only.
 pub(crate) async fn require_admin(
     state: &AppState,
     headers: &axum::http::HeaderMap,
@@ -116,17 +99,12 @@ pub(crate) struct AppState {
     identity: IdentityClient,
     datasets: Datasets,
     catalog: Catalog,
-    /// How many drilldown pages may be read at once.
     drilldown_slots: Arc<tokio::sync::Semaphore>,
     preview_slots: Arc<tokio::sync::Semaphore>,
-    /// How many widgets may be run through their dashboards at once.
     widget_run_slots: Arc<tokio::sync::Semaphore>,
-    /// Absent on an installation that has alerts turned off.
     alerts: Option<Alerts>,
 }
 
-/// Everything alerts reach: the rules, the schedule their checks are on,
-/// and what an installation allows.
 #[derive(Debug)]
 pub(crate) struct Alerts {
     pub(crate) store: Arc<dyn AlertStore>,
@@ -137,19 +115,14 @@ pub(crate) struct Alerts {
     pub(crate) destinations: Destinations,
 }
 
-/// Everything about datasets this service reaches: their rows, the tables
-/// holding their records, and the database those live in.
 #[derive(Debug, Clone)]
 pub(crate) struct Datasets {
     pub(crate) rows: Arc<dyn crate::domain::datasets::Datasets>,
     pub(crate) tables: Arc<DatasetTables>,
     pub(crate) database: String,
-    /// How many of a dataset's latest records one look shows.
     pub(crate) preview_rows: u64,
 }
 
-/// What a state built without configuration shows, which no served request
-/// reaches: the openapi dump, and the harnesses.
 const DEFAULT_PREVIEW_ROWS: u64 = 50;
 
 impl Datasets {
@@ -167,8 +140,6 @@ impl Datasets {
         }
     }
 
-    /// Datasets over a store holding datasets that stand ready, for the
-    /// harnesses whose metrics have to read something.
     #[cfg(test)]
     pub(crate) fn holding(url: &str, declared: &[(&str, serde_json::Value)]) -> Self {
         use crate::domain::datasets::{Datasets as _, Finish};
@@ -202,8 +173,6 @@ impl Datasets {
         )
     }
 
-    /// Datasets over a store that is never reached, for a state that answers
-    /// without one.
     pub(crate) fn offline(url: &str) -> Self {
         Self::new(
             Arc::new(crate::store::datasets::MariaDatasets::new(
@@ -251,7 +220,6 @@ impl AppState {
         self
     }
 
-    /// The alert operations, on an installation that has them.
     pub(crate) fn alerts(&self) -> Option<crate::domain::alerts::rules::AlertRules<'_>> {
         let alerts = self.alerts.as_ref()?;
 
@@ -278,7 +246,6 @@ impl AppState {
             .map(|alerts| alerts.deliveries.as_ref())
     }
 
-    /// One send of one notification, for the delivery worker.
     pub(crate) fn alert_deliverer(&self) -> Option<crate::domain::alerts::delivery::Deliverer<'_>> {
         let alerts = self.alerts.as_ref()?;
 
@@ -288,7 +255,6 @@ impl AppState {
         ))
     }
 
-    /// One check of one rule, for the worker.
     pub(crate) fn alert_evaluator(
         &self,
     ) -> Option<crate::domain::alerts::evaluation::Evaluator<'_>> {
@@ -345,7 +311,6 @@ impl AppState {
         &self.chat
     }
 
-    /// The definitions as `caller` reaches them.
     pub(crate) fn surfaces(&self, caller: Caller) -> crate::domain::surfaces::Surfaces<'_> {
         crate::domain::surfaces::Surfaces::new(
             self.definitions.as_ref(),
@@ -407,9 +372,6 @@ impl AppState {
     }
 }
 
-/// Title, version and description of the emitted document. Kept in step with
-/// the api-gateway block of `helm/templates/configmap.yaml`, which declares
-/// the same three for the served document.
 fn openapi_info() -> OpenApiInfo {
     OpenApiInfo {
         title: "Insight v3 Core API".to_owned(),
@@ -424,16 +386,6 @@ fn openapi_info() -> OpenApiInfo {
     }
 }
 
-/// The `OpenAPI` document, built offline for the drift gate.
-///
-/// Every operation is declared while the router is assembled, so the document
-/// comes from the code that serves the routes rather than a copy kept beside
-/// it. Nothing here dials anything: the `ClickHouse` clients hold URLs they
-/// never call, and the definition store holds a disconnected handle — a route
-/// reached on this path would answer an error, and none is reached.
-///
-/// # Errors
-/// The registry could not assemble the document.
 pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let offline = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
         "http://clickhouse.invalid",
@@ -481,9 +433,6 @@ pub(crate) fn register_routes(
     state: Arc<AppState>,
     admission: IngestAdmission,
 ) -> Router {
-    // Built apart from the host's router so the layer wraps this service's
-    // own routes, and merged in after — the host's own endpoints carry
-    // their own context.
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
     let api = duplicate::register_routes(api, openapi, &state);

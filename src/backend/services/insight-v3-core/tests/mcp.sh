@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Drives the custom-surface MCP server through the gateway, as a client would.
-#
-# The parts that need no credential run always. The authoring round trip needs
-# an MCP access token, which comes from a browser authorization that cannot be
-# automated here: authorize a client against {BASE_URL}/mcp/v3 and export the
-# access token as INSIGHT_MCP_TOKEN. The dataset the round trip reads is
-# declared over the REST surface, which sits behind the gateway under /api/v3
-# and takes the administrator's session rather than the MCP token: export the
-# `__Host-sid` cookie value as INSIGHT_SESSION.
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
@@ -20,8 +11,6 @@ DATASET="mcp_e2e_events"
 
 say() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
-
-# ── Unauthenticated: the challenge must name this server, not the other one ──
 
 say "an unauthenticated request is challenged for this server's own resource"
 challenge_headers="$(curl -sS -D - -o /dev/null -X POST "${MCP_URL}" \
@@ -65,7 +54,6 @@ call() {
   rpc "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"${name}\",\"arguments\":${args}}}"
 }
 
-# Dependency order: a dashboard holds widgets, a widget draws a metric.
 cleanup() {
   call delete_definition "{\"kind\":\"dashboard\",\"name\":\"${DASHBOARD}\"}" >/dev/null 2>&1 || true
   call delete_definition "{\"kind\":\"widget\",\"name\":\"${WIDGET}\"}" >/dev/null 2>&1 || true
@@ -74,8 +62,6 @@ cleanup() {
   curl -sS -X DELETE "${API_URL}/v1/datasets/${DATASET}" "${session[@]}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-
-# ── Authorized: the whole authoring path ──
 
 say "initialize names this server"
 init="$(rpc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"mcp-e2e","version":"0.0.0"}}}')"
@@ -89,8 +75,6 @@ for tool in list_definitions get_definition put_metric put_widget put_dashboard 
   grep -q "\"${tool}\"" <<<"${tools}" || fail "${tool} is not advertised: ${tools}"
 done
 
-# An agent may read datasets and never make one, so the dataset this metric
-# reads is declared over the administrator's own surface first.
 say "a dataset is declared for the metric to read"
 curl -sS --fail-with-body -X PUT "${API_URL}/v1/datasets/${DATASET}" \
   -H 'Content-Type: application/json' "${session[@]}" \
@@ -119,7 +103,6 @@ described="$(call describe_tables '{"tables":["nowhere.nothing"]}')"
 grep -q 'nowhere.nothing' <<<"${described}" || fail "an unknown table is not reported: ${described}"
 
 say "a metric over a warehouse table is stored and runs"
-# system.one is on every stand: one row, one column. Not listed, still readable.
 call put_metric "{\"name\":\"${METRIC}-table\",\"body\":{\"table\":\"system.one\",\"fields\":[{\"column\":\"dummy\",\"agg\":\"count\",\"type\":\"int\",\"as_name\":\"total\"}]}}" >/dev/null
 over_table="$(call run_metric "{\"name\":\"${METRIC}-table\"}")"
 grep -q '"isError":true' <<<"${over_table}" && fail "the table metric did not run: ${over_table}"

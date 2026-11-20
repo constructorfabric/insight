@@ -20,14 +20,12 @@ use crate::infra::db::people_listing::{
 
 const DEFAULT_LIMIT: u64 = 50;
 const MAX_LIMIT: u64 = 500;
-/// The most people one `ids` lookup names.
 const MAX_IDS: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct PeopleParams {
     pub visibility: Option<String>,
     pub q: Option<String>,
-    /// Comma-separated person ids, any one of whom a row may be.
     pub ids: Option<String>,
     pub limit: Option<i64>,
     pub cursor: Option<String>,
@@ -125,9 +123,6 @@ pub async fn list_people(
     let tenant = ctx.subject_tenant_id();
     let visibility = PeopleVisibility::parse(params.visibility.as_deref())?;
 
-    // INVARIANT: outside an administrator's view the tenant roster is a
-    // directory — names and contact, not attributes or reporting lines,
-    // which the caller's own visibility still governs.
     let directory_only =
         visibility == PeopleVisibility::Tenant && !holds_admin(&state.db, &ctx, caller).await?;
 

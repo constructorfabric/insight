@@ -1,9 +1,3 @@
-//! `log_ctx` span around each service's routes: every request-scoped line
-//! carries `correlation_id` (echoed from the gateway's `X-Correlation-Id`,
-//! `x-request-id` as fallback — never minted here), `tenant_id` when
-//! authenticated, and the `service` / `version` set once at startup from the
-//! config's `opentelemetry.resource` (see [`init_identity`]).
-
 use std::sync::OnceLock;
 use std::task::{Context, Poll};
 
@@ -25,7 +19,6 @@ struct ServiceIdentity {
 
 static IDENTITY: OnceLock<ServiceIdentity> = OnceLock::new();
 
-/// [`init_identity`] from the config's `opentelemetry.resource` fields.
 pub fn init_identity_from_resource(
     service_name: &str,
     attributes: &std::collections::BTreeMap<String, String>,

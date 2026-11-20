@@ -38,7 +38,6 @@ fn member(person: PersonId) -> Caller {
     Caller::member(person)
 }
 
-/// Boards of `owner`'s, under ids the case names.
 async fn boards_of(store: &MemoryDefinitions, owner: PersonId, names: &[&str]) {
     for board in names {
         store
@@ -59,7 +58,6 @@ async fn boards_of(store: &MemoryDefinitions, owner: PersonId, names: &[&str]) {
     }
 }
 
-/// Boards of mine, under ids the case names.
 async fn with_boards(names: &[&str]) -> MemoryDefinitions {
     let store = MemoryDefinitions::new();
     boards_of(&store, me(), names).await;

@@ -1,21 +1,12 @@
-//! `ClickHouse` connection configuration.
-
 use std::time::Duration;
 
 use crate::topology::Topology;
 
-/// `ClickHouse` connection configuration.
-///
-/// `Debug` impl redacts the password field.
 #[derive(Clone)]
 pub struct Config {
-    /// `ClickHouse` HTTP URL (e.g., `http://localhost:8123`).
     pub url: String,
-    /// Database name (e.g., `insight`).
     pub database: String,
-    /// Optional username.
     pub user: Option<String>,
-    /// Optional password.
     pub password: Option<String>,
     /// Per-query timeout. Applied as `max_execution_time` setting.
     /// `None` means no timeout (`ClickHouse` server default).
@@ -47,8 +38,6 @@ impl core::fmt::Debug for Config {
 }
 
 impl Config {
-    /// Creates a new config with the given URL and database.
-    ///
     /// Defaults: no auth, 30-second query timeout, standalone topology.
     #[must_use]
     pub fn new(url: impl Into<String>, database: impl Into<String>) -> Self {
@@ -64,7 +53,6 @@ impl Config {
         }
     }
 
-    /// Sets authentication credentials.
     #[must_use]
     pub fn with_auth(mut self, user: impl Into<String>, password: impl Into<String>) -> Self {
         self.user = Some(user.into());
@@ -72,35 +60,30 @@ impl Config {
         self
     }
 
-    /// Sets the per-query timeout.
     #[must_use]
     pub fn with_query_timeout(mut self, timeout: Duration) -> Self {
         self.query_timeout = Some(timeout);
         self
     }
 
-    /// Disables the per-query timeout.
     #[must_use]
     pub fn without_query_timeout(mut self) -> Self {
         self.query_timeout = None;
         self
     }
 
-    /// Sets the per-query thread cap.
     #[must_use]
     pub fn with_query_max_threads(mut self, max_threads: u32) -> Self {
         self.query_max_threads = Some(max_threads);
         self
     }
 
-    /// Sets the per-query memory ceiling in bytes.
     #[must_use]
     pub fn with_query_max_memory_bytes(mut self, max_memory_bytes: u64) -> Self {
         self.query_max_memory_bytes = Some(max_memory_bytes);
         self
     }
 
-    /// Sets the topology of the server this config dials.
     #[must_use]
     pub fn with_topology(mut self, topology: Topology) -> Self {
         self.topology = topology;

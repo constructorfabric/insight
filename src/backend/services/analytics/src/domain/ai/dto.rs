@@ -1,6 +1,3 @@
-//! Wire shapes for the AI-assist surface, and the parsing that keeps a raw
-//! string from reaching a table or a prompt.
-
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -33,7 +30,6 @@ impl Scope {
     }
 }
 
-/// Why a piece of authored text cannot be stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextRejected {
     Empty,
@@ -49,7 +45,6 @@ impl TextRejected {
     }
 }
 
-/// A context entry's title, within the column budget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Title(String);
 
@@ -71,7 +66,6 @@ impl Title {
     }
 }
 
-/// Authored prose — a context entry's body, or a tenant's system prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prose(String);
 
@@ -93,10 +87,8 @@ impl Prose {
     }
 }
 
-/// Longest Anthropic key we will accept — generous, and still a bound.
 const MAX_TOKEN_CHARS: usize = 256;
 
-/// Why a submitted key cannot be stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenRejected {
     Empty,
@@ -114,7 +106,6 @@ impl TokenRejected {
     }
 }
 
-/// An Anthropic key on its way to being sealed. Never serialized.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ApiToken(String);
 
@@ -141,7 +132,6 @@ impl ApiToken {
     }
 }
 
-// SAFETY: the whole point of the newtype is that a key never reaches a log line.
 impl std::fmt::Debug for ApiToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ApiToken(redacted)")

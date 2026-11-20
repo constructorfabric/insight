@@ -1,18 +1,3 @@
-//! Org subchart HTTP surface — single-root subtree + forest (#348 / #344).
-//!
-//! Both routes are authenticated
-//! (any identified caller); what they return is shaped by the caller's
-//! visibility grants. `GET /v1/subchart/{person_id}` gates the root through
-//! [`crate::infra::db::subchart_repo::is_target_in_visible_set`] and returns 404
-//! (not 403) on deny so the target's existence does not leak. `GET /v1/subchart`
-//! is the forest variant — every visible top, empty array (200) when the caller
-//! sees nothing. `depth` (>= 0) and `valid_at` (point-in-time lens, #582) are
-//! query params; `depth` is **capped at the server's `max_depth`** (and
-//! defaults to it when omitted) — the `UNION ALL` subtree CTEs
-//! would otherwise let a caller pull a whole large-tenant tree in one request, or
-//! recurse until `cte_max_recursion_depth` on cyclic `org_chart` data. (The
-//! visibility gate's CTE is `UNION`/distinct, so it self-terminates on cycles.)
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -29,22 +14,15 @@ use super::datetime::parse_flexible;
 use super::error::SubchartError;
 use super::gate::require_caller;
 use crate::domain::subchart::assemble_forest;
-// Re-export the response DTOs so the route table (`api::mod`) can reference them
-// as `subchart::SubchartResponse`, alongside the handlers they wrap.
 pub(crate) use crate::domain::subchart::{SubchartForestResponse, SubchartResponse};
 use crate::infra::db::subchart_repo;
 
-/// Query params shared by both subchart routes.
 #[derive(Debug, Deserialize)]
 pub struct SubchartParams {
-    /// Max descent depth; `>= 0`. Capped at the server's `max_depth` and
-    /// defaulted to it when omitted (see [`effective_depth`]).
     pub depth: Option<i64>,
-    /// Point-in-time lens (ISO-8601 / RFC-3339). Absent = current state.
     pub valid_at: Option<String>,
 }
 
-/// `GET /v1/subchart` — forest of every root the caller can see.
 pub async fn get_forest(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -75,8 +53,6 @@ pub async fn get_forest(
     }))
 }
 
-/// `GET /v1/subchart/{person_id}` — subtree rooted at a person the caller can
-/// see. 404 when the root is unknown OR not visible to the caller.
 pub async fn get_subchart(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -130,9 +106,6 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read subchart").create()
 }
 
-/// Validate the `depth` query param: `None` → unspecified (the caller omitted
-/// it — [`effective_depth`] then applies the server cap); negative → 400
-/// `invalid_depth`; out-of-`i32`-range → 400.
 fn validate_depth(depth: Option<i64>) -> Result<Option<i32>, CanonicalError> {
     match depth {
         None => Ok(None),
@@ -149,18 +122,11 @@ fn invalid_depth(detail: String) -> CanonicalError {
         .create()
 }
 
-/// Resolve the effective descent cap: the caller's validated `depth` clamped to
-/// the server's `cap` (`config.max_depth`), defaulting to `cap` when omitted.
-/// Never `None`, so the `UNION ALL` subtree CTEs are always bounded — the caller
-/// cannot force an unbounded traversal, and cyclic `org_chart` data returns a
-/// bounded (partial) tree instead of erroring at `cte_max_recursion_depth`.
 fn effective_depth(requested: Option<i32>, cap: usize) -> i32 {
     let cap = i32::try_from(cap).unwrap_or(i32::MAX);
     requested.map_or(cap, |d| d.min(cap))
 }
 
-/// Parse + validate the optional `valid_at`: normalise to naive-UTC and reject
-/// future values (one-minute clock-skew slack).
 fn resolve_valid_at(raw: Option<&str>) -> Result<Option<NaiveDateTime>, CanonicalError> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);

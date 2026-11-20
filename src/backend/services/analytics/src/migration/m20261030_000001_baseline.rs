@@ -1,11 +1,3 @@
-//! The analytics schema the first 67 migrations built, in one step. Tables that
-//! `m20261014_000001_drop_unread_catalog_tables` drops, and the rows seeded
-//! into them, are left out.
-//!
-//! A fresh database gets the schema here; a database that walked the whole
-//! squashed history already holds it, and this migration applies nothing. See
-//! `insight_migration::squash`.
-
 mod schema;
 
 use insight_migration::squash::{self, History};
@@ -16,7 +8,6 @@ pub use schema::{
     REQUIRED_SOURCE_DIMENSION_CHECKS, REQUIRED_SOURCE_MEASURE_CHECKS, REQUIRED_TAG_CHECKS,
 };
 
-/// Releases that walk a database through the whole squashed history.
 const UPGRADE_THROUGH: &str = "insight umbrella 0.7.169, or a release-2026.09 build from 0.6.92 on";
 
 // INVARIANT: these are the ledger names of the squashed migrations, in their

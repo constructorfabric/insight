@@ -1,10 +1,3 @@
-//! Caller self-description — `GET /v1/me`.
-//!
-//! Answers "who does the gateway say I am, and which identity roles do I
-//! hold right now?" from the same `person_roles` rows the admin gate reads.
-//! Deliberately NOT admin-gated: an empty `roles` list IS the "not an admin"
-//! answer, so the SPA can gate its admin surfaces without probing for a 403.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -47,7 +40,6 @@ pub struct MeResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for MeResponse {}
 
-/// `GET /v1/me` — the caller's identity and active roles (any signed-in user).
 pub async fn get_me(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

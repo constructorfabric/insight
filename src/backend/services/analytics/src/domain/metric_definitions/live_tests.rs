@@ -1,13 +1,3 @@
-//! Live MariaDB integration tests for the metric-definitions listing read
-//! path and the status writer.
-//!
-//! `#[ignore]`d and skip silently when `INTEGRATION_TESTS_MARIADB_URL` is
-//! unset, so `cargo test` stays green on a stock dev machine (same convention
-//! as `domain/catalog/live_tests.rs`). CI runs them with `--include-ignored`
-//! against a migrated MariaDB, which is where the SQL query paths
-//! (`fetch_listing_rows`, `update_definition_status`) earn their coverage —
-//! the pure grouping/mapping/monotonic logic is unit-tested separately.
-
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
 use uuid::Uuid;
 
@@ -38,8 +28,6 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-/// Any seeded product `metric_key` — builtin definitions are converged by the
-/// `migrate` entrypoint, so one is guaranteed to exist.
 async fn a_product_metric_key(db: &DatabaseConnection) -> Result<String, sea_orm::DbErr> {
     let row = db
         .query_one_raw(Statement::from_string(
@@ -51,8 +39,6 @@ async fn a_product_metric_key(db: &DatabaseConnection) -> Result<String, sea_orm
     row.try_get("", "metric_key")
 }
 
-/// Insert a minimal definition row and return its id. `tenant` isolates the
-/// row from seeded data and from sibling tests running in parallel.
 async fn insert_definition(
     db: &DatabaseConnection,
     tenant: Uuid,
@@ -159,12 +145,9 @@ async fn update_definition_status_advances_but_never_regresses_freshness() -> an
     update_definition_status(&db, id, SchemaStatus::Ok, None, seen, Some(newer)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
-    // Older sweep result must not regress the stored date.
     update_definition_status(&db, id, SchemaStatus::Ok, None, seen, Some(older)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
-    // A sweep that read an empty relation preserves the stored date: freshness
-    // records the newest day ever seen, and today's emptiness does not unsay it.
     update_definition_status(
         &db,
         id,
@@ -176,7 +159,6 @@ async fn update_definition_status_advances_but_never_regresses_freshness() -> an
     .await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
-    // A strictly newer date advances it.
     update_definition_status(&db, id, SchemaStatus::Ok, None, seen, Some(newest)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newest));
     Ok(())
@@ -206,8 +188,6 @@ async fn update_definition_status_tracks_the_oldest_date_still_held() -> anyhow:
     .await?;
     assert_eq!(stored_first_observed(&db, id).await?, Some(start));
 
-    // Unlike the newest date, this one follows the relation forward: rows
-    // dropped by retention are days no reading can be shown for any more.
     update_definition_status(
         &db,
         id,
@@ -219,8 +199,6 @@ async fn update_definition_status_tracks_the_oldest_date_still_held() -> anyhow:
     .await?;
     assert_eq!(stored_first_observed(&db, id).await?, Some(later_start));
 
-    // Retention took the last of the rows. The stored bound described those
-    // rows, so it goes with them rather than claiming a day still readable.
     update_definition_status(
         &db,
         id,
@@ -232,8 +210,6 @@ async fn update_definition_status_tracks_the_oldest_date_still_held() -> anyhow:
     .await?;
     assert_eq!(stored_first_observed(&db, id).await?, None);
 
-    // A sweep that established nothing — the definition resolved to no
-    // relation to read — leaves whatever is stored standing.
     update_definition_status(
         &db,
         id,

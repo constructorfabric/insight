@@ -1,6 +1,3 @@
-"""What the umbrella must compose for previews: the gateway-JWT verification
-chain (same wiring as identity-resolution) and the /api/previews edge route."""
-
 from __future__ import annotations
 
 import yaml
@@ -22,8 +19,6 @@ def _previews_host(manifests: str) -> dict:
 
 
 def test_the_gateway_jwt_chain_matches_identity_resolutions(umbrella_deps) -> None:
-    """Issuer resolved off the release's authenticator over https, the fixed
-    audience, and the authn-tls CA mounted for the JWKS fetch."""
     code, out, err = render(umbrella_deps, *UMBRELLA_BASE)
     assert code == 0, err
 

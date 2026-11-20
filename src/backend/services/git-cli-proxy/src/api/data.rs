@@ -202,10 +202,6 @@ pub struct FileChangeRow {
     pub patch_truncated: bool,
 }
 
-/// # Errors
-///
-/// [`ApiError`] on malformed input, origin failures, or a snapshot that moved
-/// out from under a page cursor.
 pub async fn list_commits(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -226,11 +222,6 @@ pub async fn list_commits(
                 page_of_keys(state, &guard, context, paging, since, selected, true).await?;
 
             let shas: Vec<String> = keys.iter().map(|key| key.sha.clone()).collect();
-            // Only the page's own commits are read in full: a header carries
-            // the whole commit message, so reading them for all of history
-            // would dwarf everything else on the request. Independent of the
-            // prefetch — headers touch commit objects only — so the two run
-            // concurrently, as do the diff readers behind them.
             let (window, _fetched) = tokio::try_join!(
                 commits::headers_for(runner, guard.git_dir(), &shas, &context.creds),
                 state
@@ -292,10 +283,6 @@ pub async fn list_commits(
     json_page(CommitsPage::from(page)).await
 }
 
-/// # Errors
-///
-/// [`ApiError`] on malformed input, origin failures, or a snapshot that moved
-/// out from under a page cursor.
 pub async fn list_file_changes(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -314,7 +301,6 @@ pub async fn list_file_changes(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            // Parity with the CDK connectors: merge commits contribute no file rows.
             let (window, cursor, _membership) =
                 page_of_keys(state, &guard, context, paging, since, selected, false).await?;
 
@@ -324,8 +310,6 @@ pub async fn list_file_changes(
                 .prefetch_window(&context.key, guard.git_dir(), &shas, &context.creds)
                 .await?;
 
-            // Independent after the prefetch: numstat and patch text read the
-            // same blobs, neither needs the other.
             let (file_stats, mut texts) = tokio::try_join!(
                 numstat::read(
                     runner,
@@ -370,9 +354,6 @@ pub async fn list_file_changes(
     json_page(FileChangesPage::from(page)).await
 }
 
-/// Response-size bounds for `/v1/file-changes`. The page size bounds commits;
-/// a commit fans out to one row per changed file, each carrying patch text, so
-/// without these a single page can be arbitrarily large.
 #[derive(Debug, Clone, Copy)]
 struct RowCaps {
     max_rows: usize,
@@ -386,13 +367,6 @@ impl RowCaps {
     };
 }
 
-/// Fan commits out into file rows, stopping at a COMMIT boundary once a cap is
-/// reached, and reporting the position of the last fully emitted commit.
-///
-/// INVARIANT: a commit is emitted whole or not at all. A commit that alone
-/// exceeds a cap is emitted over budget rather than refused — otherwise the
-/// caller could never advance past it and the repository would be permanently
-/// unsyncable.
 fn emit_file_changes(
     window: Vec<commits::CommitKey>,
     file_stats: &HashMap<String, Vec<numstat::FileStat>>,
@@ -406,10 +380,6 @@ fn emit_file_changes(
     let mut stopped_early = false;
 
     for header in window {
-        // INVARIANT: numstat and patch retention stop reading once their cap
-        // is reached, so a commit either reader never reached is unstated,
-        // not empty; passing it would advance the cursor over rows nobody
-        // served.
         let unread = !file_stats.contains_key(&header.sha)
             || (include_patch && !texts.contains_key(&header.sha));
         let files = file_stats.get(&header.sha).map_or(&[][..], Vec::as_slice);
@@ -433,9 +403,6 @@ fn emit_file_changes(
             break;
         }
 
-        // Consumed, not borrowed: every `(sha, file)` patch is emitted once,
-        // and a page can hold the whole patch budget — keeping the map alive
-        // alongside the rows doubles peak memory for nothing.
         let mut per_file = texts.remove(&header.sha).unwrap_or_default();
         for file in files {
             let patch = per_file.remove(&file.filename);
@@ -457,20 +424,12 @@ fn emit_file_changes(
         }
 
         patch_bytes += bytes;
-        // INVARIANT: the cursor is minted in the coordinate system the walk is
-        // ORDERED by — the normalised ordinal, never the raw `%cI`. `%cI`
-        // carries the committer's own UTC offset, so a raw cursor compares
-        // against later pages' ordinals as plain text and silently skips every
-        // commit between the two spellings of the same instant.
         last_complete = Some((header.ordinal, header.sha));
     }
 
     (items, stopped_early.then_some(last_complete).flatten())
 }
 
-/// # Errors
-///
-/// [`ApiError`] on malformed input or an origin failure.
 pub async fn list_branches(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -485,9 +444,6 @@ pub async fn list_branches(
         Box::pin(async move {
             let mut all =
                 branches::read(state.store.runner(), guard.git_dir(), &context.creds).await?;
-            // Branches have no date cursor, so the walk orders by name — the same
-            // ascending-key contract the other endpoints use, which is what makes
-            // the page token meaningful here too.
             all.sort_by(|a, b| a.name.cmp(&b.name));
             let (items, cursor) =
                 read::slice_page(all, paging.token.as_ref(), paging.page_size, |row| {
@@ -505,11 +461,6 @@ pub async fn list_branches(
     json_page(BranchesPage::from(page)).await
 }
 
-/// `GET /v1/authors` — one row per distinct commit author.
-///
-/// # Errors
-///
-/// [`ApiError`] on malformed input or an origin failure.
 pub async fn list_authors(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -523,9 +474,6 @@ pub async fn list_authors(
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         Box::pin(async move {
-            // Already sorted by e-mail, which is the ascending key the cursor
-            // pages on — an author has no date to order by, since the walk
-            // collapses every commit they wrote into one row.
             let all =
                 authors::read(state.store.runner(), guard.git_dir(), &context.creds, since).await?;
             let (items, cursor) =
@@ -544,15 +492,6 @@ pub async fn list_authors(
     json_page(AuthorsPage::from(page)).await
 }
 
-/// `GET /v1/authors/changes` — authors changed since a point, across every
-/// repository of the caller's source that its credentials have read.
-///
-/// Served from the author index alone: it never contacts origin, so it has no
-/// snapshot to pin and never answers `409`.
-///
-/// # Errors
-///
-/// [`ApiError`] on malformed input.
 pub async fn list_author_changes(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -609,14 +548,6 @@ pub async fn list_author_changes(
     .await
 }
 
-/// One page of commit keys, its cursor, and — when the index answered — the
-/// page's default-branch membership.
-///
-/// The index is a per-generation cache of the two whole-history walks; the
-/// walks stay as the fallback, so an entry with no index for its generation,
-/// or an unreadable one, still serves correctly. Both paths MUST
-/// apply the same filters in the same order — the parity test in
-/// `engine::read` is what holds them together.
 async fn page_of_keys(
     state: &Arc<AppState>,
     guard: &RepoGuard,
@@ -656,8 +587,6 @@ async fn page_of_keys(
         }
         Ok(None) => {}
         Err(e) => {
-            // A corrupt index must not take the endpoint down with it; the
-            // walk still knows the truth.
             tracing::warn!(error = %e, "page index unreadable; falling back to the live walk");
         }
     }
@@ -676,14 +605,9 @@ async fn page_of_keys(
     Ok((keys, cursor, None))
 }
 
-/// Read one page from a snapshot, healing an entry whose origin refuses to
-/// serve explicitly requested objects.
-///
-/// Such an origin (a GitLab fork-network object pool, for instance) serves the
-/// clone but not the blob prefetch that follows, and it does so on every
-/// retry — so the entry is rebuilt once as a full clone and the read is tried
-/// again. A continuation cannot span that rebuild: the promotion bumps the
-/// generation its cursor is pinned to, which is the documented `409`.
+// An origin that refuses explicitly requested objects (a GitLab fork-network
+// object pool, for instance) serves the clone but not the blob prefetch that
+// follows, and it does so on every retry.
 async fn read_snapshot<'a, T, F>(
     state: &'a Arc<AppState>,
     context: &'a RequestContext,
@@ -691,9 +615,6 @@ async fn read_snapshot<'a, T, F>(
     read: F,
 ) -> Result<(Page<T>, tokio::sync::OwnedSemaphorePermit), ApiError>
 where
-    // INVARIANT: the reader takes the guard BY VALUE, so it is released before
-    // promotion is requested. Promotion takes the entry's write lock, and
-    // awaiting the write side while holding the read side deadlocks.
     F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
 {
     let guard = open(state, context, paging).await?;
@@ -713,12 +634,6 @@ where
         Err(_) => {}
     }
 
-    // SAFETY: the slot is released before promotion and taken again after.
-    // Promotion takes the entry's WRITE lock, and a concurrent request that
-    // already holds that entry's read guard queues here for a slot — keeping
-    // this one would leave the promoter waiting for the reader while the
-    // reader waits for the slot, both stalled until the queue ceiling
-    // expires. No slot holder may await a write lock.
     drop(slot);
 
     let generation = state
@@ -739,11 +654,6 @@ where
     outcome.map(|page| (page, slot))
 }
 
-/// Take a page-serve slot, or answer 429 when none frees up in time.
-///
-/// Serves queue in-connection like every other wait, so a taken slot costs
-/// the caller nothing but time; the bounded wait is the backstop that keeps
-/// a saturated pod answering instead of accumulating held requests forever.
 async fn serve_slot(state: &Arc<AppState>) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
     acquire_within(state.serves.clone(), crate::engine::store::PREPARATION_WAIT).await
 }
@@ -754,7 +664,6 @@ async fn acquire_within(
 ) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
     match tokio::time::timeout(budget, serves.acquire_owned()).await {
         Ok(Ok(permit)) => Ok(permit),
-        // The semaphore is never closed; a closed error is a bug surfacing.
         Ok(Err(e)) => Err(ApiError::Serialization(format!(
             "serve semaphore closed: {e}"
         ))),
@@ -762,11 +671,6 @@ async fn acquire_within(
     }
 }
 
-/// Hand the entry to the store's post-serve purge, detached.
-///
-/// INVARIANT: the reader's guard is already dropped when this is called. The
-/// purge probes the write side and usually gives up when it loses, so an
-/// earlier call would mostly find the entry busy and skip the purge.
 fn check_for_drift(state: &Arc<AppState>, context: &RequestContext) {
     let store = Arc::clone(&state.store);
     let key = context.key.clone();
@@ -780,12 +684,6 @@ fn refuses_promisor_wants(error: &ApiError) -> bool {
     )
 }
 
-/// Resolve the snapshot: a first page honors fetch-if-stale, a continuation is
-/// pinned to the generation its token carries.
-///
-/// INVARIANT: every paginated endpoint resolves its snapshot here, so this is
-/// the one place a continuation token is checked against the repository it was
-/// minted for.
 async fn open(
     state: &Arc<AppState>,
     context: &RequestContext,
@@ -794,10 +692,6 @@ async fn open(
     let freshness = match paging.token.as_ref() {
         Some(token) => {
             if !token.binds_to(&context.key) {
-                // A cursor from another repository is indistinguishable, from
-                // the caller's side, from a corrupted one. Not 409: the
-                // connector answers that by resuming from its stored cursor,
-                // which would loop forever on a permanently foreign token.
                 return Err(BadRequest::MalformedToken.into());
             }
             Freshness::Pinned {
@@ -818,8 +712,6 @@ async fn open(
     Ok(guard)
 }
 
-/// Serialize off the reactor: a page carries up to a thousand commit
-/// messages, or the patch text of every file they touched.
 async fn json_page<T>(page: T) -> Result<Response, ApiError>
 where
     T: Serialize + Send + 'static,
@@ -829,8 +721,6 @@ where
         .map_err(|e| ApiError::Serialization(e.to_string()))?
         .map_err(|e| ApiError::Serialization(e.to_string()))?;
 
-    // Set explicitly, not left to the wire layer: the metrics middleware reads
-    // it off the response, long before hyper would compute one.
     let length = body.len();
     Ok((
         [
@@ -880,9 +770,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_serve_holds_its_slot_until_the_caller_is_done_with_the_page() {
-        // The cap bounds SERVES, not merely the read inside one: a page's rows
-        // and the body it serializes into coexist, so the slot has to outlive
-        // the read and come back only when the caller drops it.
         let fixture = crate::engine::store::tests::fixture("api-serve-slot");
         let state = Arc::new(AppState {
             store: Arc::clone(&fixture.store),
@@ -946,11 +833,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_promoting_serve_does_not_hold_the_slot_its_writer_waits_behind() {
-        // Promotion takes the entry's WRITE lock. A second request already
-        // holding that entry's read guard queues for a slot, so a promoter
-        // that kept its own slot would wait for the reader while the reader
-        // waits for the slot — deadlocked until the queue ceiling expires.
-        // Without the release this test reaches its timeout.
         let fixture = crate::engine::store::tests::fixture("api-promote-slot");
         let state = Arc::new(AppState {
             store: Arc::clone(&fixture.store),
@@ -979,7 +861,6 @@ mod tests {
             panic!("default paging must parse")
         };
 
-        // Warm the entry so neither side waits on a clone.
         match open(&state, &context, &paging).await {
             Ok(guard) => drop(guard),
             Err(e) => panic!("the fixture must open: {e}"),
@@ -998,8 +879,6 @@ mod tests {
                 }),
                 async {
                     let slot = serve_slot(&state).await;
-                    // Release the read guard only once the slot is in hand:
-                    // the promoter must have let go of it on its own.
                     drop(reader);
                     slot.is_ok()
                 }
@@ -1018,8 +897,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_page_declares_its_own_length() {
-        // The response-size histogram reads this header. Left to the wire
-        // layer it is absent here, and every page is recorded as zero bytes.
         let page = BranchesPage {
             items: vec![branches::BranchRow {
                 name: "main".to_owned(),
@@ -1074,8 +951,6 @@ mod tests {
         HashMap<String, patches::CommitPatches>,
     );
 
-    /// `count` commits, each touching `files_each` files whose patch text is
-    /// `patch_bytes` long.
     fn scenario(count: usize, files_each: usize, patch_bytes: usize) -> Scenario {
         let mut window = Vec::new();
         let mut stats = HashMap::new();
@@ -1107,11 +982,6 @@ mod tests {
 
     #[test]
     fn an_early_cursor_does_not_skip_the_commit_that_follows_it() {
-        // The cursor commit is written `10:00+02:00` — 08:00Z — and the next
-        // commit is 09:00Z, so it genuinely comes later. Minting the cursor
-        // from the raw `%cI` makes the next page compare `09:00…Z` against the
-        // text `10:00+02:00`, decide it does not follow, and drop it: silent,
-        // permanent loss for any committer on a positive offset.
         let early = header("sha0000", "2026-08-01T10:00:00+02:00");
         let next = header("sha0001", "2026-08-01T09:00:00+00:00");
         let mut stats = HashMap::new();
@@ -1316,8 +1186,6 @@ mod tests {
         };
 
         let waiter = tokio::spawn(acquire_within(serves, Duration::from_secs(5)));
-        // Let the waiter reach acquire_owned() so the release below is what
-        // serves it — otherwise the test never exercises the wait path.
         tokio::task::yield_now().await;
         drop(held);
         match waiter.await {

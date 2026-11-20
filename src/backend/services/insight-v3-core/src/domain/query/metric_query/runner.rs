@@ -1,5 +1,3 @@
-//! Running a compiled query, and what comes back.
-
 use std::fmt;
 use std::time::Duration;
 
@@ -20,20 +18,13 @@ WHERE database = if(empty(?), currentDatabase(), ?) AND name = ?";
 const FETCH_TIMEOUT_SECS: u64 = 30;
 const MAX_RESULT_BYTES: usize = 5 * 1024 * 1024;
 
-/// The result of running a [`CompiledQuery`] against `ClickHouse`.
 #[derive(Debug, Serialize)]
 pub(crate) struct RunResult {
     pub(crate) columns: Vec<String>,
     pub(crate) rows: Vec<Vec<serde_json::Value>>,
-    /// Which of those columns are percentages. `83.9` and `83.9%` are the
-    /// same number until something says which one it is.
     pub(crate) percents: Vec<String>,
-    /// How many rows the window left out because they carry no clock. Only
-    /// a run that asked for a window leaves any out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) undated: Option<u64>,
-    /// The field this run windowed by, and who decided it. Absent where
-    /// nothing windowed the run at all.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) clock: Option<crate::domain::kinds::metric::answerable::EffectiveClock>,
 }
@@ -74,13 +65,10 @@ impl MetricRunner {
         }
     }
 
-    /// Where the queries this runs resolve a person's name from.
     pub(crate) fn people(&self) -> &People {
         &self.people
     }
 
-    /// The engine holding a table, and `Other` for one the warehouse does not
-    /// list. Without a database, the connection's own is meant.
     pub(crate) async fn engine_of(
         &self,
         database: Option<&str>,
@@ -104,9 +92,6 @@ impl MetricRunner {
             .map_or(TableEngine::Other, |row| TableEngine::parse(&row.engine)))
     }
 
-    /// The identity the warehouse holds a table under now. A rebuild leaves
-    /// a different one under the same name, which is what a reader paging
-    /// through the table needs to notice.
     pub(crate) async fn table_uuid(
         &self,
         database: Option<&str>,
@@ -127,8 +112,6 @@ impl MetricRunner {
         Ok(found.into_iter().next().map(|row| row.uuid))
     }
 
-    /// The rows of a query as the warehouse named them, for a reader that
-    /// shapes them itself.
     pub(crate) async fn page(
         &self,
         sql: &str,

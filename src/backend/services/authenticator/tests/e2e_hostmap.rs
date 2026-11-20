@@ -1,20 +1,3 @@
-//! End-to-end host-keyed issuer selection (ADR-0003) against an authenticator
-//! configured with a two-entry `idp.hosts` map in front of two realms of the
-//! one Keycloak, plus the flat-config instance for the degenerate case.
-//!
-//! `#[ignore]` by default (needs the stack up); run-e2e.sh wires it:
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8087 AUTH_FLAT_BASE=http://localhost:8083 \
-//!   AUTH3_LOG=/tmp/authenticator-e2e-auth3.log \
-//!   E2E_IDP_ISSUER=http://localhost:8084/realms/insight \
-//!   E2E_IDP2_ISSUER=http://localhost:8084/realms/insight-b \
-//!   cargo test -p authenticator --test e2e_hostmap -- --ignored --nocapture
-//! ```
-//!
-//! Covers: Host routing at `/auth/login`, unknown-host 403 + audit line,
-//! callback under a different Host, and the flat-config degenerate case.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -57,7 +40,6 @@ async fn host_selects_the_issuer_and_the_callback_stays_pinned() {
     let test_user = env("E2E_USER", "dev@company.nonpresent");
     let http = common::client();
 
-    // Each configured host is routed to its own issuer's authorize endpoint.
     for (host, idp) in [(HOST_A, &idp_a), (HOST_B, &idp_b)] {
         let login = http
             .get(format!("{auth_base}/auth/login"))
@@ -73,9 +55,6 @@ async fn host_selects_the_issuer_and_the_callback_stays_pinned() {
         );
     }
 
-    // Full loop through tenant-a; the callback is presented with tenant-b's
-    // Host to prove the issuer pinned in the login state wins over any Host
-    // ambiguity after login.
     let login = http
         .get(format!("{auth_base}/auth/login?return_to=/dashboard"))
         .header("Host", HOST_A)
@@ -129,7 +108,6 @@ async fn unknown_host_is_rejected_fail_closed_with_an_audit_event() {
     let body: serde_json::Value = denied.json().await.unwrap();
     assert_eq!(body["status"], 403, "problem+json body expected: {body}");
 
-    // The denial is audited (`event = "login_denied_unknown_host"`).
     let log_path = env("AUTH3_LOG", "/tmp/authenticator-e2e-auth3.log");
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let log = std::fs::read_to_string(&log_path)
@@ -147,7 +125,6 @@ async fn flat_single_issuer_config_matches_every_host() {
     let idp_a = env("E2E_IDP_ISSUER", "http://localhost:8084/realms/insight");
     let http = common::client();
 
-    // The degenerate (map-less) instance serves any Host, exactly as before.
     for host in ["whatever.example", "another.example:8443"] {
         let login = http
             .get(format!("{flat_base}/auth/login"))

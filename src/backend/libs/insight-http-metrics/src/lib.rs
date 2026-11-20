@@ -1,7 +1,3 @@
-//! Axum middleware emitting `http.server.request.duration` (seconds) with
-//! `http.request.method`, `http.response.status_code` and `http.route`, per
-//! `OTel` HTTP server semconv.
-//!
 //! INVARIANT: instruments record into the global meter provider, so this
 //! crate's `opentelemetry` major must match the toolkit's — a different
 //! major is a different global, and recording silently no-ops.
@@ -24,7 +20,6 @@ const DURATION_BOUNDARIES_SECS: &[f64] = &[
     0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 150.0, 300.0, 600.0,
 ];
 
-/// Unknown methods collapse to `_OTHER` to bound attribute cardinality.
 fn normalize_method(method: &axum::http::Method) -> &'static str {
     use axum::http::Method;
     match *method {
@@ -41,8 +36,6 @@ fn normalize_method(method: &axum::http::Method) -> &'static str {
     }
 }
 
-/// Records `http.server.request.duration` for every request on the router
-/// it wraps.
 #[derive(Clone)]
 pub struct ServerMetricsLayer {
     duration: Histogram<f64>,
@@ -102,8 +95,6 @@ where
     }
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        // INVARIANT: the label is the matched route template, never the raw
-        // path — raw paths make the label set unbounded.
         let route = req
             .extensions()
             .get::<MatchedPath>()

@@ -1,6 +1,3 @@
-//! Alert rule endpoints: what an administrator writes, reads and turns on
-//! or off, and the notifications a rule's checks have owed.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,8 +19,6 @@ use crate::domain::alerts::rules::{AlertsError, PreviewDraft};
 use crate::domain::alerts::{Outcome, RuleDraft, RuleError, UnknownReason};
 use crate::domain::definition::{MAX_PAGE_LIMIT, Page};
 
-/// How many previews may run the warehouse at once, and how long one waits
-/// for its turn before it is refused.
 pub(crate) const MAX_CONCURRENT_PREVIEWS: usize = 4;
 const PREVIEW_ACQUIRE_TIMEOUT_SECS: u64 = 2;
 pub(crate) const PREVIEWS_BUSY: &str = "every preview slot is taken; try again shortly";
@@ -59,8 +54,6 @@ impl ApiErrors for AlertApiError {
     }
 }
 
-/// The query string on a list: what to look for, in a name or a metric, and
-/// which page to answer with.
 #[derive(Debug, Default, Deserialize)]
 struct Search {
     #[serde(default)]
@@ -280,7 +273,6 @@ pub(crate) fn summary_response(summary: &AlertSummary) -> SummaryResponse {
     }
 }
 
-/// An id as every surface shows it and every path takes it.
 pub(crate) fn shown(id: uuid::Uuid) -> String {
     id.simple().to_string()
 }
@@ -561,7 +553,6 @@ fn denied() -> CanonicalError {
         .create()
 }
 
-/// The alerts of this installation, or the refusal that it has none.
 fn alerts(
     state: &AppState,
 ) -> Result<crate::domain::alerts::rules::AlertRules<'_>, CanonicalError> {
@@ -643,8 +634,6 @@ fn page_error(error: crate::domain::definition::PageError) -> CanonicalError {
     AlertApiError::invalid_field("limit", error.to_string())
 }
 
-/// An id as a path carries it. Anything else is a missing alert, not a
-/// malformed request: the caller named something that does not exist.
 fn parse_id(raw: &str) -> Result<uuid::Uuid, CanonicalError> {
     uuid::Uuid::parse_str(raw)
         .map_err(|_| AlertApiError::missing(raw, format!("alert {raw} was not found")))
@@ -736,8 +725,6 @@ async fn preview_alert(
     Ok(Json(preview_response(&outcome)).into_response())
 }
 
-/// A turn to run a preview, waiting a bounded time for one; none when
-/// every slot stayed taken. API and MCP previews share the slots.
 pub(crate) async fn preview_turn(state: &AppState) -> Option<tokio::sync::OwnedSemaphorePermit> {
     let slots = state.preview_slots();
     let waited = tokio::time::timeout(

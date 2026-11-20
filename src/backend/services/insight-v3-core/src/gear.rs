@@ -32,7 +32,6 @@ struct RuntimeState {
     admission: crate::api::admission::IngestAdmission,
 }
 
-/// The state the alert worker checks against.
 struct AlertChecks(Arc<crate::api::AppState>);
 
 impl crate::store::alert_schedule::Checks for AlertChecks {
@@ -57,12 +56,8 @@ impl crate::store::alert_schedule::Sends for AlertChecks {
     }
 }
 
-/// How often the schedule is made to say what the store says again. A rule
-/// write that reached the store but not the schedule is put right here.
 const RECONCILE_EVERY: std::time::Duration = std::time::Duration::from_mins(5);
 
-/// The schedule and the delivery queue as the store says they should be,
-/// logged when they were not.
 async fn repair(app: &crate::api::AppState) {
     let (Some(store), Some(schedule), Some(deliveries)) = (
         app.alert_store(),
@@ -102,10 +97,6 @@ async fn repair(app: &crate::api::AppState) {
     }
 }
 
-/// Brings the alert schedule and workers up, after the rest of the state:
-/// the schedule and the delivery queue are made to say what the store says,
-/// then checks and sends start. What cannot be put right yet is left to the
-/// periodic repair.
 async fn start_alerts(
     config: &crate::config::AlertsConfig,
     app: &Arc<crate::api::AppState>,
@@ -173,8 +164,6 @@ impl Gear for InsightV3CoreGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let config: crate::config::GearConfig = ctx.config()?;
         let config = config.validate()?;
-        // The definitions are rows read by name and edited in place, so they
-        // live in MariaDB rather than beside the data they describe.
         let db = sea_orm::Database::connect(config.database_url()).await?;
         let db_for_alerts = db.clone();
         let definitions = Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));

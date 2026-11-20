@@ -20,7 +20,6 @@ fn metric(value: serde_json::Value) -> MetricQuery {
         .unwrap_or_else(|error| panic!("the fixture metric parses: {error}"))
 }
 
-/// A metric the fixture dataset answers, as a base for the cases below.
 fn sound() -> serde_json::Value {
     json!({
         "dataset": "commits",

@@ -6,23 +6,12 @@ use serde::{Deserialize, Serialize};
 use crate::engine::read::authors::AuthorRow;
 use crate::engine::read::commits::ordinal_of;
 
-/// Every author one tenant and source has been seen with, across the mirrors
-/// the proxy fetched for them, indexed for the change feed.
-///
-/// INVARIANT: `last_stamp_us` only grows, also across restarts — it is the
-/// change cursor a connector resumes from, so a stamp issued after a reader's
-/// high-water mark must sort after it.
 #[derive(Debug, Default)]
 pub(crate) struct Book {
     last_stamp_us: i64,
     stamps: HashMap<String, AuthorStamps>,
-    /// `(changed_us, email)` — the feed's order, so a page reads a range
-    /// instead of sorting the whole book.
     order: BTreeSet<(i64, String)>,
-    /// Keyed by the mirror's cache directory name.
     entries: HashMap<String, EntryRecord>,
-    /// Which entries hold each e-mail, so a page resolves a sample from the
-    /// author's own entries instead of scanning every entry.
     holders: HashMap<String, BTreeSet<String>>,
 }
 
@@ -32,12 +21,9 @@ pub(crate) struct AuthorStamps {
     pub(crate) changed_us: i64,
 }
 
-/// What one mirror held the last time its authors were folded.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct EntryRecord {
     pub(crate) clone_url: String,
-    /// The snapshot the authors were folded from; another one means the
-    /// record is stale and the next refresh folds again.
     pub(crate) incarnation: String,
     pub(crate) generation: u64,
     pub(crate) fingerprints: Vec<String>,
@@ -49,13 +35,10 @@ pub(crate) struct EntryAuthor {
     pub(crate) name: String,
     pub(crate) sha: String,
     pub(crate) committed: String,
-    /// `committed` as a fixed-width UTC instant, so picking the newest sample
-    /// compares strings instead of parsing dates on every page.
     pub(crate) ordinal: String,
     pub(crate) count: u64,
 }
 
-/// One refresh of one mirror, as the index learns of it.
 #[derive(Debug)]
 pub(crate) struct Observation {
     pub(crate) dir_name: String,
@@ -63,21 +46,15 @@ pub(crate) struct Observation {
     pub(crate) incarnation: String,
     pub(crate) generation: u64,
     pub(crate) fingerprints: Vec<String>,
-    /// `None` when the snapshot was already folded and only the credentials
-    /// that proved access may have changed.
     pub(crate) authors: Option<Vec<AuthorRow>>,
 }
 
-/// What an [`Observation`] changed, in the order it must be made durable:
-/// the stamps first, so a crash before the entry record lands re-folds the
-/// entry and stamps again rather than recording a fold nobody was told of.
 #[derive(Debug, Default)]
 pub(crate) struct Applied {
     pub(crate) stamped: Vec<(String, AuthorStamps)>,
     pub(crate) entry: Option<(String, EntryRecord)>,
 }
 
-/// An author as the change feed reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorChange {
     pub email: String,
@@ -89,24 +66,16 @@ pub struct AuthorChange {
     pub sample_sha: String,
 }
 
-/// Which slice of the feed one page reads.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Window<'a> {
-    /// Exclusive lower bound on `changed_us`.
     pub(crate) since_us: Option<i64>,
-    /// Exclusive keyset position of the previous page's last item.
     pub(crate) after: Option<(i64, &'a str)>,
-    /// Inclusive upper bound fixed by the walk's first page.
     pub(crate) high_water_us: i64,
-    /// An author whose newest readable commit predates this instant is not
-    /// reported — as an ordinal (see [`ordinal_of`]), so the comparison is a
-    /// string compare like the sample choice itself.
     pub(crate) committed_since: Option<&'a str>,
     pub(crate) limit: usize,
 }
 
 impl Book {
-    /// Rebuild a book from what was persisted.
     pub(crate) fn restore(
         stamps: HashMap<String, AuthorStamps>,
         entries: HashMap<String, EntryRecord>,
@@ -131,8 +100,6 @@ impl Book {
         &self.stamps
     }
 
-    /// Whether a refresh must fold the mirror's authors: the index has no
-    /// record of this entry, or the record describes another snapshot.
     #[must_use]
     pub(crate) fn needs_fold(&self, dir_name: &str, incarnation: &str, generation: u64) -> bool {
         self.entries.get(dir_name).is_none_or(|record| {
@@ -140,12 +107,9 @@ impl Book {
         })
     }
 
-    /// Fold one refresh into the book and stamp every author it changed.
     pub(crate) fn apply(&mut self, observation: Observation, now_us: i64) -> Applied {
         let previous = self.entries.get(&observation.dir_name);
 
-        // A credential this entry never recorded may be one no caller has read
-        // its authors through yet; its cursor may already sit past them.
         let new_proof = observation.fingerprints.iter().any(|fingerprint| {
             previous.is_none_or(|record| !record.fingerprints.contains(fingerprint))
         });
@@ -162,7 +126,6 @@ impl Book {
                     record.incarnation.clone(),
                     record.generation,
                 ),
-                // Nothing folded and nothing to fold against: no record yet.
                 None => return Applied::default(),
             },
         };
@@ -173,9 +136,6 @@ impl Book {
                 new_proof
                     || previous
                         .and_then(|record| record.authors.get(*email))
-                        // The count, not the date: a commit pushed with an old
-                        // committer date grows the count without moving the
-                        // newest one.
                         .is_none_or(|before| author.count > before.count)
             })
             .map(|(email, _)| email.clone())
@@ -211,11 +171,6 @@ impl Book {
         applied
     }
 
-    /// One page of the feed for a caller holding `fingerprint`, ascending by
-    /// `(changed_us, email)`, and whether more pages follow.
-    ///
-    /// An author is reported only through entries that recorded the caller's
-    /// fingerprint; an author with no such entry is not reported at all.
     #[must_use]
     pub(crate) fn changes(
         &self,
@@ -229,9 +184,7 @@ impl Book {
         };
         let upper_key = (window.high_water_us.saturating_add(1), String::new());
 
-        // SAFETY: `BTreeSet::range` panics when its start exceeds its end. A
-        // caller's `since` may sit past the newest stamp — a lost index, or a
-        // cursor the caller moved by hand — and such a window is empty.
+        // SAFETY: `BTreeSet::range` panics when its start exceeds its end.
         let lower_key = match &lower {
             Bound::Included(key) | Bound::Excluded(key) => Some(key),
             Bound::Unbounded => None,
@@ -255,9 +208,6 @@ impl Book {
         (page, false)
     }
 
-    /// The author as `fingerprint` may see them: the newest commit among the
-    /// entries that recorded that credential, or nothing when none did or
-    /// when that commit predates `committed_since`.
     fn visible_change(
         &self,
         email: &str,
@@ -287,8 +237,6 @@ impl Book {
         })
     }
 
-    /// The next change stamp: the wall clock, or one microsecond past the
-    /// last stamp when the clock has not moved past it.
     fn tick(&mut self, now_us: i64) -> i64 {
         self.last_stamp_us = now_us.max(self.last_stamp_us.saturating_add(1));
         self.last_stamp_us
@@ -303,13 +251,9 @@ impl Book {
         self.stamps.insert(email, stamps);
     }
 
-    /// Drop a mirror whose repository origin no longer has, so none of its
-    /// commits is offered as a sample the vendor would answer 404 for.
-    /// Returns whether the book dropped it.
-    ///
-    /// SAFETY: only on the word of a credential the entry recorded. Origin
-    /// answers 404 to a credential that cannot see a private repository, and
-    /// such a caller must not erase what others proved access to.
+    // SAFETY: only on the word of a credential the entry recorded. Origin
+    // answers 404 to a credential that cannot see a private repository, and
+    // such a caller must not erase what others proved access to.
     pub(crate) fn forget(&mut self, dir_name: &str, fingerprint: &str) -> bool {
         let proven = self
             .entries
@@ -433,7 +377,6 @@ mod tests {
 
     #[test]
     fn every_rule_that_makes_an_author_change() {
-        // (case, second observation of entry `app`, authors expected to change)
         let cases: Vec<(&str, Observation, Vec<&str>)> = vec![
             (
                 "a new e-mail",
@@ -578,7 +521,6 @@ mod tests {
     #[test]
     fn committed_since_judges_the_newest_commit_the_caller_may_read() {
         let mut book = Book::default();
-        // ALICE: an old commit the caller can read, a new one it cannot.
         book.apply(
             folded(
                 "app",
@@ -597,7 +539,6 @@ mod tests {
             ),
             2_000,
         );
-        // BOB: recent and readable.
         book.apply(
             folded(
                 "lib",

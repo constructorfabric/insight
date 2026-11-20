@@ -39,7 +39,6 @@ fn detail_column(key: &str, label: &str, r#type: EvidenceColumnType) -> Evidence
     }
 }
 
-/// The declaration a commit measure carries in the registry.
 pub(crate) fn commit_presentation() -> EvidencePresentation {
     EvidencePresentation {
         detail_columns: vec![

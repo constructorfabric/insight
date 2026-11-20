@@ -1,6 +1,3 @@
-//! Sending an owed notification: what the message says, what a provider
-//! answers, and what that answer means for the row.
-
 use std::fmt;
 
 use async_trait::async_trait;
@@ -11,17 +8,10 @@ use super::Number;
 use super::condition::{Quantifier, Witness};
 use super::rule::Notification;
 
-/// The most a provider is asked to carry. Every provider here allows more;
-/// the bound is on what an alert has any business saying.
 const MAX_MESSAGE_CHARS: usize = 1500;
-/// The most one line of a message carries, so a long condition or wide rows
-/// never push the check time out.
 const MAX_LINE_CHARS: usize = 280;
-/// The most of one cell a message shows.
 const MAX_CELL_CHARS: usize = 40;
 
-/// What a notification says, the same for every provider: as markdown for
-/// Discord and Zulip, and as HTML for Telegram.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Message {
     pub(crate) markdown: String,
@@ -29,15 +19,6 @@ pub(crate) struct Message {
 }
 
 impl Message {
-    /// The approved summary: the rule, the condition on which metric, how
-    /// many rows met it, the rows that did with the columns the condition
-    /// reads and the rule asks to carry, and when. Nothing else the metric
-    /// produced.
-    ///
-    /// INVARIANT: every part stays on its own line, because control
-    /// characters in what the warehouse answered become spaces. The rows
-    /// line is the only text the warehouse writes, and both rich forms carry
-    /// it as code, where no provider reads a mention or a link.
     pub(crate) fn of(notification: &Notification) -> Self {
         let condition = &notification.condition;
         let witness = &notification.witness;
@@ -84,7 +65,6 @@ impl Message {
     }
 }
 
-/// The lines of one message, before any provider's form is applied.
 struct Parts<'a> {
     heading: &'a str,
     met: &'a str,
@@ -94,8 +74,6 @@ struct Parts<'a> {
 }
 
 impl Parts<'_> {
-    /// The lines joined, each written by `plain` except the warehouse's rows
-    /// line, written by `rows`.
     fn joined(&self, plain: impl Fn(&str) -> String, rows: impl Fn(&str) -> String) -> String {
         [
             Some(plain(self.heading)),
@@ -122,7 +100,6 @@ fn escaped(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// `3 of 12 rows match`, or `1 of 1 row matches`.
 fn matched(witness: &Witness) -> String {
     let rows = if witness.answered == 1 {
         "row matches"
@@ -133,8 +110,6 @@ fn matched(witness: &Witness) -> String {
     format!("{} of {} {rows}", witness.matched, witness.answered)
 }
 
-/// One line of a message: control characters as spaces, cut to the line
-/// bound.
 fn line(text: &str) -> String {
     cut(&single_line(text), MAX_LINE_CHARS)
 }
@@ -161,9 +136,6 @@ fn cut(text: &str, chars: usize) -> String {
     kept
 }
 
-/// The witness rows on one line: a row's group values, then each column
-/// read - the condition's, then the rule's context columns - with its
-/// value, as `core: open 12 · infra: open 15`.
 fn rows_seen(witness: &Witness, read: &[&str]) -> String {
     let rows: Vec<String> = witness
         .rows
@@ -209,20 +181,13 @@ fn stamp(at: DateTime<Utc>) -> String {
     at.format("%Y-%m-%d %H:%M UTC").to_string()
 }
 
-/// What a provider said when it accepted the message: the identity it
-/// gave it, kept so an operator can find the message where it landed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Receipt(pub(crate) String);
 
-/// Why a send did not confirm, and whether trying again can help.
 #[derive(Debug, Error)]
 pub(crate) enum SendError {
-    /// The provider said no and will keep saying no: a bad token, a
-    /// missing channel, a malformed request.
     #[error("the provider rejected the message: {0}")]
     Rejected(String),
-    /// The provider asked for a pause, or did not answer, or answered in a
-    /// way that leaves the outcome unknown. The message may have landed.
     #[error("the provider did not confirm the message: {0}")]
     Unconfirmed(String),
 }
@@ -235,8 +200,6 @@ impl SendError {
         }
     }
 
-    /// What a row and a reader see: the class of failure and the provider's
-    /// own words, never a credential.
     pub(crate) fn summary(&self) -> String {
         self.to_string()
     }
@@ -247,18 +210,13 @@ pub(crate) trait Provider: Send + Sync + fmt::Debug {
     async fn send(&self, message: &Message) -> Result<Receipt, SendError>;
 }
 
-/// What one delivery attempt left on the notification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Attempted {
-    /// Accepted, with the provider's receipt.
     Sent(Receipt),
-    /// Not confirmed; another attempt follows.
     Retry(String),
-    /// Rejected, or the last attempt failed: no more attempts.
     Failed(String),
 }
 
-/// What a send outcome means on the attempt it happened on.
 pub(crate) fn attempted(
     result: Result<Receipt, SendError>,
     attempt: u32,
@@ -564,31 +522,22 @@ mod tests {
     }
 }
 
-/// Where owed notifications are queued to be sent, and how the queue is
-/// told about one.
 #[async_trait]
 pub(crate) trait Deliveries: Send + Sync + fmt::Debug {
-    /// Queues a send for this notification. Queuing the same one twice is
-    /// one send.
     async fn enqueue(
         &self,
         notification_id: uuid::Uuid,
     ) -> Result<(), super::schedule::ScheduleError>;
 }
 
-/// The send a queue hands a worker: which notification, on which attempt
-/// of how many.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DeliveryJob {
     pub(crate) notification_id: uuid::Uuid,
 }
 
-/// How one send ended.
 #[derive(Debug)]
 pub(crate) enum Delivered {
-    /// Nothing to send: the notification is gone or no longer pending.
     Skipped,
-    /// Recorded on the notification.
     Attempted(Attempted),
 }
 
@@ -606,13 +555,6 @@ impl<'a> Deliverer<'a> {
         Self { store, providers }
     }
 
-    /// Sends the notification once and records what happened.
-    ///
-    /// The attempt counted is the row's own, never below the job's: a job
-    /// that repair created anew starts counting again, the notification does
-    /// not, so the cap holds per notification. A destination that is no
-    /// longer configured is a rejection: the operator removed it, and no
-    /// attempt can change that.
     pub(crate) async fn deliver(
         &self,
         job: DeliveryJob,
@@ -646,10 +588,6 @@ impl<'a> Deliverer<'a> {
     }
 }
 
-/// The one outcome a row no longer pending cannot show: the message was
-/// confirmed while the notification was being withdrawn, so it exists at the
-/// destination and the row says cancelled. The receipt goes to the log, the
-/// only place left for it.
 fn landed_after_withdrawal(notification: &Notification, outcome: &Attempted) {
     let Attempted::Sent(receipt) = outcome else {
         return;

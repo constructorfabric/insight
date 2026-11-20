@@ -96,8 +96,6 @@ fn present(
     Ok((columns, projected_rows))
 }
 
-/// Whether this selection presents the `person` column — the one read that has
-/// to resolve names, and so the only one that should pay for it.
 pub(crate) fn presents_person(req: &ValidatedMetricDrilldown) -> bool {
     presentation_columns(
         &req.plan,
@@ -109,8 +107,6 @@ pub(crate) fn presents_person(req: &ValidatedMetricDrilldown) -> bool {
     .any(|column| column.key == PERSON_KEY)
 }
 
-/// INVARIANT: the query compiler builds its ORDER BY and its search from this
-/// same list, so a column the reader sees is a column the query can name.
 pub(super) fn presentation_columns(
     plan: &EvidencePlan,
     filters: &[MetricDrilldownFilter],
@@ -123,9 +119,6 @@ pub(super) fn presentation_columns(
         RowShape::RecordRatio | RowShape::RecordsPerSubject => (declared_columns(plan), true),
         RowShape::DailyRatio => (Vec::new(), true),
     };
-    // Both sources of dimension columns drop together for a ratio: the outer
-    // aggregate carries no cell the query can order or search, so a column
-    // rendered from it would answer neither.
     let display_dimensions: &[String] = if ratio || shape == RowShape::FoldedRecord {
         &[]
     } else {
@@ -134,8 +127,6 @@ pub(super) fn presentation_columns(
     let filters: &[MetricDrilldownFilter] = if ratio { &[] } else { filters };
 
     let mut columns = Vec::new();
-    // A roster's records come from many people, and which one is the first
-    // thing the reader needs. One person's own drilldown already knows.
     if !ratio && matches!(entity, MetricDrilldownEntity::Persons { .. }) {
         columns.push(MetricDrilldownColumn {
             key: PERSON_KEY.to_owned(),
@@ -201,9 +192,6 @@ pub(super) fn presentation_columns(
     columns
 }
 
-/// The detail columns the plan's measures declare, in declaration order, each
-/// key kept once — a metric reading two measures of the same shape shows that
-/// shape once.
 fn declared_columns(plan: &EvidencePlan) -> Vec<EvidenceDetailColumn> {
     let mut seen = BTreeSet::new();
     plan.inputs
@@ -214,10 +202,6 @@ fn declared_columns(plan: &EvidencePlan) -> Vec<EvidenceDetailColumn> {
         .collect()
 }
 
-/// The dimensions the selection pinned to one value, plus the ones it asked to
-/// display. A dimension a measure already declares as a detail is dropped here:
-/// the declared column carries it, and the row projection falls back to the
-/// dimension when the details map has nothing under that key.
 fn dimension_keys(
     filters: &[MetricDrilldownFilter],
     display_dimensions: &[String],
@@ -394,11 +378,6 @@ fn input_label(plan: &EvidencePlan, role: MetricInputRole) -> String {
         )
 }
 
-/// Who a row belongs to, in the words the reader knows them by.
-///
-/// A person the identity map could not resolve, or could not name, leaves the
-/// cell empty: an id is not an answer to "who", and it would be exported as
-/// one.
 fn person_value(person_id: &str, names: &PersonNames) -> serde_json::Value {
     names
         .get(person_id.trim())
@@ -522,9 +501,6 @@ mod tests {
         );
     }
 
-    // The ordering key's SQL is decided by a column's declared TYPE, and no
-    // snapshot pins the catalog that declares it. A cursor that survived such
-    // a change would compare against a differently-shaped key.
     #[test]
     fn the_cursor_is_bound_to_the_shape_of_the_columns_it_was_issued_over() {
         let request = validated(commit_plan());
@@ -549,7 +525,6 @@ mod tests {
         assert_ne!(before, after);
     }
 
-    // Only the read that shows the column pays for resolving names.
     #[test]
     fn a_ratio_roster_presents_no_one_and_so_names_no_one() {
         let mut roster = validated(commit_plan());
@@ -563,8 +538,6 @@ mod tests {
         assert!(!presents_person(&validated(commit_plan())));
     }
 
-    // A ratio row is two aggregates over a day; the outer query carries no cell
-    // a dimension column could be ordered or searched by, from either source.
     #[test]
     fn a_ratio_presents_no_dimension_column_from_either_source() {
         let filters = vec![MetricDrilldownFilter {
@@ -619,7 +592,6 @@ mod tests {
         );
     }
 
-    // An id is not an answer to "who", least of all in an exported file.
     #[test]
     fn who_reads_as_a_name_or_as_nothing_at_all() {
         let mut evidence = row();

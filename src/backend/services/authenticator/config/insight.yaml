@@ -1,32 +1,3 @@
-# Insight Authenticator — gears-rust host config.
-#
-# Usage: authenticator -c config/insight.yaml run
-#
-# NOTE on the `api-gateway` gear below: this is the gears-rust toolkit REST-host
-# system gear (`cf-gears-api-gateway`) — the HTTP server + OpenAPI + auth
-# pipeline that every gear-based service runs on (analytics uses it too). It is
-# NOT the Insight platform api-gateway *service* that the nginx gateway replaces
-# in this EPIC. The authenticator hosts its endpoints on this REST-host gear and
-# runs behind the nginx edge.
-#
-# Auth is ENABLED on the host for the `.authenticated()` admin surface
-# (session revoke-by-user): the oidc-authn-plugin verifies the ES256 gateway
-# JWT — the authenticator trusts its own tokens exactly like any downstream
-# service. Every browser endpoint stays `.public()` (the credential is the
-# session cookie, checked in the handler) and bypasses the plugin.
-#
-# Deployment-specific leaf values are injected via env overrides
-# (APP__gears__authenticator__config__*) from the umbrella Secret / compose;
-# they are left empty here so no credential is committed:
-#   APP__gears__authenticator__config__redis_url
-#   APP__gears__authenticator__config__signing_keys_path
-#   APP__gears__authenticator__config__identity_url
-#   APP__gears__authenticator__config__gateway_issuer
-#   APP__gears__authenticator__config__redirect_uri
-#   APP__gears__authenticator__config__idp__issuer_url
-#   APP__gears__authenticator__config__idp__client_id
-#   APP__gears__authenticator__config__idp__client_secret
-
 server:
   home_dir: "~/.insight"
 
@@ -37,9 +8,6 @@ logging:
 gears:
   api-gateway:
     config:
-      # INVARIANT: the service router's insight-http-metrics is the single
-      # writer of http.server.request.duration — the host's copy stays renamed
-      # or two bucket layouts collide in one series.
       metrics:
         prefix: "host"
       bind_addr: "0.0.0.0:8083"
@@ -62,11 +30,6 @@ gears:
     config:
       vendor: "hyperspot"
 
-  # Gateway-JWT verification for the `.authenticated()` admin surface. Verifies
-  # the ES256 gateway JWT against our own JWKS (resolved via OIDC discovery on
-  # the issuer) and maps claims into the SecurityContext. The deployment
-  # supplies the real issuer + self-signed CA (dev/e2e) via the config layer;
-  # the placeholders below (`.invalid`, never resolvable) fail closed.
   oidc-authn-plugin:
     config:
       vendor: "hyperspot"
@@ -116,11 +79,7 @@ gears:
 
   authenticator:
     config:
-      # HTTP bind is owned by api-gateway above; retained for diagnostics only.
       bind_addr: "0.0.0.0:8083"
-      # Session + JWT lifecycle defaults are the §4.1 table (baked into the
-      # config struct); overridden here only when a deployment needs to.
-      # Connection strings + OIDC client secret are injected via env.
       redis_url: ""
       signing_keys_path: ""
       identity_url: ""
@@ -128,48 +87,23 @@ gears:
       jwt_audience: "internal-services"
       redirect_uri: ""
       default_return_to: "/"
-      # CSRF Origin-allowlist fallback for state-changing /auth/* (10.5).
-      # Empty = fail closed: the X-CSRF-Token header is required.
       csrf_origins: []
-      # Login scopes. offline_access is omitted (survives-logout token, wrong for a
-      # BFF); add it only for an IdP that needs it for a refresh token, e.g. Entra.
       oidc_scopes: ["openid", "email", "profile"]
       idp:
         issuer_url: ""
         client_id: ""
         client_secret: ""
-        # id_token claim naming the user's single tenant (string; an array is
-        # tolerated — first entry wins). Keycloak emits `tenant_id`; Entra
-        # emits `tid`.
         tenant_claim: "tenant_id"
-        # The identity-resolution source_type this IdP is seeded under (e.g.
-        # "ms-entra") — required, drives the login-bootstrap person lookup.
         source_type: ""
-        # id_token claim carrying the IdP's stable external user id for
-        # source_type (e.g. Entra's "oid"). Defaults to "sub".
         external_id_claim: "sub"
-        # Fallback tenant for a claim-less IdP (e.g. Okta); empty = fail closed.
         default_tenant_id: ""
-      # Service tokens (§10 G1 / DD-AUTH-05). The token endpoint runs on its own
-      # listener (token_bind_addr) so it never shares the main port. Service
-      # tokens are always tenant-scoped; the caller names the tenant.
-      #
-      # `testclient` is DEV/TEST ONLY. No key material is committed: dev-compose
-      # and run-e2e generate a throwaway keypair (like the gateway signing key)
-      # and drop its public half in public_key_dir; the private half is handed
-      # to the calling client. Real services land their public key via a gitops
-      # PR (chart ConfigMap uses inline public_keys), never this test entry.
       service_tokens:
         token_bind_addr: "0.0.0.0:8093"
         audience: "http://localhost:8093/internal/token"
         assertion_max_lifetime_seconds: 60
         token_ttl_seconds: 300
-        # Set via env in dev/e2e to the generated-key dir (see run-e2e.sh /
-        # dev-compose.sh): APP__gears__authenticator__config__service_tokens__public_key_dir
         public_key_dir: ""
         services:
           testclient:
             public_key_paths: ["testclient.pub.pem"]
-            # session_admin authorizes the admin revoke-by-user operation —
-            # dev/e2e only; real registry entries earn it via a gitops PR.
             roles: ["service", "session_admin"]

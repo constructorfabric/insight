@@ -13,21 +13,10 @@ use crate::infra::not_ready;
 use super::dto::{EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownSelection};
 use super::error::{config_error, evidence_unavailable, invalid, invalid_error};
 
-/// Bumped when the ordering key changes: an older cursor addresses a page this
-/// shape would not produce, so it is refused.
 const CURSOR_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CursorKey {
-    /// Leads the key because it leads the ORDER BY: blank cells sit past every
-    /// filled one, whichever way the sorted column runs.
-    ///
-    /// INVARIANT: a bool, not the `UInt8` the query projects. A cursor is
-    /// caller-held bytes, and any other number would compare against the
-    /// query's own 0-or-1 as if it outranked both — serving a page twice or
-    /// dropping the rest of the result set. As a bool there is no such value
-    /// to send: anything else fails to decode, and a cursor that does not
-    /// decode is already refused.
     pub(super) sort_flag: bool,
     pub(super) sort_value: String,
     pub(super) role: String,
@@ -54,15 +43,6 @@ struct EvidenceSnapshotRow {
     snapshot_id: String,
 }
 
-/// What a cursor is bound to.
-///
-/// INVARIANT: the presented columns are in here, not just the selection the
-/// caller sent. The ordering key's SQL is decided by a column's declared TYPE —
-/// a number sorts numerically and replays through a cast, a string sorts
-/// zero-padded and replays as text. That declaration lives in the metric
-/// catalog, which no snapshot pins, so a change to it while a walk is in
-/// flight would otherwise leave the cursor looking valid and comparing against
-/// a differently-shaped key.
 pub(super) fn selection_fingerprint(
     tenant_id: Uuid,
     selection: &MetricDrilldownSelection,
@@ -77,9 +57,6 @@ pub async fn verify_evidence_snapshot(
     relation: &EvidenceRelation,
     expected: &str,
 ) -> Result<(), CanonicalError> {
-    // A relation that went absent mid-walk expires the cursor like any other
-    // rebuild. A fresh install never reaches here: validation reads the
-    // snapshot first and answers not-ready from there.
     let EvidenceSnapshot::Pinned(current) = evidence_snapshot_id(ch, relation).await? else {
         return Err(snapshot_expired());
     };
@@ -99,18 +76,12 @@ fn snapshot_expired() -> CanonicalError {
         .create()
 }
 
-/// The marks a cursor is pinned to, or the reason there is nothing to pin.
 #[derive(Debug)]
 pub(super) enum EvidenceSnapshot {
     Pinned(String),
-    /// A relation the pin reads has not been built yet — the evidence table
-    /// itself, or the identity relations the watermark comes from.
     NotReady(NotReadyReason),
 }
 
-/// What answers a drilldown: the evidence relation AND the identity map, since
-/// the rows a person owns are decided while the query runs. Both are pinned, so
-/// a rebuild or correction mid-pagination expires the cursor.
 pub(super) async fn evidence_snapshot_id(
     ch: &insight_clickhouse::Client,
     relation: &EvidenceRelation,
@@ -135,8 +106,6 @@ pub(super) async fn evidence_snapshot_id(
             evidence_unavailable()
         })?;
 
-    // No row means the relation itself is absent — the fresh-install reading,
-    // and the one `system.tables` reports instead of an exception.
     let Some(evidence) = found.map(|row| row.snapshot_id) else {
         not_ready::warn_relation(&format!("{database}.{table}"), "metric-drilldown:snapshot");
         return Ok(EvidenceSnapshot::NotReady(
@@ -144,14 +113,6 @@ pub(super) async fn evidence_snapshot_id(
         ));
     };
 
-    // SAFETY: content-derived marks, not the sync stamp — the sync stamp moves on
-    // every republish and would expire every cursor on a clock. Both map inputs
-    // are pinned: the persons journal is append-only, so (count, max id) moves
-    // when a decision is recorded; a claim insert always carries a new high
-    // `_version`, so `max(_version)` moves when a connector teaches identity a
-    // new alias (which shifts pages without any gold rebuild). No count() on the
-    // claims side — merges collapse replaced row versions, and a shrinking count
-    // would expire live cursors for nothing.
     let identity = ch
         .query(
             // SAFETY: CAST to String, and coalesce every scalar subquery. A scalar
@@ -227,8 +188,6 @@ pub(super) fn decode_cursor(value: &str) -> Result<CursorEnvelope, CanonicalErro
 mod tests {
     use super::*;
 
-    /// A warehouse that cannot be reached is not an absent relation: the pin
-    /// fails rather than reporting the evidence as not built yet.
     #[tokio::test]
     async fn an_unreachable_warehouse_fails_the_pin_instead_of_answering_not_ready() {
         let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(

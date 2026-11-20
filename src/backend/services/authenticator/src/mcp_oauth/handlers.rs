@@ -32,8 +32,6 @@ use super::types::{
 };
 
 const ADMIN_ROLE: &str = "admin";
-// INVARIANT: pending clients are uncapped; REGISTRATION_RATE_LIMIT x TTL bounds them to 28,820,
-// and validated_registration's field limits keep each record under 100 KiB of JSON.
 const PENDING_CLIENT_TTL_SECONDS: u64 = 24 * 60 * 60;
 const ACTIVE_CLIENT_TTL_SECONDS: u64 = 365 * 24 * 60 * 60;
 const MAX_REGISTERED_CLIENTS: u64 = 1_000;
@@ -137,8 +135,6 @@ pub async fn protected_resource_metadata(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // The unsuffixed path is the read-only server's document, as it was before
-    // a second server existed.
     let suffix = uri
         .path()
         .strip_prefix("/.well-known/oauth-protected-resource")
@@ -1057,15 +1053,12 @@ fn endpoint(origin: &str, path: &str) -> String {
     format!("{}{path}", origin.trim_end_matches('/'))
 }
 
-/// 256 bits from the platform crypto facade, base64url. An unavailable
-/// backend is an error, never an empty or zeroed token.
 fn random_token() -> Result<String, CryptoError> {
     let mut bytes = [0_u8; 32];
     rng::fill(&mut bytes)?;
     Ok(B64.encode(bytes))
 }
 
-/// The response for a token the crypto backend could not draw.
 fn rng_unavailable(error: CryptoError) -> Response {
     tracing::error!(error = %error, "crypto rng unavailable");
     temporarily_unavailable()

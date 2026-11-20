@@ -2,7 +2,6 @@ use serde_json::json;
 
 use super::*;
 
-/// A metric whose run has no date to bucket by.
 fn metric() -> MetricQuery {
     serde_json::from_value(json!({
         "dataset": "events",
@@ -16,8 +15,6 @@ fn metric() -> MetricQuery {
     .unwrap_or_else(|error| panic!("the fixture parses: {error}"))
 }
 
-/// The same metric read as one a window can bucket, which is what the
-/// declaration behind it decides.
 const CLOCKED: bool = true;
 const CLOCKLESS: bool = false;
 
@@ -113,8 +110,6 @@ fn a_chart_can_author_the_bucket_injected_by_a_clocked_metric() {
     assert!(drawn.check_against(&metric(), CLOCKED).is_ok());
 }
 
-/// A metric nothing dates produces no bucket, so a chart drawing one would
-/// draw an empty column at every run.
 #[test]
 fn a_clockless_metric_has_no_bucket_to_draw() {
     let drawn = widget(json!({
@@ -162,8 +157,6 @@ fn a_pie_whose_label_is_not_a_column_is_refused() {
 
 #[test]
 fn a_kind_the_renderer_does_not_have_is_not_a_widget() {
-    // The tool schema and the renderer are two views of one vocabulary,
-    // and this is the check that keeps a third out of the store.
     let refused: Result<Widget, _> = serde_json::from_value(json!({
         "type": "sankey", "metric": "lines_per_day", "x": "day", "y": "total_lines"
     }));
@@ -182,9 +175,6 @@ fn a_line_naming_the_metrics_own_columns_is_accepted() {
 
 #[test]
 fn a_line_naming_the_raw_field_instead_of_the_alias_is_refused() {
-    // Seen live: the chart drew its axes and no line, which reads as
-    // missing data rather than as a widget naming a column that is not
-    // there.
     let widget = widget(json!({
         "type": "line", "metric": "lines_per_day", "x": "day", "y": "lines"
     }));
@@ -195,7 +185,6 @@ fn a_line_naming_the_raw_field_instead_of_the_alias_is_refused() {
 
     let message = error.to_string();
     assert!(message.contains("`lines` is not a column"), "{message}");
-    // The message carries what IS available, so the repair round can fix it.
     assert!(message.contains("day, total_lines"), "{message}");
 }
 
@@ -229,8 +218,6 @@ fn a_table_drawing_every_column_it_names_is_accepted() {
     assert!(widget.check_against(&metric(), CLOCKLESS).is_ok());
 }
 
-/// The facts behind the figure: the same dataset's rows, not grouped, with
-/// the column a bar stands for still in them.
 fn detail() -> MetricQuery {
     serde_json::from_value(json!({
         "dataset": "events",
@@ -256,9 +243,6 @@ fn a_detail_that_carries_the_column_a_bar_stands_for_is_accepted() {
     );
 }
 
-/// A reader who clicks one bar is shown that bar's rows. A detail without
-/// the bar's column has no rows to narrow to, and an empty dialog is the
-/// worst way to find that out.
 #[test]
 fn a_detail_without_the_column_a_bar_stands_for_is_refused() {
     let drawn = widget(json!({
@@ -333,8 +317,6 @@ fn renaming_a_metric_follows_it_into_the_detail() {
     assert_eq!(after["metric"], "m");
 }
 
-/// A table row stands for the group its metric made, so only the grouped
-/// columns it draws have to be in the detail - never the aggregates.
 #[test]
 fn a_table_narrows_its_detail_by_the_groups_it_draws_and_not_by_its_sums() {
     let drawn = widget(json!({
@@ -352,7 +334,6 @@ fn a_table_narrows_its_detail_by_the_groups_it_draws_and_not_by_its_sums() {
         "type": "table", "metric": "lines_per_day", "detail": "line_events",
         "columns": ["author", "total_lines"]
     }));
-    // `author` is not a group of the drawn metric, so it narrows nothing.
     assert!(
         elsewhere
             .check_detail_against(&metric(), &detail(), CLOCKLESS)

@@ -1,5 +1,3 @@
-//! The shapes the model must answer in.
-
 use serde_json::{Value, json};
 
 use crate::domain::definition::DefinitionId;
@@ -7,11 +5,8 @@ use crate::domain::definition::DefinitionId;
 pub(super) const ANSWER_TOOL: &str = "answer";
 pub(super) const CREATE_TOOL: &str = "create";
 pub(super) const LOOK_UP_TOOL: &str = "look_up";
-/// Definition ids, as the store spells the rule.
 pub(super) const ID_PATTERN: &str = DefinitionId::PATTERN;
 
-/// The structured query a metric carries. Shared by both tools: the
-/// answer tool runs one, the create tool stores one.
 pub(super) fn metric_query_schema() -> Value {
     let plain = json!({ "type": "string" });
 
@@ -59,7 +54,6 @@ pub(super) fn metric_query_schema() -> Value {
     })
 }
 
-/// One condition over a declared field of the dataset.
 fn condition_schema() -> Value {
     json!({
         "type": "object",
@@ -74,7 +68,6 @@ fn condition_schema() -> Value {
     })
 }
 
-/// One field of a metric query.
 fn metric_field_schema() -> Value {
     let plain = json!({ "type": "string" });
     let field_type = json!({ "enum": ["string", "int", "float"] });
@@ -117,8 +110,6 @@ fn described(description: &str) -> Value {
     json!({ "type": "string", "description": description })
 }
 
-/// One definition a create carries: new, or replacing the built one its id
-/// names.
 fn proposed_item(body: &Value) -> Value {
     let name =
         described("What a reader calls it, free text. Other items of this create name it by this.");
@@ -136,9 +127,6 @@ fn proposed_item(body: &Value) -> Value {
     })
 }
 
-/// The tools the model may call. The tool it picks IS the intent, so a
-/// question cannot be mistaken for a creation.
-///
 /// WORKAROUND: `strict` is deliberately NOT set. The nested `MetricQuery`
 /// shape exceeds the API's compiled-grammar budget and a strict request is
 /// refused outright. What the schema cannot enforce, our own validation

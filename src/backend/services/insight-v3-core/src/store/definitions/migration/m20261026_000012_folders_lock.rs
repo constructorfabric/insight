@@ -1,8 +1,3 @@
-//! A row that folder creations and hand-overs take turns on, so no owner's
-//! folders pass the cap between a count and the write it allows.
-//!
-//! INVARIANT: every step is safe to run again.
-
 use sea_orm::DbErr;
 use sea_orm_migration::prelude::*;
 

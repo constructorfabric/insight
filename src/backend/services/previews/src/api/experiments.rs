@@ -1,9 +1,3 @@
-//! Experiment HTTP surface — list / create / delete the per-experiment trio.
-//!
-//! Thin orchestration only: validate into domain types, call the cluster,
-//! map outcomes to canonical errors. The caller is the gateway-JWT subject
-//! (`SecurityContext`, verified by the host authn pipeline).
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -27,8 +21,6 @@ use crate::domain::experiment::{
 use crate::domain::objects::{self, ExperimentStamp};
 use crate::infra::cluster::{CreateError, DeleteOutcome};
 
-/// The identity role names (JWT `roles` → `token_scopes`) that may create or
-/// delete experiments.
 const MANAGE_SCOPES: [&str; 2] = ["previews-admin", "admin"];
 
 /// Body of `POST /v1/experiments`. The image repository is fixed server-side;
@@ -90,7 +82,6 @@ fn to_response(experiment: Experiment, state: &AppState) -> ExperimentResponse {
     }
 }
 
-/// `GET /v1/experiments` — every live experiment, read from the cluster.
 pub async fn list_experiments(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -118,7 +109,6 @@ pub async fn list_experiments(
     }))
 }
 
-/// `POST /v1/experiments` — create the Deployment/Service/HTTPRoute trio.
 pub async fn create_experiment(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -212,7 +202,6 @@ pub async fn create_experiment(
     Ok((StatusCode::CREATED, Json(to_response(record, &state))))
 }
 
-/// `DELETE /v1/experiments/{name}` — remove the trio.
 pub async fn delete_experiment(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -242,7 +231,6 @@ pub async fn delete_experiment(
     }
 }
 
-/// Require an identified caller (gateway-JWT subject); 401 otherwise.
 pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     let caller = ctx.subject_id();
     if caller.is_nil() {
@@ -253,8 +241,6 @@ pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalErr
     Ok(caller)
 }
 
-/// Require a caller whose verified token scopes allow managing experiments;
-/// no database and no S2S call.
 fn require_manage_scope(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     let caller = require_caller(ctx)?;
     if !holds_manage_scope(ctx.token_scopes()) {
@@ -269,7 +255,6 @@ fn holds_manage_scope(scopes: &[String]) -> bool {
         .any(|scope| MANAGE_SCOPES.contains(&scope.as_str()))
 }
 
-/// The canonical 403 for a mutation without a managing scope, logged.
 fn manage_scope_denied(ctx: &SecurityContext, caller: Uuid) -> CanonicalError {
     tracing::warn!(
         caller = %caller,
@@ -309,7 +294,6 @@ mod tests {
             ("both plus noise", scopes(&["user", "admin"]), true),
             ("the default user role", scopes(&["user"]), false),
             ("no scopes at all", scopes(&[]), false),
-            // Exact names, never substrings — a made-up superset must not pass.
             ("a superset name", scopes(&["previews-admin-plus"]), false),
             ("a different admin", scopes(&["session_admin"]), false),
         ] {

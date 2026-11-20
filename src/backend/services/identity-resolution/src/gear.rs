@@ -1,13 +1,3 @@
-//! The identity-resolution gear.
-//!
-//! Runs on the `api-gateway` system gear (the REST host) under
-//! `toolkit::bootstrap::run_server`. [`IdentityResolutionGear::init`] builds the
-//! runtime (MariaDB pool); [`register_rest`] mounts the profile-read and
-//! persons-seed-journal routes on the host router. The seed itself runs via
-//! the `seed` CLI subcommand ([`run_seed`]), not in this process.
-//!
-//! [`register_rest`]: IdentityResolutionGear::register_rest
-
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
@@ -17,9 +7,6 @@ use toolkit::{Gear, GearCtx, RestApiCapability};
 use crate::api::AppState;
 use crate::config::GearConfig;
 
-/// Identity-resolution gear. Capability: `rest` (HTTP surface). Config key is
-/// the gear name `identity-resolution`; env overrides are
-/// `APP__gears__identity_resolution__config__*`.
 #[derive(Default)]
 #[toolkit::gear(name = "identity-resolution", capabilities = [rest])]
 pub struct IdentityResolutionGear {
@@ -32,10 +19,6 @@ impl Gear for IdentityResolutionGear {
         let config: GearConfig = ctx.config()?;
         tracing::info!("starting identity-resolution gear");
 
-        // Self-managed MariaDB pool (same approach as the analytics gear).
-        // No background workers: the persons-seed runs as the `seed` CLI
-        // subcommand (CronJob / manual Job — see `crate::seed_runner`), so the
-        // server process only serves reads + the operations journal.
         let db = crate::infra::db::connect(&config.database_url).await?;
 
         crate::infra::db::assert_schema_compatible(&db).await?;
@@ -48,9 +31,6 @@ impl Gear for IdentityResolutionGear {
     }
 }
 
-/// Pull `gears.identity-resolution.config` out of the loaded `AppConfig` and
-/// deserialize it into [`GearConfig`] — for subcommands that run outside the
-/// gear lifecycle (same helper shape as the analytics service).
 fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<GearConfig> {
     let raw = app
         .gears
@@ -63,13 +43,6 @@ fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<Ge
     Ok(cfg)
 }
 
-/// `migrate` subcommand: apply pending schema migrations + the first-admin
-/// bootstrap, then exit.
-///
-/// # Errors
-///
-/// Returns an error when the config section or `database_url` is missing, the
-/// migration lock cannot be acquired, or a migration/bootstrap step fails.
 pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     tracing::info!("running migrations");
     let cfg = extract_gear_config(app)?;
@@ -77,22 +50,10 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
         !cfg.database_url.is_empty(),
         "`gears.identity-resolution.config.database_url` is required for migrate"
     );
-    // Migrations AND the first-admin bootstrap run under one advisory lock on a
-    // pinned session — see `run_migrations` on why the bootstrap must stay
-    // inside the critical section (unconstrained INSERT … WHERE NOT EXISTS
-    // between replicas).
     crate::infra::db::run_migrations(&cfg.database_url, &cfg).await?;
     Ok(())
 }
 
-/// `seed` subcommand: run one persons-seed via [`crate::seed_runner`], publish
-/// the refreshed log via [`crate::sync_runner`], and exit. Same
-/// out-of-lifecycle config extraction as `migrate`.
-///
-/// # Errors
-///
-/// [`crate::seed_runner::SeedRunError`] — the caller maps each variant to a
-/// distinct process exit code.
 pub async fn run_seed(
     app: &toolkit::bootstrap::AppConfig,
     mode: &str,
@@ -105,8 +66,6 @@ pub async fn run_seed(
         )));
     }
 
-    // The job runs outside the server bootstrap, so it installs and flushes its
-    // own meter provider — without the flush the run's series never ship.
     let metrics = crate::infra::telemetry::MetricsGuard::install(&app.opentelemetry);
     let outcome = seed_and_publish(&cfg, mode, force).await;
     metrics.shutdown();
@@ -124,12 +83,6 @@ async fn seed_and_publish(
         .map_err(crate::seed_runner::SeedRunError::Failed)
 }
 
-/// Fold the publish that follows a seed into the seed's own outcome.
-///
-/// A busy lock publishes the same log from another run, and a guard refusal
-/// means an empty one — neither is this run's failure. A failure is: a green
-/// seed whose decisions never reached the resolver leaves every later build
-/// on a stale snapshot.
 fn publish_after_seed(
     result: Result<crate::domain::sync_service::SyncOutcome, crate::sync_runner::SyncRunError>,
 ) -> anyhow::Result<()> {
@@ -153,14 +106,6 @@ fn publish_after_seed(
     }
 }
 
-/// `sync` subcommand: copy the `persons` log into ClickHouse
-/// `identity.identity_persons` once and exit (the metrics resolve source).
-/// Same shape as [`run_seed`].
-///
-/// # Errors
-///
-/// [`crate::sync_runner::SyncRunError`] — the caller maps each variant to a
-/// distinct process exit code.
 pub async fn run_sync(
     app: &toolkit::bootstrap::AppConfig,
     force: bool,

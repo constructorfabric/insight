@@ -1,5 +1,3 @@
-//! CLI-level tests: drive the built `routegen` binary end to end (output mode,
-//! the CI `--check` up-to-date assertion, and the failure paths).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
@@ -49,7 +47,6 @@ fn writes_a_valid_config_to_output() {
 fn check_passes_when_in_sync() {
     let routes = fixtures().join("full.routes.yaml");
     let out = tmp("insync.conf");
-    // Generate, then assert --check against the same output is clean.
     assert!(
         routegen(&[
             "--routes",

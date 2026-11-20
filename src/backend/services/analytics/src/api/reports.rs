@@ -81,8 +81,6 @@ async fn build_preview(
     .await
     .map_err(report_internal)?;
 
-    // A not-ready read answers the columns it would have filled and no rows;
-    // the planned total describes a table nothing has built, so it reads 0.
     let total_rows = if execution.not_ready.is_some() {
         0
     } else {

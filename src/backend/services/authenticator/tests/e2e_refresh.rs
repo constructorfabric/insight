@@ -1,18 +1,3 @@
-//! End-to-end `/auth/refresh` rotation-with-grace against a running
-//! authenticator + Keycloak + Redis (nginx+auth step 10, item 1).
-//!
-//! `#[ignore]` by default (needs the stack up):
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 \
-//!   cargo test -p authenticator --test e2e_refresh -- --ignored --nocapture
-//! ```
-//!
-//! Asserts the G10 rotation model: refresh rotates the cookie credential but
-//! not the session (`sid` claim stable), the superseded token keeps resolving
-//! during the grace window without a second rotation, and a token past grace
-//! is refused with a cleared cookie.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -33,7 +18,6 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     common::kc::session_cookie(resp)
 }
 
-/// Fetch the session's CSRF token (state-changing /auth/* requires it, 10.5).
 async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String {
     #[derive(Deserialize)]
     struct CsrfBody {
@@ -61,7 +45,6 @@ struct MeBody {
     refresh_at: u64,
 }
 
-/// `/auth/me`'s person id — who the stall is addressed to.
 #[derive(Deserialize)]
 struct MePerson {
     user: String,
@@ -72,7 +55,6 @@ struct JwtSid {
     sid: String,
 }
 
-/// Decode the (unverified) `sid` claim from a compact JWT.
 fn jwt_sid(bearer: &str) -> String {
     use base64::Engine as _;
     let jwt = bearer.strip_prefix("Bearer ").unwrap();
@@ -110,8 +92,6 @@ async fn refresh_rotates_with_grace_and_stable_session() {
 
     let csrf = get_csrf(&http, &auth_base, &old_token).await;
 
-    // 0. A state-changing /auth/* request without the CSRF token (and no
-    //    allowlisted Origin) is rejected 403 before any rotation happens.
     let no_csrf = http
         .post(format!("{auth_base}/auth/refresh"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
@@ -120,7 +100,6 @@ async fn refresh_rotates_with_grace_and_stable_session() {
         .unwrap();
     assert_eq!(no_csrf.status(), 403, "refresh without CSRF must be 403");
 
-    // 1. Refresh rotates the credential and returns the timing contract.
     let refresh = http
         .post(format!("{auth_base}/auth/refresh"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
@@ -132,21 +111,16 @@ async fn refresh_rotates_with_grace_and_stable_session() {
     let new_token = cookie_from(&refresh).expect("refresh must re-issue the cookie");
     assert_ne!(new_token, old_token, "credential must rotate");
     let body: RefreshBody = refresh.json().await.unwrap();
-    // refresh_at ∈ [expires_at − margin − jitter/2, expires_at − margin + jitter/2]
-    // (defaults: margin 90, jitter ±60 → [exp−150, exp−30]).
     assert!(
         body.refresh_at < body.expires_at,
         "refresh_at must precede expires_at"
     );
 
-    // 2. The stable session survives rotation: same `sid` through the new token.
     let sid_after = authz_sid(&http, &auth_base, &new_token)
         .await
         .expect("rotated session exchanges");
     assert_eq!(sid_before, sid_after, "sid must be stable across rotation");
 
-    // 3. Grace: an immediate second refresh with the OLD token resolves to the
-    //    same session and does NOT rotate again (returns the current cookie).
     let grace = http
         .post(format!("{auth_base}/auth/refresh"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
@@ -161,12 +135,9 @@ async fn refresh_rotates_with_grace_and_stable_session() {
             "grace path must answer with the current credential, not rotate again"
         );
     } else {
-        // The 250 ms default grace may already have elapsed under load — a 401
-        // here is the past-grace contract, not a failure of the grace path.
         assert_eq!(grace.status(), 401);
     }
 
-    // 4. Past grace the old token is dead: 401 + cleared cookie.
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     let stale = http
         .post(format!("{auth_base}/auth/refresh"))
@@ -183,7 +154,6 @@ async fn refresh_rotates_with_grace_and_stable_session() {
         .any(|h| h.to_str().unwrap_or("").contains("Max-Age=0"));
     assert!(cleared, "past-grace refusal must clear the cookie");
 
-    // 5. /auth/me returns the same timing fields for the live credential.
     let me = http
         .get(format!("{auth_base}/auth/me"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={new_token}"))
@@ -195,21 +165,13 @@ async fn refresh_rotates_with_grace_and_stable_session() {
     assert!(me_body.refresh_at < me_body.expires_at);
 }
 
-/// A hung Identity must not cost the caller its session.
-///
-/// The credential is rotated before roles converge, so an unbounded lookup
-/// holds the new cookie back past the client's abort and its retry then
-/// presents a superseded credential.
 #[tokio::test]
 #[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn refresh_answers_within_the_client_budget_when_identity_hangs() {
-    /// What the SPA's refresh driver waits before it aborts the request.
     const SPA_ABORT_SECS: u64 = 10;
 
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let identity_base = env("IDENTITY_BASE", "http://localhost:8092");
-    // Its own realm user (kc-realm-overlay.py): the stall is addressed by
-    // person, so no sibling test running beside this one can consume it.
     let test_user = "roles-stall@example.com";
     let http = client();
 
@@ -254,8 +216,6 @@ async fn refresh_answers_within_the_client_budget_when_identity_hangs() {
         "refresh took {took:?}, past the {SPA_ABORT_SECS} s the client waits"
     );
 
-    // The rotated credential reached the caller and resolves: the session is
-    // the same one, carrying the roles the stalled lookup never replaced.
     let rotated = cookie_from(&refresh).expect("refresh must re-issue the cookie");
     assert_ne!(rotated, token, "credential must rotate");
     assert!(

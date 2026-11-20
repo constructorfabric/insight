@@ -1,11 +1,3 @@
-//! Seeded-leak checks (insight#2488 AC-4).
-//!
-//! This service holds four secrets and reads one credential-bearing header:
-//! the ingest token arrives in `X-Insight-Token`, and the config carries the
-//! MariaDB connection string, the ClickHouse passwords and the Anthropic key.
-//! Each is seeded here with a value a grep can find, so a regression fails
-//! where the line is written rather than in a log somewhere.
-
 use insight_log_context::test_support::{capture_output, capture_probe_output};
 use insight_log_context::{CORRELATION_ID_HEADER, LogContextLayer};
 use uuid::Uuid;
@@ -61,8 +53,6 @@ fn logging_the_config_renders_markers_rather_than_its_secrets() {
         assert!(!output.contains(seeded), "leaked: {seeded} in {output}");
     }
 
-    // The line itself has to exist, or the assertions above pass vacuously.
     assert!(output.contains("config loaded"), "{output}");
-    // And it has to carry the config, redacted — not be missing the field.
     assert!(output.contains("<redacted>"), "{output}");
 }

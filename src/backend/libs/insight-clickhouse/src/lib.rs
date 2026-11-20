@@ -1,33 +1,3 @@
-//! Shared `ClickHouse` client for Insight backend services.
-//!
-//! Provides:
-//! - [`Client`] — configured `ClickHouse` connection with tenant-scoped queries
-//! - [`QueryBuilder`] — parameterized query builder (no string interpolation)
-//! - [`Config`] — connection configuration
-//! - [`Topology`] — whether the tables a service creates replicate
-//! - [`DDL_TASK_TIMEOUT`] — how long a coordinated statement waits for the replicas
-//! - [`Unfinished`] — the one reading of "the warehouse stopped waiting on a statement"
-//! - [`Ddl`] / [`TableSpec`] — the one place data-layer statements are written
-//! - [`MissingRelation`] — the one reading of "the warehouse has no such relation"
-//! - [`Error`] — error types
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! use insight_clickhouse::{Client, Config};
-//! use uuid::Uuid;
-//!
-//! let config = Config::new("http://localhost:8123", "insight");
-//! let client = Client::new(config);
-//!
-//! let tenant_id = Uuid::now_v7();
-//! let rows = client
-//!     .query("SELECT ?fields FROM gold.pr_cycle_time WHERE tenant_id = ?")
-//!     .bind(tenant_id)
-//!     .fetch_all::<PrCycleTime>()
-//!     .await?;
-//! ```
-
 pub mod config;
 mod consistency;
 mod coordination;
@@ -49,12 +19,6 @@ pub use topology::Topology;
 
 use clickhouse::Client as ChClient;
 
-/// `ClickHouse` client wrapper with Insight-specific defaults.
-///
-/// Wraps the `clickhouse` crate client with:
-/// - Preconfigured database and URL from [`Config`]
-/// - Query timeout enforcement
-/// - Tenant-scoped query builder via [`tenant_query`]
 #[derive(Clone)]
 pub struct Client {
     inner: ChClient,
@@ -62,7 +26,6 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a new client from configuration.
     #[must_use]
     pub fn new(config: Config) -> Self {
         let mut inner = ChClient::default()
@@ -79,14 +42,8 @@ impl Client {
         Self { inner, config }
     }
 
-    /// Returns a raw query handle for the given SQL.
-    ///
     /// Use bind parameters (`?`) for all user-supplied values.
     /// **Never** interpolate values into the SQL string.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error`] if the query fails.
     pub fn query(&self, sql: &str) -> clickhouse::query::Query {
         self.bounded(self.inner.query(sql))
     }
@@ -163,12 +120,6 @@ impl Client {
     /// Refuses to work against `database` unless it stands with an engine
     /// that agrees with this connection's topology.
     ///
-    /// Nothing in a service creates a database: `create-databases.sh` is the
-    /// one site, so a missing one is reported with that remedy. A plain
-    /// database under a replicated topology would hold every table on one
-    /// replica; a `Replicated` one under a standalone topology would take
-    /// engines that disagree table by table.
-    ///
     /// # Errors
     ///
     /// Returns [`Error::Topology`] with the remedy, or [`Error::Clickhouse`]
@@ -244,13 +195,11 @@ impl Client {
         QueryBuilder::new(self.clone(), table, tenant_id)
     }
 
-    /// Returns the underlying `clickhouse` crate client for advanced usage.
     #[must_use]
     pub fn inner(&self) -> &ChClient {
         &self.inner
     }
 
-    /// Returns the current configuration.
     #[must_use]
     pub fn config(&self) -> &Config {
         &self.config
@@ -263,14 +212,8 @@ mod tests {
     use std::time::Duration;
     use uuid::Uuid;
 
-    // All tests here are connection-free: `Client::new` and `query` only
-    // configure the underlying handle / build a lazy query — nothing opens a
-    // socket. The execution paths (`fetch_all`) require a live ClickHouse and
-    // are exercised elsewhere.
-
     #[test]
     fn new_applies_auth_credentials() {
-        // Covers the `user` + `password` branches in `Client::new`.
         let client = Client::new(
             Config::new("http://localhost:8123", "insight").with_auth("admin", "s3cr3t"),
         );
@@ -289,15 +232,12 @@ mod tests {
 
     #[test]
     fn query_with_timeout_builds_a_handle() {
-        // Default config carries a 30s timeout, so the `max_execution_time`
-        // option branch runs.
         let client = Client::new(Config::new("http://localhost:8123", "insight"));
         let _q = client.query("SELECT 1");
     }
 
     #[test]
     fn query_without_timeout_skips_the_option() {
-        // `without_query_timeout` -> the `None` branch in `query`.
         let client =
             Client::new(Config::new("http://localhost:8123", "insight").without_query_timeout());
         let _q = client.query("SELECT 1");
@@ -314,7 +254,6 @@ mod tests {
 
     #[test]
     fn query_applies_thread_and_memory_bounds() {
-        // Both `Some` branches in `query` run.
         let client = Client::new(
             Config::new("http://localhost:8123", "insight")
                 .with_query_max_threads(4)
@@ -435,7 +374,6 @@ mod tests {
         Ok(())
     }
 
-    /// `create-databases.sh` is the one creation site, so the remedy names it.
     #[tokio::test]
     async fn a_missing_database_is_reported_with_its_creation_site() {
         let mock = clickhouse::test::Mock::new();
@@ -496,7 +434,6 @@ mod tests {
         id: u64,
     }
 
-    /// Every call below, against a warehouse that records what it was asked.
     async fn recorded(
         topology: Topology,
     ) -> Result<Vec<test_support::Received>, Box<dyn std::error::Error>> {
@@ -538,9 +475,6 @@ mod tests {
         names.iter().any(|name| received.pair(name).is_some())
     }
 
-    /// Only the `consistent_*` pair opts a call into the quorum settings, and
-    /// only a statement waits on the replicas: a plain read or write carries
-    /// neither, whatever the topology.
     #[tokio::test]
     async fn only_the_consistent_pair_and_a_statement_carry_cluster_settings()
     -> Result<(), Box<dyn std::error::Error>> {

@@ -1,21 +1,4 @@
-//! Shared e2e test support: an HTTP client that mirrors the `reqwest` builder
-//! surface and records every response from the authenticator under test into
-//! the endpoint-coverage ledger.
-//!
-//! The ledger lands at `$E2E_COVERAGE_LEDGER` (run-e2e.sh sets it; unset means
-//! recording is off and the client is a plain passthrough). It is a JSON list of
-//! `{method, path, statuses}` rows, which `scripts/ci/api_coverage.py` consumes.
-//!
-//! Only requests whose origin matches `$AUTH_BASE` / `$AUTH_BASE_DISABLED`
-//! (the two authenticator instances) are recorded: the same client also talks
-//! to Keycloak and the service-token listener, and those must not pollute the
-//! ledger the authenticator spec is matched against. Each `cargo test --test
-//! e2e_*` invocation is its own process, and run-e2e.sh runs them serially, so
-//! the read-merge-write below needs no cross-process locking; the in-process
-//! mutex covers concurrent tests within one binary.
-
-// Each integration-test crate compiles its own copy of this module and none
-// uses the full surface.
+// Each integration-test crate compiles its own copy; none uses the full surface.
 #![allow(dead_code)]
 
 pub mod kc;
@@ -26,14 +9,11 @@ use std::sync::Mutex;
 
 static LEDGER_LOCK: Mutex<()> = Mutex::new(());
 
-/// A `reqwest::Client` that records `(method, path) -> {status}` on `send()`.
 #[derive(Clone)]
 pub struct Client {
     inner: reqwest::Client,
 }
 
-/// The e2e default client: redirects OFF, so 302s from `/auth/login`,
-/// `/authorize`, and `/auth/callback` are observed rather than followed.
 pub fn client() -> Client {
     Client {
         inner: reqwest::Client::builder()
@@ -64,8 +44,6 @@ impl Client {
     }
 }
 
-/// Thin wrapper over `reqwest::RequestBuilder`; `send()` returns the plain
-/// `reqwest::Response`, so call sites downstream of `send()` are untouched.
 pub struct RequestBuilder {
     client: reqwest::Client,
     inner: reqwest::RequestBuilder,
@@ -101,8 +79,6 @@ impl RequestBuilder {
     }
 
     pub async fn send(self) -> reqwest::Result<reqwest::Response> {
-        // Build first so the request's final method + URL are readable; a
-        // build error surfaces exactly like reqwest's own send() would.
         let request = self.inner.build()?;
         let method = request.method().clone();
         let url = request.url().clone();
@@ -112,8 +88,6 @@ impl RequestBuilder {
     }
 }
 
-/// Merge one observation into the ledger file, if recording is on and the
-/// request targeted an authenticator instance.
 fn record(method: &reqwest::Method, url: &reqwest::Url, status: u16) {
     let Ok(ledger) = std::env::var("E2E_COVERAGE_LEDGER") else {
         return;
@@ -123,7 +97,6 @@ fn record(method: &reqwest::Method, url: &reqwest::Url, status: u16) {
     }
     let _guard = LEDGER_LOCK.lock().expect("ledger lock");
 
-    // (method, path) -> statuses; the row shape the gate script reads.
     let mut merged: BTreeMap<(String, String), BTreeSet<u16>> = BTreeMap::new();
     if let Ok(existing) = std::fs::read_to_string(&ledger)
         && let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&existing)
@@ -169,9 +142,6 @@ fn record(method: &reqwest::Method, url: &reqwest::Url, status: u16) {
     std::fs::write(&ledger, out).expect("ledger write must succeed");
 }
 
-/// True when `url` targets one of the authenticator instances under test
-/// (`AUTH_BASE`, and `AUTH_BASE_DISABLED` — `e2e_override`'s second instance).
-/// `AUTH_BASE` falls back to the same default the tests themselves use.
 fn is_authenticator_origin(url: &reqwest::Url) -> bool {
     let auth_base =
         std::env::var("AUTH_BASE").unwrap_or_else(|_| "http://localhost:8083".to_owned());

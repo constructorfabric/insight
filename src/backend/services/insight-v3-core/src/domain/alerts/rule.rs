@@ -1,5 +1,3 @@
-//! A rule as it is written, checked and stored.
-
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -16,7 +14,6 @@ use crate::domain::definition::{DefinitionId, Page};
 use crate::domain::metric_run::Columns;
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 
-/// The bounds every installation gets unless it sets its own.
 pub(crate) const DEFAULT_MIN_INTERVAL_SECS: u32 = 60;
 pub(crate) const DEFAULT_MAX_INTERVAL_SECS: u32 = 7 * 24 * 3600;
 pub(crate) const DEFAULT_MAX_RULES: u64 = 200;
@@ -24,14 +21,10 @@ pub(crate) const DEFAULT_EVALUATION_CONCURRENCY: usize = 4;
 pub(crate) const DEFAULT_EVALUATION_LOCK_SECS: u64 = 60;
 pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 
-/// The longest an alert's name may be. It is shown, never used as a key.
 const MAX_NAME_CHARS: usize = 200;
-/// The most columns a rule may carry beside the ones its condition reads.
 pub(crate) const MAX_CONTEXT_COLUMNS: usize = 5;
 const MAX_COLUMN_CHARS: usize = 128;
 
-/// What an administrator calls an alert: free text, shown in every message
-/// and listing. The id is the handle, so two alerts may share a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AlertName(String);
 
@@ -45,7 +38,6 @@ impl AlertName {
         Ok(Self(trimmed.to_owned()))
     }
 
-    /// A name as a row recorded it.
     pub(crate) fn from_row(value: String) -> Self {
         Self(value)
     }
@@ -55,7 +47,6 @@ impl AlertName {
     }
 }
 
-/// The bounds an installation places on rules.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Limits {
     pub(crate) min_interval_secs: u32,
@@ -73,8 +64,6 @@ impl Default for Limits {
     }
 }
 
-/// The destinations an installation lets rules send to, by name, with the
-/// provider each one reaches. Credentials are not here.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Destinations {
     providers: BTreeMap<String, String>,
@@ -89,7 +78,6 @@ impl Destinations {
         self.providers.get(name).map(String::as_str)
     }
 
-    /// Every destination as a reader may list it: name and provider.
     pub(crate) fn listed(&self) -> Vec<(&str, &str)> {
         self.providers
             .iter()
@@ -134,13 +122,11 @@ pub(crate) struct RuleDraft {
 
 impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
 
-/// What a rule watches, checked against the installation's bounds.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuleSpec {
     pub(crate) name: AlertName,
     pub(crate) metric: DefinitionId,
     pub(crate) condition: Condition,
-    /// Columns the witness keeps beside the condition's, in this order.
     pub(crate) context_columns: Vec<String>,
     pub(crate) range: Option<String>,
     pub(crate) interval_secs: u32,
@@ -148,9 +134,6 @@ pub(crate) struct RuleSpec {
 }
 
 impl RuleSpec {
-    /// A draft as a rule, or the first thing wrong with it. `columns` are
-    /// the metric's result columns and what each holds, which the condition
-    /// and the context columns are checked against.
     pub(crate) fn parse(
         draft: &RuleDraft,
         limits: Limits,
@@ -190,17 +173,11 @@ impl RuleSpec {
         })
     }
 
-    /// The window a check runs the metric over: the rule's range, never
-    /// bucketed, because one row is what a check reads.
     pub(crate) fn window(&self) -> Result<WindowRequest, WindowError> {
         WindowRequest::parse(self.range.as_deref(), Some(false))
     }
 }
 
-/// The columns a rule asks to carry, each one the metric answers and none
-/// twice. A column the condition reads too is fine: the witness keeps it
-/// once. A group-by column is refused: the witness always shows it, and the
-/// message writes it as the row's group.
 pub(crate) fn parse_context_columns(
     named: &[String],
     columns: &Columns,
@@ -275,52 +252,38 @@ pub(crate) enum RuleError {
     Destination(String),
 }
 
-/// What the latest checks left on a rule.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct EvaluationState {
     pub(crate) last_evaluated_at: Option<DateTime<Utc>>,
     pub(crate) last_outcome: Option<Outcome>,
-    /// What the last valid check found; unknown checks leave it as it was.
     pub(crate) last_valid_breached: Option<bool>,
-    /// When the current breach began, while one is on.
     pub(crate) breached_since: Option<DateTime<Utc>>,
 }
 
 impl EvaluationState {
-    /// The reason the last check was unknown, as a row stores it.
     pub(crate) fn last_reason(&self) -> Option<UnknownReason> {
         self.last_outcome.as_ref().and_then(Outcome::reason)
     }
 }
 
-/// A rule as it is stored.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AlertRule {
     pub(crate) id: Uuid,
     pub(crate) spec: RuleSpec,
     pub(crate) enabled: bool,
-    /// Bumped by every configuration write. A check carries the revision it
-    /// was scheduled for, and a store refuses to record one for any other.
     pub(crate) revision: u32,
     pub(crate) state: EvaluationState,
-    /// Who wrote the rule, where the surface knows: the API resolves a
-    /// person, the MCP server does not.
     pub(crate) created_by: Option<Uuid>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
 }
 
-/// Whether a notification has been handed to a destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum NotificationStatus {
-    /// Owed, and not yet sent.
     Pending,
-    /// Withdrawn before it was sent: the rule was disabled.
     Cancelled,
-    /// The provider confirmed it.
     Sent,
-    /// The provider rejected it, or every attempt went unconfirmed.
     Failed,
 }
 
@@ -341,8 +304,6 @@ impl NotificationStatus {
     }
 }
 
-/// A notification a check decided is owed: the facts it will carry, kept
-/// apart from the rule so a later edit does not rewrite what was seen.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Notification {
     pub(crate) id: Uuid,
@@ -350,46 +311,31 @@ pub(crate) struct Notification {
     pub(crate) rule_revision: u32,
     pub(crate) rule_name: AlertName,
     pub(crate) metric: DefinitionId,
-    /// What the metric was called when this was owed. Without one, the
-    /// message names the metric by its id.
     pub(crate) metric_name: Option<String>,
     pub(crate) condition: Condition,
-    /// The columns the rule asked to carry when this was owed, so the message
-    /// can tell them from the ones the condition read.
     pub(crate) context_columns: Vec<String>,
-    /// The rows the check saw that owed this.
     pub(crate) witness: Witness,
     pub(crate) evaluated_at: DateTime<Utc>,
     pub(crate) destination: String,
     pub(crate) status: NotificationStatus,
-    /// How many sends have been tried.
     pub(crate) attempts: u32,
-    /// What the last unconfirmed or rejected send said, in the provider's
-    /// words, never a credential.
     pub(crate) last_error: Option<String>,
-    /// The identity the provider gave the message, once it confirmed it.
     pub(crate) provider_receipt: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
 }
 
-/// One check as it is handed to a store to record.
 #[derive(Debug, Clone)]
 pub(crate) struct Recording {
     pub(crate) rule_id: Uuid,
     pub(crate) revision: u32,
     pub(crate) outcome: Outcome,
-    /// What the metric was called when the check read it, for the
-    /// notification it may owe.
     pub(crate) metric_name: Option<String>,
     pub(crate) evaluated_at: DateTime<Utc>,
 }
 
-/// What recording a check left behind.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Recorded {
-    /// The rule took the outcome; a notification is owed where one is given.
     Accepted(Box<Accepted>),
-    /// The rule is gone, disabled, or at another revision: nothing written.
     Stale,
 }
 
@@ -399,7 +345,6 @@ pub(crate) struct Accepted {
     pub(crate) notification: Option<Notification>,
 }
 
-/// What a write puts on a rule.
 #[derive(Debug, Clone)]
 pub(crate) struct Write {
     pub(crate) spec: RuleSpec,
@@ -407,7 +352,6 @@ pub(crate) struct Write {
     pub(crate) actor: Option<Uuid>,
 }
 
-/// One rule as a listing shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AlertSummary {
     pub(crate) id: Uuid,
@@ -416,7 +360,6 @@ pub(crate) struct AlertSummary {
     pub(crate) enabled: bool,
 }
 
-/// One page of a listing, and how many there are in all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AlertPage {
     pub(crate) alerts: Vec<AlertSummary>,
@@ -425,13 +368,8 @@ pub(crate) struct AlertPage {
 
 #[async_trait]
 pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
-    /// Creates a rule at revision 1 under a fresh id, unless the installation
-    /// already holds `max_rules`. The count and the insert are one serialised
-    /// step, so two creates at the bound cannot both land.
     async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError>;
 
-    /// Replaces the rule at the revision it is expected to be at, bumping it
-    /// and forgetting what its checks found.
     async fn replace(
         &self,
         id: Uuid,
@@ -441,14 +379,10 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
 
     async fn get(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError>;
 
-    /// Rules whose name or metric holds `needle`, by name.
     async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertStoreError>;
 
-    /// Every rule whose checks should be scheduled.
     async fn enabled(&self) -> Result<Vec<AlertRule>, AlertStoreError>;
 
-    /// Turns checks on or off. Both reset the evaluation state and bump the
-    /// revision; turning off withdraws every pending notification.
     async fn set_enabled(
         &self,
         id: Uuid,
@@ -456,11 +390,8 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
         enabled: bool,
     ) -> Result<AlertRule, AlertStoreError>;
 
-    /// Removes the rule and everything recorded for it.
     async fn delete(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError>;
 
-    /// Records one check on the rule it was scheduled for, and the
-    /// notification it owes, together.
     async fn record(&self, recording: Recording) -> Result<Recorded, AlertStoreError>;
 
     async fn notifications(
@@ -471,12 +402,8 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
 
     async fn notification(&self, id: Uuid) -> Result<Option<Notification>, AlertStoreError>;
 
-    /// Every notification still owed, oldest first, for the schedule to
-    /// pick up again after a restart.
     async fn pending_notifications(&self) -> Result<Vec<Notification>, AlertStoreError>;
 
-    /// Records one send on a pending notification. Anything not pending is
-    /// left as it is and answered as none.
     async fn record_attempt(
         &self,
         id: Uuid,

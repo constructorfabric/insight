@@ -1,9 +1,3 @@
-//! Visibility grants HTTP surface — create / list / revoke.
-//!
-//! Admin-gated (ADR-0012).
-//! `viewed_person_id` null = viewer sees the whole tenant tree. Revoke is a
-//! plain soft-delete (no lockout guard).
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -26,7 +20,7 @@ use crate::infra::db::visibility_repo::{self, Visibility};
 
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
-const MAX_REASON_LEN: usize = 500; // VARCHAR(500)
+const MAX_REASON_LEN: usize = 500;
 
 /// Body of `POST /v1/visibility` — grant a viewer visibility over a target
 /// (or the whole tree when `viewed_person_id` is omitted).
@@ -98,12 +92,9 @@ pub struct ListParams {
     pub viewer: Option<Uuid>,
     pub viewed: Option<Uuid>,
     pub active: Option<bool>,
-    // Signed so a negative `?limit=` clamps to 1 rather than failing query
-    // deserialization.
     pub limit: Option<i64>,
 }
 
-/// `POST /v1/visibility` — create a grant (admin only).
 pub async fn create_visibility(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -121,8 +112,6 @@ pub async fn create_visibility(
             )
             .create());
     }
-    // A present-but-nil target is nonsense (a grant to see person 000…0); only an
-    // ABSENT viewed_person_id means whole-tree visibility.
     if req.viewed_person_id == Some(Uuid::nil()) {
         return Err(VisibilityError::invalid_argument()
             .with_field_violation(
@@ -167,8 +156,6 @@ pub async fn create_visibility(
     ))
 }
 
-/// `GET /v1/visibility` — list grants (admin only). Filters: `?viewer=`,
-/// `?viewed=`, `?active=` (default all), `?limit=` (default 50, cap 500).
 pub async fn list_visibility(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -195,7 +182,6 @@ pub async fn list_visibility(
     }))
 }
 
-/// `DELETE /v1/visibility/{id}` — revoke a grant (admin only).
 pub async fn delete_visibility(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -209,8 +195,6 @@ pub async fn delete_visibility(
         return Err(reason_too_long());
     }
 
-    // 404 only if the grant never existed; otherwise soft-delete + 204 (a
-    // second revoke of an already-revoked grant is a no-op 204).
     if visibility_repo::get_by_id(&state.db, tenant, id)
         .await
         .map_err(read_err)?
@@ -238,7 +222,6 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read grants").create()
 }
 
-/// `reason`, when present, must be at most 500 chars.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
 }

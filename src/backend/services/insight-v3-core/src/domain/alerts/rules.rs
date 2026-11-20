@@ -1,8 +1,3 @@
-//! The operations an administrator has on rules, the same through API and
-//! MCP: every write lands in the store first and on the schedule second. The
-//! store is the answer; a schedule write that fails is logged and repaired by
-//! reconciling.
-
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -73,8 +68,6 @@ impl<'a> AlertRules<'a> {
         self.destinations
     }
 
-    /// Creates a rule, enabled unless the draft says otherwise, and
-    /// schedules its checks. The store holds the rule bound.
     pub(crate) async fn create(
         &self,
         draft: &RuleDraft,
@@ -97,9 +90,6 @@ impl<'a> AlertRules<'a> {
         Ok(rule)
     }
 
-    /// Replaces a rule at the revision the draft expects, and reschedules
-    /// its checks. A draft silent on `enabled` leaves it as it is: the read
-    /// here may be stale, but the revision the store checks is not.
     pub(crate) async fn replace(
         &self,
         id: Uuid,
@@ -124,8 +114,6 @@ impl<'a> AlertRules<'a> {
         Ok(rule)
     }
 
-    /// The draft as a rule, its condition typed against the columns its
-    /// metric answers.
     async fn checked(&self, draft: &RuleDraft) -> Result<RuleSpec, AlertsError> {
         let metric = DefinitionId::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
         let columns = self.columns_of(&metric).await?;
@@ -138,8 +126,6 @@ impl<'a> AlertRules<'a> {
         )?)
     }
 
-    /// What a check of the draft would find if it ran now: the metric run as
-    /// a check runs it and the condition judged as a check judges it.
     pub(crate) async fn preview(&self, draft: &PreviewDraft) -> Result<Outcome, AlertsError> {
         let metric = DefinitionId::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
         let columns = self.columns_of(&metric).await?;
@@ -196,9 +182,6 @@ impl<'a> AlertRules<'a> {
         Ok(self.store.page(needle.trim(), page).await?)
     }
 
-    /// Turns checks on or off. Turning them on is refused while the rule's
-    /// destination is no longer configured: every breach would owe a
-    /// notification nothing can carry.
     pub(crate) async fn set_enabled(
         &self,
         id: Uuid,
@@ -228,7 +211,6 @@ impl<'a> AlertRules<'a> {
         Ok(())
     }
 
-    /// Removes the rule, its checks and everything recorded for it.
     pub(crate) async fn delete(&self, id: Uuid) -> Result<(), AlertsError> {
         let Some(rule) = self.store.delete(id).await? else {
             return Err(AlertsError::NotFound(id));
@@ -312,8 +294,6 @@ impl From<AlertStoreError> for AlertsError {
 }
 
 impl AlertsError {
-    /// Whether the caller can act on this, which decides whether it is
-    /// logged: a refusal the caller caused is answered, not recorded.
     pub(crate) fn is_about_the_caller(&self) -> bool {
         match self {
             Self::Invalid(_)

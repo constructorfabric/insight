@@ -64,8 +64,6 @@ pub async fn query_metric_drilldown(
     };
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
 
-    // Ahead of the read: the reader searches `Who` by name, and the names are
-    // what turn that needle into identities the query can compare.
     let names = roster_names(&state, &req).await?;
     req.search_person_ids = people_named_like(&names, req.selection.search.as_deref());
 
@@ -97,8 +95,6 @@ pub async fn export_metric_drilldown(
     Json(req): Json<MetricDrilldownExportRequest>,
 ) -> Result<Response<Body>, CanonicalError> {
     let started = Instant::now();
-    // Ahead of the permit: a caller who may not see this person must not occupy
-    // one of MAX_CONCURRENT_EXPORTS slots.
     authorize_metric_entity(&state, &ctx, &headers, &req.entity).await?;
 
     let permit = acquire_export_permit().await?;
@@ -112,8 +108,6 @@ pub async fn export_metric_drilldown(
         MAX_EXPORT_ROWS + 1,
     )
     .await?;
-    // A relation nothing has built yet exports as the file it will be: the
-    // columns the plan declares, and no records.
     let mut validated = match validated {
         ValidatedDrilldown::Ready(validated) => *validated,
         ValidatedDrilldown::NotReady(page) => {
@@ -180,15 +174,6 @@ pub async fn export_metric_drilldown(
     )
 }
 
-/// Who each row belongs to, in the words the reader knows them by.
-///
-/// Gated on the column actually being presented, not on the shape of the
-/// entity: a roster read of a ratio metric shows no `Who`, and would otherwise
-/// pay for a full identity scan per page for a map nothing reads.
-///
-/// The identity rows failing to answer names nobody rather than failing the
-/// read — an empty column, not an error. Being unable to ASK is different, and
-/// answers 429 like any other read this endpoint cannot find capacity for.
 async fn roster_names(
     state: &AppState,
     validated: &ValidatedMetricDrilldown,
@@ -228,9 +213,6 @@ async fn roster_names(
         .collect())
 }
 
-/// The people the needle picks out of the `Who` column, as the ids the query
-/// compares. Folded the same way the SQL search folds — case-insensitively,
-/// on a substring.
 fn people_named_like(names: &BTreeMap<String, String>, search: Option<&str>) -> Vec<String> {
     let Some(needle) = search.map(str::to_lowercase) else {
         return Vec::new();
@@ -249,8 +231,6 @@ fn person_name(name: &person_names::PersonName) -> Option<String> {
         .map(str::to_owned)
 }
 
-// INVARIANT: both drilldown routes authorize the typed entity before validation
-// touches MariaDB or ClickHouse, preventing person IDORs and tenant-gate bypasses.
 async fn authorize_metric_entity(
     state: &AppState,
     ctx: &SecurityContext,
@@ -275,9 +255,6 @@ async fn authorize_metric_entity(
             )
             .await
         }
-        // Every person in the list, checked one by one: a rollup card is a
-        // convenience over the same records, never a way around the gate that
-        // decides which people this caller may read.
         MetricDrilldownEntity::Persons { .. } => {
             let person_ids = parse_person_ids(entity)?;
 
@@ -331,8 +308,6 @@ async fn collect_export_rows(
         "metric-drilldown:export:{}",
         validated.plan.definition.key()
     );
-    // The outer deadline cancels the fetch future, so its own metric never
-    // records — the timeout is this query's terminal outcome, recorded here.
     let started = Instant::now();
     let Ok(fetched) = tokio::time::timeout_at(
         deadline,
@@ -403,7 +378,6 @@ fn export_name(
     )
 }
 
-/// The file a not-ready relation downloads as: its columns, and no records.
 async fn empty_export(
     permit: tokio::sync::SemaphorePermit<'static>,
     format: MetricDrilldownExportFormat,
@@ -418,8 +392,6 @@ async fn empty_export(
     attachment_response(body, content_type, &export_name(plan, selection, extension))
 }
 
-/// The page a relation answers before anything has built it: what the reader
-/// asked for, the columns it would present, and no rows.
 fn not_ready_page(
     req: &ValidatedMetricDrilldown,
     names: &BTreeMap<String, String>,
@@ -432,8 +404,6 @@ fn not_ready_page(
     ))
 }
 
-/// The columns a selection presents, read off the plan rather than off rows —
-/// what a not-ready answer still has to carry.
 fn presented_columns(
     req: &ValidatedMetricDrilldown,
     names: &BTreeMap<String, String>,
@@ -466,8 +436,6 @@ fn attachment_response(
         .map_err(|_| export_internal())
 }
 
-/// What an evidence read answered: the records, or that the relation behind
-/// them has not been built yet.
 enum EvidenceRead {
     Rows(Vec<EvidenceQueryRow>),
     NotReady(NotReadyReason),
@@ -533,12 +501,6 @@ async fn fetch_rows_inner(
         })
 }
 
-/// What a read that produced no rows answers.
-///
-/// INVARIANT: the classification shares the one classifier the metric label
-/// records through, so a message can never map to two different classes. Only
-/// an absent relation is an answer; everything else, `UNKNOWN_IDENTIFIER`
-/// included, is the failure it is.
 fn read_outcome(
     message: &str,
     kind: QueryKind,
@@ -620,8 +582,6 @@ mod tests {
         }
     }
 
-    /// An absent table (60) or database (81) is the answer "nothing here yet",
-    /// so the read carries no status at all.
     #[test]
     fn an_absent_relation_reads_as_not_ready() {
         for message in [
@@ -633,8 +593,6 @@ mod tests {
         }
     }
 
-    /// Code 47 means the relation is there and its columns disagree with the
-    /// deployed code — the one thing an empty answer would hide.
     #[test]
     fn a_column_the_relation_does_not_have_still_fails() {
         use axum::http::StatusCode;
@@ -652,8 +610,6 @@ mod tests {
         use axum::http::StatusCode;
 
         let cases = [
-            // A failure that merely quotes an absent relation is still a
-            // failure: the code it reports is its own, not the nested one.
             (
                 "Code: 279. All connection tries failed: Code: 60. (UNKNOWN_TABLE)",
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -664,7 +620,6 @@ mod tests {
                 StatusCode::TOO_MANY_REQUESTS,
             ),
             ("syntax error", StatusCode::INTERNAL_SERVER_ERROR),
-            // A longer code sharing the prefix must not read as missing-relation 60.
             ("Code: 600. novel", StatusCode::INTERNAL_SERVER_ERROR),
             ("Code: 60 no period", StatusCode::INTERNAL_SERVER_ERROR),
         ];
@@ -727,8 +682,6 @@ mod tests {
         assert!(acquire_query_permit().await.is_ok());
     }
 
-    /// The page a read answers when the relation went missing under it: the
-    /// columns come off the plan, since there are no rows to read them from.
     #[test]
     fn a_not_ready_page_carries_the_columns_the_plan_declares_and_no_rows() {
         use crate::domain::metric_definitions::ComputationSpec;

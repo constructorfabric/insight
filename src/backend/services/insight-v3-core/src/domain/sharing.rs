@@ -1,6 +1,3 @@
-//! Granting dashboards and folders to people or to everyone, and handing one
-//! whose owner is no longer an administrator to one who is.
-
 use std::fmt;
 
 use async_trait::async_trait;
@@ -16,7 +13,6 @@ use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
 use crate::domain::folders::{DefinitionStore, FolderId, MAX_FOLDERS, SeenFolder};
 use crate::domain::tags::MAX_TAGS;
 
-/// What a grant is on.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Shared<'a> {
     Dashboard(&'a DefinitionId),
@@ -39,7 +35,6 @@ impl Shared<'_> {
     }
 }
 
-/// One grant of a dashboard or a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Grant {
     pub(crate) grantee: Grantee,
@@ -48,8 +43,6 @@ pub(crate) struct Grant {
     pub(crate) created_at: DateTime<Utc>,
 }
 
-/// A dashboard or a folder whose owner no longer holds the administrator
-/// role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Orphan {
     pub(crate) id: String,
@@ -58,35 +51,23 @@ pub(crate) struct Orphan {
     pub(crate) updated_at: DateTime<Utc>,
 }
 
-/// What a hand-over came to; only [`Handover::Handed`] changed anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Handover {
     Handed,
-    /// The owner read before the hand-over no longer owned it.
     OwnerChanged,
-    /// It would take the new owner past their cap: [`MAX_TAGS`] for a
-    /// dashboard's tags, [`MAX_FOLDERS`] for a folder.
     RecipientFull,
 }
 
-/// What setting a grant came to; only [`Granting::Done`] changed anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Granting {
     Done,
-    /// The one setting it no longer owns it or holds an editor grant on it,
-    /// to them or to everyone.
     NotSharer,
-    /// The grantee owns it now.
     ToOwner,
 }
 
-/// What withdrawing a grant came to; only [`Withdrawal::Done`] changed
-/// anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Withdrawal {
     Done,
-    /// The one withdrawing it no longer owns it or holds an editor grant on
-    /// it, to them or to everyone.
     NotSharer,
 }
 
@@ -98,15 +79,8 @@ pub(crate) struct OrphanPage {
 
 #[async_trait]
 pub(crate) trait Grants: Send + Sync + fmt::Debug {
-    /// Every grant of it, oldest first.
     async fn grants_of(&self, shared: Shared<'_>) -> Result<Vec<Grant>, DefinitionStoreError>;
 
-    /// Grants it to `grantee` at `level` as `by`; granting again sets the
-    /// level.
-    ///
-    /// INVARIANT: lands only while `by` owns it or holds an editor grant on
-    /// it to them or to everyone, and `grantee` does not own it, as the
-    /// grant is written.
     async fn grant(
         &self,
         shared: Shared<'_>,
@@ -115,11 +89,6 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
         by: PersonId,
     ) -> Result<Granting, DefinitionStoreError>;
 
-    /// Withdraws `grantee`'s grant as `by`, leaving every pin and entry in
-    /// place.
-    ///
-    /// INVARIANT: lands only while `by` owns it or holds an editor grant on
-    /// it to them or to everyone, as the grant is removed.
     async fn withdraw(
         &self,
         shared: Shared<'_>,
@@ -127,9 +96,6 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
         by: PersonId,
     ) -> Result<Withdrawal, DefinitionStoreError>;
 
-    /// Makes `to` the dashboard's owner if `from` still is, dropping any
-    /// grant `to` held and moving its tags into `to`'s scope under the same
-    /// names, all or nothing.
     async fn transfer(
         &self,
         dashboard: &DefinitionId,
@@ -137,9 +103,6 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
         to: PersonId,
     ) -> Result<Handover, DefinitionStoreError>;
 
-    /// Makes `to` the folder's owner if `from` still is and `to` owns fewer
-    /// than [`MAX_FOLDERS`], dropping any grant `to` held; its other grants
-    /// and its entries stay.
     async fn transfer_folder(
         &self,
         folder: FolderId,
@@ -147,16 +110,12 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
         to: PersonId,
     ) -> Result<Handover, DefinitionStoreError>;
 
-    /// One page of the owned dashboards whose owner is none of
-    /// `administrators`, ordered by name, then id.
     async fn page_orphaned(
         &self,
         administrators: &[PersonId],
         page: Page,
     ) -> Result<OrphanPage, DefinitionStoreError>;
 
-    /// One page of the owned folders with at least one grant whose owner is
-    /// none of `administrators`, ordered by name, then id.
     async fn page_orphaned_folders(
         &self,
         administrators: &[PersonId],
@@ -164,16 +123,12 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
     ) -> Result<OrphanPage, DefinitionStoreError>;
 }
 
-/// Who holds the administrator role right now, and who exists, as identity
-/// answers it.
 #[async_trait]
 pub(crate) trait Directory: Send + Sync {
     async fn holds_admin(&self, person: PersonId) -> Result<bool, AdministratorsError>;
 
-    /// Every current administrator.
     async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError>;
 
-    /// Whether identity knows a person by this id.
     async fn knows(&self, person: PersonId) -> Result<bool, AdministratorsError>;
 }
 
@@ -249,7 +204,6 @@ fn no_longer_sharer(shared: Shared<'_>) -> SharingError {
     }
 }
 
-/// The sharing operations, as one administrator.
 pub(crate) struct Sharing<'a> {
     store: &'a dyn DefinitionStore,
     directory: &'a dyn Directory,
@@ -340,7 +294,6 @@ impl<'a> Sharing<'a> {
         Ok(())
     }
 
-    /// The owner of something the caller may share, or why they may not.
     async fn shareable(&self, shared: Shared<'_>) -> Result<Owner, SharingError> {
         let (owner, access) = match shared {
             Shared::Dashboard(id) => {
@@ -357,8 +310,6 @@ impl<'a> Sharing<'a> {
         Ok(owner)
     }
 
-    /// Refuses a grant to the owner, whose access is not one, and to a
-    /// person identity does not know.
     async fn grantable(&self, grantee: Grantee, owner: Owner) -> Result<(), SharingError> {
         let Grantee::Person(person) = grantee else {
             return Ok(());
@@ -387,8 +338,6 @@ impl<'a> Sharing<'a> {
             .ok_or(SharingError::FolderNotFound(id))
     }
 
-    /// The current administrators, refused when the listing leaves out the
-    /// administrator asking.
     async fn administrators(&self) -> Result<Vec<PersonId>, SharingError> {
         let administrators = self.directory.current().await?;
         if !administrators.contains(&self.caller.person) {
@@ -402,16 +351,12 @@ impl<'a> Sharing<'a> {
         Ok(administrators)
     }
 
-    /// The dashboards whose owner is not a current administrator; an
-    /// administrator listing that may be cut short fails the whole answer.
     pub(crate) async fn orphaned(&self, page: Page) -> Result<OrphanPage, SharingError> {
         let administrators = self.administrators().await?;
 
         Ok(self.store.page_orphaned(&administrators, page).await?)
     }
 
-    /// The folders shared with someone whose owner is not a current
-    /// administrator.
     pub(crate) async fn orphaned_folders(&self, page: Page) -> Result<OrphanPage, SharingError> {
         let administrators = self.administrators().await?;
 
@@ -421,11 +366,6 @@ impl<'a> Sharing<'a> {
             .await?)
     }
 
-    /// Hands an orphaned dashboard to a current administrator.
-    ///
-    /// A dashboard whose owner is still an administrator is answered as
-    /// missing unless the caller sees it, so the route reveals no private
-    /// dashboard.
     pub(crate) async fn transfer(
         &self,
         dashboard: &DefinitionId,
@@ -462,8 +402,6 @@ impl<'a> Sharing<'a> {
         Ok(())
     }
 
-    /// Hands an orphaned folder - one shared with someone, whose owner is no
-    /// longer an administrator - to a current administrator.
     pub(crate) async fn transfer_folder(
         &self,
         folder: FolderId,
@@ -520,10 +458,6 @@ impl<'a> Sharing<'a> {
         Err(SharingError::RecipientNotAdministrator(noun))
     }
 
-    /// Whether `owner` no longer holds the administrator role. Where the
-    /// caller cannot see the thing, any other answer is that it is missing,
-    /// so neither the role nor an identity failure tells a private one from
-    /// an absent one.
     async fn owner_left(
         &self,
         seen: bool,

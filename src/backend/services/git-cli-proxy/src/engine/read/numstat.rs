@@ -3,13 +3,6 @@ use std::path::Path;
 
 use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
-/// One changed path inside one commit: status and the object id of each side
-/// come from the tree diff (`--raw`), line counts from `--numstat`.
-///
-/// The oid pair is the content identity of the change — the same content
-/// entering a repository on two lines of history carries one post-image oid,
-/// however the two commits differ. A side that does not exist (the pre-image
-/// of an add, the post-image of a delete) is `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileStat {
     pub filename: String,
@@ -59,16 +52,11 @@ impl FileStatus {
 
 const COMMIT_MARK: &str = "\u{1e}commit ";
 
-/// Commits per `git log` invocation; same rationale as the patches reader —
-/// the runner materialises a child's whole stdout, so the invocation is the
-/// bound that matters.
 #[cfg(not(test))]
 const STAT_BATCH: usize = 128;
-/// Small under test so batching is observable without a huge fixture.
 #[cfg(test)]
 pub(super) const STAT_BATCH: usize = 2;
 
-/// Per-commit aggregate of one commit's file changes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CommitTotals {
     pub changed_files: u64,
@@ -76,16 +64,6 @@ pub struct CommitTotals {
     pub deletions: u64,
 }
 
-/// Per-file stats for an explicit set of commits, keyed by sha. Requires the
-/// touched blobs to be present locally (see `blobs::prefetch`).
-///
-/// Retention stops on the first whole batch that carries `max_files`; a
-/// commit after it is absent from the result, which the caller must treat as
-/// unread rather than empty. `shas` must be in page order for that to hold.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
 pub async fn read(
     runner: &GitRunner,
     git_dir: &Path,
@@ -107,17 +85,6 @@ pub async fn read(
     Ok(collected)
 }
 
-/// Per-commit totals for an explicit set of commits.
-///
-/// The `/v1/commits` shape: it never emits a per-file row, so holding one
-/// `FileStat` per changed path — which a wide monorepo commit multiplies by
-/// thousands — buys nothing. Each batch is aggregated and its detail dropped,
-/// leaving peak memory proportional to the PAGE, not to how wide its commits
-/// are.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
 pub async fn totals(
     runner: &GitRunner,
     git_dir: &Path,
@@ -180,7 +147,6 @@ async fn read_batch(
     Ok(parse(&text))
 }
 
-/// What a `--raw` record says about one changed path, keyed by new-path.
 #[derive(Debug, Clone)]
 struct RawRecord {
     status: FileStatus,
@@ -189,20 +155,9 @@ struct RawRecord {
     post_image_oid: Option<String>,
 }
 
-/// Status and object ids per new-path, harvested from `--raw` lines.
 type Statuses = HashMap<String, RawRecord>;
-/// Counts per new-path, harvested from `--numstat` lines.
 type Counts = HashMap<String, (Option<u64>, Option<u64>, bool)>;
 
-/// Walk the NUL-delimited stream git emits under `-z`.
-///
-/// INVARIANT: a path is only ever taken by POSITION — the field after a
-/// record head, never a field scanned for structure. A file whose name
-/// happens to look like a record head therefore cannot forge one.
-///
-/// Records come in two shapes, both NUL-terminated:
-///   `:<modes> <oids> <status>` then one path, or two for a rename or copy
-///   `<added>\t<deleted>\t<path>`, or `<added>\t<deleted>\t` then two paths
 fn parse(text: &str) -> HashMap<String, Vec<FileStat>> {
     let mut result: HashMap<String, Vec<FileStat>> = HashMap::new();
     let mut sha: Option<String> = None;
@@ -281,8 +236,6 @@ fn merge(order: &[String], statuses: &Statuses, counts: &Counts) -> Vec<FileStat
         .collect()
 }
 
-/// `:<src_mode> <dst_mode> <src_oid> <dst_oid> <status>` and the path(s) that
-/// follow it. A rename or a copy carries two: the pre-image, then the post.
 fn raw_record<'a>(
     meta: &str,
     fields: &mut impl Iterator<Item = &'a str>,
@@ -309,18 +262,14 @@ fn raw_record<'a>(
     ))
 }
 
-/// The oid of one side of a raw record, or `None` when that side has none —
-/// the all-zero oid of an added or deleted path, or a field that is not an
-/// object id at all.
 fn object_oid(field: Option<&str>) -> Option<String> {
     field
         .filter(|oid| super::blobs::is_object_oid(oid))
         .map(str::to_owned)
 }
 
-/// `<added>\t<deleted>\t<path>` — binary files report `-` for both counts. A
-/// rename leaves the path field empty and follows with the two paths, which is
-/// why `-z` needs no equivalent of the `{old => new}` spelling.
+// Binary files report `-` for both counts. A rename leaves the path field
+// empty and follows with the two paths.
 fn numstat_record<'a>(
     head: &str,
     fields: &mut impl Iterator<Item = &'a str>,
@@ -356,9 +305,6 @@ mod tests {
 
     const MARK: &str = COMMIT_MARK;
 
-    /// One commit's worth of the NUL-delimited stream, as git lays it out:
-    /// the pretty format, a newline, then every record's head glued to the
-    /// paths that follow it.
     fn stream(commits: &[(&str, &[&str])]) -> String {
         let mut out = String::new();
         for (i, (sha, records)) in commits.iter().enumerate() {
@@ -447,8 +393,6 @@ mod tests {
 
     #[test]
     fn a_path_is_reported_exactly_however_it_is_spelled() {
-        // Every one of these is C-quoted by git without `-z`, so the row would
-        // otherwise carry the escaped spelling instead of the file's name.
         let cases = vec![
             ("space", "dir with space/a b.txt"),
             ("tab", "tab\there.txt"),
@@ -496,8 +440,6 @@ mod tests {
         let Some(stats) = parse(&text).get("aaa").cloned() else {
             panic!("commit missing")
         };
-        // Both records name `docs/new.md`; the last status wins and the row
-        // is not duplicated.
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].filename, "docs/new.md");
         assert_eq!(stats[0].previous_filename.as_deref(), Some("docs/old.md"));

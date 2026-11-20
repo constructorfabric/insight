@@ -12,7 +12,6 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-# Line-capture helper for the per-service contract tests (insight#2488 AC-3).
 test-support = ["dep:serde_json", "dep:thiserror", "dep:tokio", "dep:tracing-subscriber"]
 
 [dependencies]

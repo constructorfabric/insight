@@ -17,7 +17,6 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ADMIN_ROLE_ID = "a4d11000-0000-4000-8000-000000000001"
-# Who the caller is, which every write that changes a dataset records.
 PERSON_ID = "00000000-0000-4000-8000-0000000000aa"
 
 
@@ -27,8 +26,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404, "only /v1/me is stubbed")
             return
 
-        # No authorization is no caller: the service must send the header it
-        # was given, and a stub that ignored it would hide that.
         if not self.headers.get("authorization"):
             self.send_error(401, "no authorization forwarded")
             return

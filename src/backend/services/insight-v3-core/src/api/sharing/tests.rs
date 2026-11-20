@@ -23,13 +23,9 @@ mod visibility;
 
 pub(super) const OWNER: &str = "0192a1b2-0000-7000-8000-00000000000a";
 pub(super) const VIEWER: &str = "0192a1b2-0000-7000-8000-00000000000b";
-/// An administrator who neither owns nor was shared anything.
 pub(super) const STRANGER: &str = "0192a1b2-0000-7000-8000-00000000000c";
-/// Someone who no longer holds the administrator role.
 pub(super) const FORMER: &str = "0192a1b2-0000-7000-8000-00000000000d";
-/// A signed-in person without the administrator role.
 pub(super) const MEMBER: &str = "0192a1b2-0000-7000-8000-00000000000e";
-/// A person identity does not know.
 pub(super) const UNKNOWN: &str = "0192a1b2-0000-7000-8000-00000000000f";
 
 pub(super) fn person(raw: &str) -> PersonId {
@@ -109,7 +105,6 @@ impl Harness {
         }
     }
 
-    /// The next warehouse read fails, as a warehouse that is down does.
     pub(super) fn failing_read(&self) {
         self.clickhouse.add(clickhouse::test::handlers::failure(
             clickhouse::test::status::INTERNAL_SERVER_ERROR,
@@ -155,7 +150,6 @@ impl Harness {
         Answer { status, body }
     }
 
-    /// A dashboard `owner` makes through the route, by its new id.
     pub(super) async fn dashboard_of(&self, owner: &str, name: &str) -> String {
         self.made(
             owner,
@@ -183,7 +177,6 @@ impl Harness {
             .to_owned()
     }
 
-    /// A dashboard stored before ownership, under an id the case chooses.
     pub(super) async fn ownerless(&self, id: &str) {
         let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{error}"));
         self.definitions
@@ -196,8 +189,6 @@ impl Harness {
             .unwrap_or_else(|error| panic!("{error}"));
     }
 
-    /// A dashboard held by `owner` without going through a route, for an
-    /// owner who can no longer reach one.
     pub(super) async fn held_by(&self, owner: &str, id: &str) {
         let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{error}"));
         self.definitions
@@ -210,13 +201,11 @@ impl Harness {
             .unwrap_or_else(|error| panic!("{error}"));
     }
 
-    /// Grants a dashboard to `with` as a viewer.
     pub(super) async fn share(&self, caller: &str, dashboard: &str, with: &str) -> Answer {
         self.grant(caller, "dashboards", dashboard, with, "viewer")
             .await
     }
 
-    /// Grants a dashboard or a folder, by its segment, at `level`.
     pub(super) async fn grant(
         &self,
         caller: &str,
@@ -254,7 +243,6 @@ impl Harness {
         .await
     }
 
-    /// A folder `owner` makes through the route, by its new id.
     pub(super) async fn folder_of(&self, owner: &str, name: &str) -> String {
         let made = self
             .send(owner, "POST", "/v1/folders", Some(json!({ "name": name })))
@@ -267,7 +255,6 @@ impl Harness {
             .to_owned()
     }
 
-    /// Puts the dashboard in the folder as `caller`.
     pub(super) async fn add(&self, caller: &str, folder: &str, dashboard: &str) -> Answer {
         self.send(
             caller,

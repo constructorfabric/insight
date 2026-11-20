@@ -1,13 +1,3 @@
-//! HTTP-level tests for `/v1/ai*` against a live MariaDB.
-//!
-//! Same convention as [`crate::api::http_live_tests`]: `#[ignore]`d, silently
-//! skipped when `INTEGRATION_TESTS_MARIADB_URL` is unset, one fresh tenant per
-//! test so the suite is parallel-safe.
-//!
-//! The identity service is unreachable on purpose. Admin-gated writes therefore
-//! fail closed with a 500 ("could not verify"), which is the behaviour under
-//! test — a reachable identity is covered by the compose e2e.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -34,10 +24,6 @@ const TOKEN: &str = "sk-ant-api03-live-test-token-wxyz";
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-/// The live DB, or `None` when this run is not meant to have one.
-///
-/// A set-but-unreachable URL is an error, never a skip: swallowing it would
-/// turn a broken database into a green suite.
 async fn connect_or_skip() -> Result<Option<DatabaseConnection>, Box<dyn std::error::Error>> {
     let Ok(url) = std::env::var(ENV_VAR) else {
         eprintln!("skipping: {ENV_VAR} not set");
@@ -56,9 +42,6 @@ fn enabled_config() -> GearConfig {
             token_encryption_key: BASE64.encode([11_u8; KEY_BYTES]),
             api_base: "http://127.0.0.1:1".to_owned(),
             request_timeout_secs: 1,
-            // Identity is unreachable in this harness, so an admin check
-            // could only ever fail closed. The explain paths below are about
-            // the key and the upstream; the gate has its own test.
             admin_only: false,
             ..AiAssistConfig::default()
         },

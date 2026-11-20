@@ -76,8 +76,6 @@ async fn compute_metrics(
         .map(|metric| (0..metric.views.len()).map(|_| None).collect())
         .collect();
 
-    // A query that does not answer settles only its own view slots; the other
-    // queries keep running so one broken metric cannot empty the response.
     let mut results = stream::iter(planned)
         .map(|query| execute_planned(state, req, query))
         .buffer_unordered(QUERY_CONCURRENCY);
@@ -87,8 +85,6 @@ async fn compute_metrics(
         }
     }
 
-    // Not-ready views are left out: they are answered, not failed, and their
-    // one line is the throttled relation warning the read already emitted.
     let failed_views = views_by_metric
         .iter()
         .flatten()
@@ -195,8 +191,6 @@ async fn authorize_person_request(
     .await
 }
 
-/// The unattributed share is an organisation-wide figure: a viewer whose sight
-/// is a subtree may not read it.
 async fn authorize_unattributed_request(
     state: &AppState,
     headers: &HeaderMap,
@@ -209,7 +203,6 @@ async fn authorize_unattributed_request(
     super::require_admin(state, headers, unattributed_denied).await
 }
 
-/// Under a flat policy every viewer already sees the whole organisation.
 fn unattributed_needs_admin(visibility_policy: VisibilityPolicy) -> bool {
     match visibility_policy {
         VisibilityPolicy::Flat => false,
@@ -229,8 +222,6 @@ struct MetricViewResult {
     view: Result<MetricResultViewDto, ViewAbsence>,
 }
 
-// A ranking that does not answer settles keyed by its policy, so only the
-// views that asked for that ranking carry its outcome.
 async fn collect_rankings(
     state: &Arc<AppState>,
     req: &ValidatedMetricResultsRequest,
@@ -416,9 +407,6 @@ fn assembly_failure(error: &CanonicalError, comment: &str) -> ViewAbsence {
     ViewFailure::from_assembly_error(comment).into()
 }
 
-// Detail routing only: identity being unreachable must not turn a partial
-// answer into a 500, so an unanswerable admin check degrades to the generic
-// message rather than failing the request.
 async fn admin_for_error_detail(state: &AppState, headers: &HeaderMap) -> bool {
     match super::is_admin_caller(state, headers).await {
         Ok(admin) => admin,
@@ -429,8 +417,6 @@ async fn admin_for_error_detail(state: &AppState, headers: &HeaderMap) -> bool {
     }
 }
 
-// Batching collapses the per-metric query_log signal; the log_comment keeps
-// per-query attribution measurable (`system.query_log.log_comment`).
 fn batch_log_comment(kind: &str, items: &[BatchItem]) -> String {
     let keys = items
         .iter()

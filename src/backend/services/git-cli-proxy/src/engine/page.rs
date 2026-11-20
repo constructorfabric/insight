@@ -3,27 +3,12 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64URL;
 
 use super::key::CacheKey;
 
-/// Prefix of the entry's directory hash carried in the token. Long enough that
-/// two entries never collide by accident, which is all it has to be — see the
-/// invariant below.
 const ENTRY_BINDING_LEN: usize = 16;
 
-/// Position inside one ascending walk, bound to the repository snapshot it was
-/// produced from. The key is two-part because every paginated endpoint orders
-/// by a pair: commits and file changes by `(ordinal, sha)`, branches by
-/// `(name, "")`, authors by `(author_email, "")`.
-///
-/// INVARIANT: the token is not an authorization claim — `entry` keeps a cursor
-/// minted for one repository from continuing a different one at the same
-/// generation, but it grants nothing. Access is decided by the credential
-/// fingerprint recorded on the entry, every request, token or not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageToken {
     pub entry: String,
     pub generation: u64,
-    /// The clone the cursor was minted against. `entry` survives an eviction
-    /// and `generation` restarts at `1` after one, so this is the only field
-    /// that tells a re-cloned repository apart from the one that was walked.
     pub incarnation: String,
     pub primary: String,
     pub secondary: String,
@@ -55,9 +40,6 @@ impl PageToken {
         BASE64URL.encode(plain)
     }
 
-    /// # Errors
-    ///
-    /// [`MalformedToken`] when the token is not one this service produced.
     pub fn decode(raw: &str) -> Result<Self, MalformedToken> {
         let bytes = BASE64URL.decode(raw).map_err(|_| MalformedToken)?;
         let plain = String::from_utf8(bytes).map_err(|_| MalformedToken)?;
@@ -81,8 +63,6 @@ impl PageToken {
         })
     }
 
-    /// Whether `(primary, secondary)` lies strictly after this position in the
-    /// ascending walk order.
     #[must_use]
     pub fn precedes(&self, primary: &str, secondary: &str) -> bool {
         (primary, secondary) > (self.primary.as_str(), self.secondary.as_str())

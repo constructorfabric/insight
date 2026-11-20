@@ -183,8 +183,6 @@ fn build_xlsx(
     Ok(output.into_inner())
 }
 
-// INVARIANT: serialization stops at the deadline so the concurrency permit is
-// released at the client-visible limit, not when the blocking task finishes.
 fn check_export_deadline(
     row_index: usize,
     deadline: std::time::Instant,

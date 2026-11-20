@@ -7,7 +7,6 @@ fn declaration(value: serde_json::Value) -> Declaration {
     serde_json::from_value(value).unwrap_or_else(|error| panic!("the fixture parses: {error}"))
 }
 
-/// A declaration with nothing wrong with it, for a test to spoil one field of.
 fn sound() -> serde_json::Value {
     json!({
         "title": "QA test runs",
@@ -37,8 +36,6 @@ fn a_sound_declaration_is_accepted() {
 
 #[test]
 fn every_problem_is_reported_at_once() {
-    // The author corrects a declaration in one pass, so the first mistake must
-    // not hide the rest.
     let found = violations(
         "qa_test_runs",
         json!({
@@ -154,8 +151,6 @@ fn a_path_that_cannot_address_a_key_is_refused() {
 
 #[test]
 fn the_type_decides_what_a_property_may_be_attached_to() {
-    // The main date must be a datetime, a person a string, a substitute a
-    // string — while the role stays advisory and constrains nothing.
     let cases = [
         (
             json!({ "name": "f", "path": "f", "type": "string", "default_clock": true }),
@@ -182,8 +177,6 @@ fn the_type_decides_what_a_property_may_be_attached_to() {
 
 #[test]
 fn a_role_that_disagrees_with_the_type_is_accepted_because_it_only_describes() {
-    // A numeric identifier is grouped by, and calling it a measurable does not
-    // stop that; the type is what decides.
     let found = violations(
         "qa_test_runs",
         json!({

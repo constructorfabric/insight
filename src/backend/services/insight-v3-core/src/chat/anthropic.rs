@@ -1,5 +1,3 @@
-//! Talking to the model, and reading what comes back.
-
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -123,7 +121,6 @@ impl Message {
         }
     }
 
-    /// The assistant's own prose, from a turn the reader's panel sent back.
     pub(super) fn said(content: impl Into<String>) -> Self {
         Self {
             role: "assistant",
@@ -131,8 +128,6 @@ impl Message {
         }
     }
 
-    /// The assistant's own turn, echoed back verbatim.
-    ///
     /// INVARIANT: the `tool_use` block it produced must precede the result we
     /// return for it.
     pub(super) fn assistant(blocks: Value) -> Self {
@@ -142,7 +137,6 @@ impl Message {
         }
     }
 
-    /// The answer to one `tool_use`, addressed by its id.
     pub(super) fn tool_result(id: &str, content: &str) -> Self {
         Self {
             role: "user",
@@ -154,7 +148,6 @@ impl Message {
         }
     }
 
-    /// A refusal, addressed to the call that earned it.
     pub(super) fn tool_error(id: &str, content: &str) -> Self {
         Self {
             role: "user",
@@ -175,8 +168,6 @@ pub(super) struct MessagesResponse {
 }
 
 impl MessagesResponse {
-    /// The turn as the API needs it echoed back: a tool result must follow the
-    /// assistant turn that asked for it, carrying the same `tool_use` block.
     pub(super) fn blocks(&self) -> Value {
         Value::Array(
             self.content
@@ -197,8 +188,6 @@ impl MessagesResponse {
         )
     }
 
-    /// The id of the call that ended the turn, so a refusal can be addressed
-    /// to it. Absent when the model replied in prose instead of calling.
     pub(super) fn terminal_tool_id(&self) -> Option<&str> {
         self.content
             .iter()
@@ -208,7 +197,6 @@ impl MessagesResponse {
             .map(|block| block.id.as_str())
     }
 
-    /// The datasets this turn asks about, when it asks rather than answers.
     pub(super) fn look_up(&self) -> Option<LookUp> {
         let block = self
             .content
@@ -239,9 +227,6 @@ impl MessagesResponse {
             .join("\n\n")
     }
 
-    /// The forced tool call's arguments, tagged with the intent the chosen
-    /// tool implies, in the shape `Proposal::parse` reads. Falls back to the
-    /// text blocks when a reply arrives without a tool call at all.
     pub(super) fn proposal_json(&self) -> String {
         for block in &self.content {
             if block.kind != "tool_use" {
@@ -263,7 +248,6 @@ impl MessagesResponse {
     }
 }
 
-/// A request for the columns of some tables.
 #[derive(Debug)]
 pub(super) struct LookUp {
     id: String,
@@ -271,7 +255,6 @@ pub(super) struct LookUp {
 }
 
 impl LookUp {
-    /// The `tool_use` id the result must be addressed to.
     pub(super) fn id(&self) -> &str {
         &self.id
     }
@@ -285,7 +268,6 @@ impl LookUp {
 struct ContentBlock {
     #[serde(rename = "type", default)]
     kind: String,
-    /// Present on a `tool_use`; a tool result is addressed by it.
     #[serde(default)]
     id: String,
     #[serde(default)]

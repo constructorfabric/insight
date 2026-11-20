@@ -45,9 +45,6 @@ fn names(tables: &[TableSchema]) -> Vec<String> {
     tables.iter().map(TableSchema::qualified).collect()
 }
 
-/// The statement itself is the filter: the mock answers whatever it is asked,
-/// so the text is what proves the engine's databases and the datasets
-/// database are never offered.
 #[test]
 fn the_listing_leaves_out_the_engines_databases_and_the_datasets_database() {
     assert!(LIST_COLUMNS.contains("NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')"));
@@ -158,8 +155,6 @@ async fn a_table_is_found_by_its_database_and_name_alone() {
     assert_eq!(absent, None);
 }
 
-/// The mock holds one answer. A second listing that asked again would find
-/// nothing to answer with and fail, so a second success proves the cache.
 #[tokio::test]
 async fn a_second_listing_inside_the_ttl_asks_clickhouse_nothing() {
     let (_mock, catalog) = catalog_over(vec![column("silver", "fct_commit", "sha", "String")]);

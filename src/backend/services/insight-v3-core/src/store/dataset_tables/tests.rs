@@ -10,8 +10,6 @@ fn tables(mock: &Mock) -> DatasetTables {
     ))
 }
 
-/// What `system.databases` answers a provision's first question with: a plain
-/// database, which is what a standalone topology expects.
 fn plain_database(mock: &Mock) {
     mock.add(handlers::provide(vec![String::from("Atomic")]));
 }
@@ -108,8 +106,6 @@ async fn a_table_already_of_the_right_shape_is_this_attempt_repeating_itself() -
     Ok(())
 }
 
-/// The database is create-databases.sh's to make, so a provision against a
-/// missing one, or one of the wrong engine, stops before any shape is read.
 #[tokio::test]
 async fn a_provision_refuses_a_datasets_database_of_the_wrong_engine() {
     let mock = Mock::new();
@@ -150,8 +146,6 @@ async fn dropping_names_the_table_and_tolerates_its_absence() -> R {
     Ok(())
 }
 
-/// The warehouse's own "stopped waiting" is a timeout here too: the statement
-/// is still queued, so the caller must treat it as one whose fate is unknown.
 #[tokio::test]
 async fn a_statement_the_warehouse_stopped_waiting_on_is_a_timeout() {
     let mock = Mock::new();
@@ -165,7 +159,6 @@ async fn a_statement_the_warehouse_stopped_waiting_on_is_a_timeout() {
     );
 }
 
-/// A warehouse that takes every connection and never says a word back.
 async fn silent_warehouse() -> Result<String, std::io::Error> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -179,8 +172,6 @@ async fn silent_warehouse() -> Result<String, std::io::Error> {
     Ok(format!("http://{address}"))
 }
 
-/// A warehouse that never answers is cut off by this service's own bound,
-/// and reported the same way: the statement may still land.
 #[tokio::test]
 async fn a_statement_the_warehouse_never_answers_ends_at_this_services_bound() -> R {
     let tables = DatasetTables::new(insight_clickhouse::Client::new(
@@ -198,8 +189,6 @@ async fn a_statement_the_warehouse_never_answers_ends_at_this_services_bound() -
     Ok(())
 }
 
-/// A client that dials nothing: these pin the statement `provision` would
-/// send, which is decided before any of it reaches a server.
 fn tables_on(database: &str, topology: insight_clickhouse::Topology) -> DatasetTables {
     DatasetTables::new(insight_clickhouse::Client::new(
         insight_clickhouse::Config::new("http://ch:8123", database).with_topology(topology),
@@ -210,8 +199,6 @@ fn provision_sql(tables: &DatasetTables, table: &str) -> Result<String, DatasetT
     Ok(tables.client.ddl_sql(&tables.ingest_spec(table))?)
 }
 
-/// A table is recognised as this service's by the key `system.tables` reads
-/// back, so the key the create writes has to render into exactly that text.
 #[test]
 fn the_sort_key_the_create_writes_is_the_one_a_reader_recognises() -> R {
     let tables = tables_on("insight_datasets", insight_clickhouse::Topology::Standalone);
@@ -226,8 +213,6 @@ fn the_sort_key_the_create_writes_is_the_one_a_reader_recognises() -> R {
     Ok(())
 }
 
-/// A `Replicated` database replays the create on every replica but the rows
-/// follow the engine, so a clustered install provisions a `ReplicatedMergeTree`.
 #[test]
 fn a_clustered_install_provisions_a_replicated_table() -> R {
     let clustered = tables_on(
@@ -263,7 +248,6 @@ fn the_create_names_the_datasets_database_and_no_other() {
     );
 }
 
-/// A warehouse that records what it was asked, on a clustered install.
 async fn clustered_capture()
 -> Result<(insight_clickhouse::test_support::Capture, DatasetTables), std::io::Error> {
     let capture = insight_clickhouse::test_support::Capture::start().await?;
@@ -280,10 +264,6 @@ const QUORUM_PAIR: [&str; 3] = [
     "select_sequential_consistency",
 ];
 
-/// A record is never read back by the request that stored it, and the
-/// preview follows no write of its own, so neither takes the quorum pair: a
-/// sequential quorum would refuse the next client's insert into the same
-/// table, and a quorum-pinned read would throw on a lagging replica.
 #[tokio::test]
 async fn record_inserts_and_preview_reads_carry_no_quorum_pair() -> R {
     let (capture, tables) = clustered_capture().await?;
@@ -311,9 +291,6 @@ async fn record_inserts_and_preview_reads_carry_no_quorum_pair() -> R {
     Ok(())
 }
 
-/// A create or drop waits for the active replicas, inside this store's own
-/// bound: the warehouse reports a statement that did not finish before the
-/// store gives up on it, so a create that landed is not discarded.
 #[tokio::test]
 async fn a_statement_waits_for_the_active_replicas_within_the_bound() -> R {
     let (capture, tables) = clustered_capture().await?;

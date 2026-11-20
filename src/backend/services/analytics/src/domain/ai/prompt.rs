@@ -1,10 +1,7 @@
-//! Turning what people wrote into the two messages Claude is sent.
-
 use std::fmt::Write as _;
 
 use crate::migration::ai_assist_schema;
 
-/// The instructions a tenant gets until an admin writes its own.
 pub const DEFAULT_SYSTEM_PROMPT: &str = "\
 You explain a chart to the person looking at it. The payload carries every line \
 the chart draws with its buckets, and says whether the reading is one person's \
@@ -31,19 +28,12 @@ Do not re-read numbers the chart already shows; cite one only when it carries \
 the argument. Describe systems, never judge a person. No praise, no coaching, \
 no recommendations nobody asked for. Around 120 words.";
 
-/// One thing somebody wrote down, ready to be read into a prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub title: String,
     pub body: String,
 }
 
-/// Compose the system message: the instructions, then the organisation's
-/// context, then the caller's own.
-///
-/// Entries are read oldest first and stop at the character budget. A cut is
-/// stated in the prompt rather than made silently, so an answer missing a note
-/// can be explained by the text the model actually received.
 pub fn build_system_prompt(base: &str, tenant: &[Entry], person: &[Entry]) -> String {
     let mut out = String::from(base.trim());
     let mut budget = ai_assist_schema::MAX_CONTEXT_CHARS;
@@ -148,21 +138,12 @@ pub struct MetricSnapshot {
     pub series: Vec<SnapshotSeries>,
 }
 
-/// Longest any one snapshot field may be once it reaches the prompt.
 const MAX_FIELD_CHARS: usize = 300;
 
-/// Most readings one line can contribute.
 const MAX_TREND_POINTS: usize = 64;
 
-/// Most lines one chart may hand over.
 const MAX_SERIES: usize = 8;
 
-/// The user message: the snapshot as JSON, with a one-line instruction so an
-/// empty context still produces an answer about this metric.
-///
-/// Every field is clipped first. The snapshot arrives from the browser, so
-/// without a bound one request could hand the upstream a megabyte of text on
-/// the caller's own key.
 pub fn snapshot_message(snapshot: &MetricSnapshot) -> String {
     let body = serde_json::to_string_pretty(&clip_snapshot(snapshot))
         .unwrap_or_else(|_| "{\"error\":\"snapshot could not be encoded\"}".to_owned());
@@ -170,12 +151,6 @@ pub fn snapshot_message(snapshot: &MetricSnapshot) -> String {
     format!("Explain this metric reading:\n\n{body}")
 }
 
-/// Dates the model can trust, or none at all.
-///
-/// The axis is only meaningful when every line has one reading per date. A
-/// mismatched pair would have the model name the wrong bucket with total
-/// confidence, so the dates are dropped rather than sent misaligned — the
-/// prompt already copes with a snapshot that carries none.
 fn aligned_axis(dates: Vec<String>, series: &[SnapshotSeries]) -> Vec<String> {
     if dates.is_empty() {
         return dates;

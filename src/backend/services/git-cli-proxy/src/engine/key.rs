@@ -2,9 +2,6 @@ use toolkit_security::crypto::hash::Sha256;
 
 use crate::engine::url::CloneUrl;
 
-/// Cache identity of one repository: `(tenant, source, clone URL)`. Identical
-/// clone URLs under two sources are two isolated entries — access rights
-/// differ per source.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     pub tenant_id: String,
@@ -13,9 +10,6 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    /// On-disk directory name: hex sha256 over the NUL-joined key parts.
-    /// Repo names / URL fragments never become paths (traversal,
-    /// case-insensitive FS collisions).
     #[must_use]
     pub fn dir_name(&self) -> String {
         let mut hasher = Sha256::new();
@@ -65,7 +59,6 @@ mod tests {
                 key("t", "s2", "https://example.com/a.git"),
             ),
             ("url differs", key("t", "s", "https://example.com/b.git")),
-            // NUL joining keeps concatenation injective across field borders.
             (
                 "field boundary shifts",
                 key("ts", "", "https://example.com/a.git"),

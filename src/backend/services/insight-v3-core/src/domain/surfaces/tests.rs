@@ -9,8 +9,6 @@ use crate::store::definitions::memory::MemoryDefinitions;
 type R = Result<(), Box<dyn Error>>;
 
 impl Surfaces<'_> {
-    /// Stores a body under an id the test chooses, checked as a create checks
-    /// it, so the other bodies of a case can name it.
     async fn stored_as(
         &self,
         kind: DefinitionKind,
@@ -33,8 +31,6 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// A stand whose datasets stand ready, since every stored metric reads
-    /// one and is checked against what it declares.
     async fn new() -> Self {
         let client = || {
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(
@@ -49,12 +45,7 @@ impl Fixture {
             datasets: crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now()),
         };
 
-        for (named, declaration) in [
-            // Marks no main date, so a metric naming no clock of its own has
-            // none at all.
-            ("commits", commits()),
-            ("pull_requests", pull_requests()),
-        ] {
+        for (named, declaration) in [("commits", commits()), ("pull_requests", pull_requests())] {
             fixture
                 .a_ready_dataset(named, &declaration)
                 .await
@@ -64,7 +55,6 @@ impl Fixture {
         fixture
     }
 
-    /// Declares a dataset that stands, ready to be read.
     async fn a_ready_dataset(&self, named: &str, declaration: &serde_json::Value) -> R {
         let name = name(named);
         let attempt = self
@@ -106,7 +96,6 @@ impl Fixture {
     }
 }
 
-/// Who a case acts as unless it says otherwise.
 fn me() -> PersonId {
     PersonId::new(uuid::Uuid::from_u128(1))
 }
@@ -162,11 +151,9 @@ fn metric_body() -> serde_json::Value {
     })
 }
 
-/// The one field `commits` declares, and what a metric may ask of it.
 mod what_the_dataset_answers {
     use super::*;
 
-    /// Every violation a refusal carried, so a test can name the one it means.
     fn refused(error: &CustomError) -> Vec<(String, String)> {
         let CustomError::Unanswerable(violations) = error else {
             panic!("should be refused as unanswerable: {error:?}");
@@ -242,8 +229,6 @@ mod what_the_dataset_answers {
         assert_eq!(refused(&error)[0].0, "time.field");
     }
 
-    /// One answer carries every refusal, so an editor marks them all at once
-    /// rather than one round trip per mistake.
     #[tokio::test]
     async fn a_metric_wrong_in_several_places_is_refused_once_with_all_of_them() {
         let error = refusal_of(&json!({
@@ -265,8 +250,6 @@ mod what_the_dataset_answers {
         );
     }
 
-    /// Where a value sits, and whether it holds a person, are the
-    /// declaration's to answer.
     #[tokio::test]
     async fn a_metric_reaching_into_the_record_itself_is_refused_on_write() {
         let cases = [
@@ -333,8 +316,6 @@ mod what_the_dataset_answers {
         }
     }
 
-    /// Everything the compiler refuses, the write refuses too: a body stored
-    /// here and refused at every run is a definition nobody can act on.
     #[tokio::test]
     async fn a_metric_the_compiler_would_refuse_is_refused_on_write() {
         let cases = [
@@ -385,8 +366,6 @@ mod what_the_dataset_answers {
         }
     }
 
-    /// A trend metric names the bucket its windowed run injects; the same
-    /// metric answers an unwindowed run, which has no bucket to group by.
     #[tokio::test]
     async fn a_metric_may_group_by_the_bucket_a_window_injects() -> R {
         let fixture = Fixture::new().await;
@@ -1060,7 +1039,6 @@ mod duplicating_a_dashboard {
         Caller::administrator(person)
     }
 
-    /// A board of mine, in a folder of mine, tagged and pinned.
     async fn filed_tagged_and_pinned(
         fixture: &Fixture,
     ) -> Result<(DefinitionId, FolderName), Box<dyn Error>> {
@@ -1294,7 +1272,6 @@ mod duplicating_a_dashboard {
     }
 }
 
-/// A metric reading a dataset this stand never declared.
 fn over_a_dataset() -> serde_json::Value {
     json!({
         "dataset": "deploys",

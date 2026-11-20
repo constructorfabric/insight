@@ -1,12 +1,3 @@
-//! Insight Previews service (epic #1981, phase 1 — #2372).
-//!
-//! Boots as a gears-rust host on [`toolkit::bootstrap::run_server`] — same
-//! host pattern as `services/identity-resolution`. Auth is ENABLED: the
-//! `oidc-authn-plugin` verifies the gateway JWT and maps its claims into the
-//! request `SecurityContext`. Manages preview experiments: each is one FE
-//! build served under `/exp/<name>`, stored as a Deployment/Service/HTTPRoute
-//! trio in a dedicated namespace — Kubernetes is the only store.
-
 mod api;
 mod config;
 mod domain;
@@ -14,10 +5,8 @@ mod gear;
 mod infra;
 mod sweep;
 
-// System gears — linked via inventory for the REST host and the gateway-JWT
-// auth pipeline. `use … as _;` is load-bearing: the gears register through
-// `inventory` at link time, so an unreferenced crate is dropped and never
-// registers. Same set as the identity-resolution host.
+// `use … as _;` is load-bearing: the gears register through `inventory` at
+// link time, so an unreferenced crate is dropped and never registers.
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
@@ -78,9 +67,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Print the `OpenAPI` document in canonical JSON. Offline — see
-/// [`api::openapi_document`]. No logging subscriber is installed on this
-/// path, so stdout stays pure JSON for the drift gate to consume.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
     print!("{}", insight_openapi::canonical_json(&doc)?);

@@ -28,8 +28,6 @@ WHERE NOT EXISTS (SELECT 1 FROM dashboard_tags WHERE dashboard_tags.tag_id = tag
 
 const COUNT_TAGS: &str = "SELECT COUNT(*) AS total FROM tags WHERE owner_scope = ?";
 
-/// One entry per name whatever scope holds it: the name column compares
-/// without case, so grouping by it merges spellings, and one is kept.
 const LIST_TAGS: &str = "SELECT MIN(tags.name) AS name, COUNT(DISTINCT dashboards.id) AS dashboards
 FROM tags
 JOIN dashboard_tags ON dashboard_tags.tag_id = tags.id
@@ -59,7 +57,6 @@ struct SummaryRow {
     dashboards: i64,
 }
 
-/// What `owner_scope` holds for a scope: the owner, or empty for ownerless.
 pub(super) fn scope_value(scope: Owner) -> Value {
     scope
         .person()
@@ -124,7 +121,6 @@ async fn resolved(
     Ok(id)
 }
 
-/// The ids of `names` as tags of `scope`, made where missing, each once.
 async fn resolved_all(
     transaction: &DatabaseTransaction,
     scope: Owner,
@@ -162,7 +158,6 @@ async fn names_on(
         .collect()
 }
 
-/// Tags `to` with the names `from` carries, as tags of `scope`.
 pub(super) async fn carry_tags(
     transaction: &DatabaseTransaction,
     from: &DefinitionId,
@@ -184,9 +179,6 @@ pub(super) async fn carry_tags(
     Ok(())
 }
 
-/// Moves the dashboard's tags into `scope` under the same names, taking the
-/// spelling `scope` already holds of a name, and prunes what the scope they
-/// leave no longer uses.
 pub(super) async fn rescope_tags(
     transaction: &DatabaseTransaction,
     dashboard: &DefinitionId,

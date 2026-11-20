@@ -1,16 +1,3 @@
-//! The `analytics` gear.
-//!
-//! Hosts the analytics REST surface on the `api-gateway` system gear (the REST
-//! host) under `toolkit::bootstrap::run_server`. All runtime construction that
-//! used to live in `main.rs::run_server` — the self-managed MariaDB pool, its
-//! migrations + startup probe, the ClickHouse / Identity clients and the
-//! metric-definition validator — happens in [`AnalyticsApiGear::init`]. Auth is
-//! disabled on this host; the tenant override layer lives in [`crate::auth`].
-//!
-//! The DB is self-managed (LOCKED DECISION): we do NOT use the toolkit `db`
-//! capability — ClickHouse is not a toolkit-db backend, and the gear keeps its
-//! own sea-orm pool in `AppState`.
-
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
@@ -21,11 +8,6 @@ use crate::config::GearConfig;
 use crate::domain::external_links::ExternalSourceRegistry;
 use crate::{api, infra};
 
-/// Analytics API gear. Capabilities: `rest` only (the background validator and
-/// contract-version passes are `tokio::spawn`ed in `init`; no
-/// `stateful`/`RunnableCapability`).
-// Config key is the gear name `analytics`; env overrides are
-// `APP__gears__analytics__config__*`.
 #[toolkit::gear(
     name = "analytics",
     capabilities = [rest]
@@ -60,28 +42,12 @@ impl Gear for AnalyticsApiGear {
         let external_links = ExternalSourceRegistry::new(&cfg.external_sources)?;
         tracing::info!("starting analytics gear");
 
-        // Connect to MariaDB (self-managed pool — LOCKED DECISION).
         let db = infra::db::connect(&cfg.database_url).await?;
 
-        // INVARIANT: server boot stays read-only — migrations and the
-        // builtin-definition converge belong to the `migrate` entrypoint, so
-        // N replicas cannot race and an older image can be redeployed over a
-        // newer forward-only schema.
         infra::db::assert_schema_compatible(&db).await?;
 
-        // Refuse to start if any required CHECK constraint is missing. See
-        // `infra/db/check_probe` and DESIGN §2.2
-        // `cpt-metric-cat-constraint-mariadb-check`.
         infra::db::check_probe::assert_required_checks(&db).await?;
 
-        // Connect to ClickHouse. Observation views execute live and their
-        // union branches run as parallel pipelines, so per-query memory
-        // scales with thread count: four threads measured at the same
-        // latency as unbounded parallelism with ~40% less peak memory on
-        // the widest observation view. The memory ceiling makes a
-        // pathological query fail alone with a typed error instead of
-        // pushing the shared server tracker over its limit and killing
-        // every in-flight query on the instance.
         let mut ch_config =
             insight_clickhouse::Config::new(&cfg.clickhouse_url, &cfg.clickhouse_database)
                 .with_query_max_threads(4)
@@ -91,7 +57,6 @@ impl Gear for AnalyticsApiGear {
         }
         let ch = insight_clickhouse::Client::new(ch_config);
 
-        // Identity client.
         let identity = infra::identity::IdentityClient::new(&cfg.identity_url)?;
 
         let metric_definition_validator =
@@ -140,14 +105,9 @@ impl Gear for AnalyticsApiGear {
         )
         .await?;
 
-        // INVARIANT: periodic and never gating boot — the stamp lands after
-        // boot (post-install migrate hook) and a later in-place bump must
-        // surface without a pod restart.
         tokio::spawn(async move {
             crate::domain::contract_version::run(&contract_ch).await;
         });
-        // INVARIANT: deployments repeat validation because managed views can appear after boot;
-        // the isolated data-path stand runs the startup pass only while replacing fixtures.
         tokio::spawn(metric_definition_validator.run(periodic_validation_enabled));
 
         Ok(())
@@ -171,18 +131,6 @@ impl RestApiCapability for AnalyticsApiGear {
     }
 }
 
-/// `analytics migrate`: run migrations + the builtin-definition converge + the
-/// startup probe, then exit.
-///
-/// This is the only path that writes schema or builtin registry rows. Both run
-/// inside one advisory-locked, single-connection session so that concurrent
-/// migrators cannot double-apply non-transactional DDL, and so the converge's
-/// read-then-write sequences cannot interleave.
-///
-/// # Errors
-///
-/// Returns an error if config extraction, DB connect, the migration lock,
-/// migrations, the converge, or the probe fails.
 pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     tracing::info!("running migrations");
 
@@ -197,14 +145,8 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
             crate::migration::Migrator::up(&db, None).await?;
             tracing::info!("migrations applied");
 
-            // The converge owns builtin metric definitions: it upserts the code
-            // registry and disables rows the registry no longer carries. It
-            // must not run on a server boot — an older image would disable the
-            // definitions a newer release introduced.
             crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
 
-            // Same probe as `init`. An operator running `migrate` standalone
-            // wants the integrity signal too (DESIGN §2.2).
             infra::db::check_probe::assert_required_checks(&db).await?;
             Ok(())
         },
@@ -215,8 +157,6 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
     Ok(())
 }
 
-/// Pull `gears.analytics.config` out of the loaded `AppConfig` and
-/// deserialize it into [`GearConfig`].
 fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<GearConfig> {
     let raw = app
         .gears
@@ -229,14 +169,6 @@ fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<Ge
     Ok(cfg)
 }
 
-/// Validate the analytics gear config without touching the database — used by
-/// the `check` subcommand. Proves `gears.analytics.config` is present,
-/// deserializes, and carries the connection strings the gear needs at boot.
-///
-/// # Errors
-///
-/// Returns an error if the section is missing/undeserializable or a required
-/// URL is empty.
 pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     let cfg = extract_gear_config(app)?;
     if cfg.database_url.trim().is_empty() {

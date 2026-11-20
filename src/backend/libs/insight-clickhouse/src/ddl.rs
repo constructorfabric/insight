@@ -1,44 +1,20 @@
-//! Every statement a service emits that changes what the data layer holds.
-//!
-//! Two facts of a `Replicated` database decide the shape rendered here. It
-//! replays each DDL on every replica but does not replicate rows: a table
-//! replicates only when its own engine carries the `Replicated` prefix, so
-//! the family is rendered from the client's [`Topology`] (argument-less, the
-//! server fills the Keeper path). It rejects `ON CLUSTER` on table DDL, so no
-//! statement here carries one; `create-databases.sh` is the one site that
-//! names a cluster, on `CREATE DATABASE`.
-//!
-//! That is also why this module exists rather than four `format!` calls spread
-//! across two services: if the mechanism ever changes, every statement that
-//! would have to change is here.
-//!
 //! Names and types are written as the caller gave them. This renders DDL, it
 //! does not vet it: a name the warehouse will not take fails at the warehouse.
-//!
-//! Rendered through [`Client::ddl_sql`](crate::Client::ddl_sql), which knows
-//! the topology and refuses a statement aimed at a database the connection
-//! does not own.
 
 use core::fmt::Write;
 
 use crate::Topology;
 
-/// The engine family, reachable only through [`TableSpec::merge_tree`].
 const MERGE_TREE: &str = "MergeTree";
-/// The prefix the family takes where the warehouse replicates.
 const REPLICATED: &str = "Replicated";
 
-/// What a create does about a name something already holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OnExisting {
-    /// Fail. The name is this run's to mint, so anything holding it is a bug.
     #[default]
     Fail,
-    /// Leave it standing: this create is repeating one that already finished.
     Keep,
 }
 
-/// The table a creator makes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableSpec {
     database: String,
@@ -119,8 +95,6 @@ impl TableSpec {
     }
 }
 
-/// A statement that changes what the data layer holds.
-///
 /// Every variant names one database and acts inside it: a rename or an
 /// exchange cannot cross databases through this API, and
 /// [`Client::ddl_sql`](crate::Client::ddl_sql) refuses the one it is given if
@@ -180,7 +154,6 @@ impl Ddl {
         }
     }
 
-    /// The one database this statement acts in.
     pub(crate) fn database(&self) -> &str {
         match self {
             Self::CreateTable(spec) => &spec.database,
@@ -214,8 +187,6 @@ impl Ddl {
     }
 }
 
-/// Back-quoted because a dataset's name may carry a dash, which bare would
-/// parse as a subtraction.
 fn qualified(database: &str, table: &str) -> String {
     format!("`{database}`.`{table}`")
 }

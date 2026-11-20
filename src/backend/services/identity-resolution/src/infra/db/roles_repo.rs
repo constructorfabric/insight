@@ -1,21 +1,10 @@
-//! Role checks against the shared MariaDB `person_roles` table.
-//!
-//! Used by the persons-seed admin gate — only admins may trigger a seed.
-
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
-/// The `admin` role id — a stable seed value.
 pub const ADMIN_ROLE_ID: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
 
-/// True if `person_id` currently holds an active (`valid_to IS NULL`) `role_id`
-/// in the tenant. Implemented as a `LIMIT 1` probe rather than `SELECT EXISTS`
-/// so the truthiness maps cleanly through SeaORM regardless of how the driver
-/// types an `EXISTS` scalar.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
+/// A `LIMIT 1` probe, not `SELECT EXISTS`: the driver types an `EXISTS` scalar
+/// inconsistently, and a mistyped decode fails.
 pub async fn has_active_role(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -45,7 +34,6 @@ pub async fn has_active_role(
     Ok(db.query_one_raw(stmt).await?.is_some())
 }
 
-/// One row of the global `roles` catalogue (no tenant, no audit columns).
 #[derive(Debug, Clone)]
 pub struct Role {
     pub role_id: Uuid,
@@ -60,11 +48,6 @@ fn row_to_role(r: &sea_orm::QueryResult) -> anyhow::Result<Role> {
     })
 }
 
-/// Look up a role by (unique) name — the duplicate-name pre-check.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 pub async fn get_by_name(db: &DatabaseConnection, name: &str) -> anyhow::Result<Option<Role>> {
     const SQL: &str = "SELECT role_id, name FROM roles WHERE name = ? LIMIT 1";
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, SQL, [name.into()]);
@@ -75,11 +58,6 @@ pub async fn get_by_name(db: &DatabaseConnection, name: &str) -> anyhow::Result<
         .transpose()
 }
 
-/// Look up a role by id.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 pub async fn get_by_id(db: &DatabaseConnection, role_id: Uuid) -> anyhow::Result<Option<Role>> {
     const SQL: &str = "SELECT role_id, name FROM roles WHERE role_id = ? LIMIT 1";
     let stmt =
@@ -91,13 +69,6 @@ pub async fn get_by_id(db: &DatabaseConnection, role_id: Uuid) -> anyhow::Result
         .transpose()
 }
 
-/// Active (`valid_to IS NULL`) roles `person_id` holds in the tenant, with
-/// names, ordered by name. Backs `GET /v1/me`. DISTINCT because nothing in the
-/// schema forbids two active grants of the same role to one person.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 pub async fn active_roles_of_person(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -129,11 +100,6 @@ pub async fn active_roles_of_person(
         .collect()
 }
 
-/// All roles, ordered by name.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 pub async fn list_all(db: &DatabaseConnection) -> anyhow::Result<Vec<Role>> {
     const SQL: &str = "SELECT role_id, name FROM roles ORDER BY name";
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, SQL, []);
@@ -144,11 +110,6 @@ pub async fn list_all(db: &DatabaseConnection) -> anyhow::Result<Vec<Role>> {
         .collect()
 }
 
-/// Insert a new role.
-///
-/// # Errors
-///
-/// Returns an error if the insert fails (e.g. duplicate `name`).
 pub async fn insert_role(db: &DatabaseConnection, role_id: Uuid, name: &str) -> anyhow::Result<()> {
     const SQL: &str = "INSERT INTO roles (role_id, name) VALUES (?, ?)";
     let stmt = Statement::from_sql_and_values(
@@ -160,15 +121,6 @@ pub async fn insert_role(db: &DatabaseConnection, role_id: Uuid, name: &str) -> 
     Ok(())
 }
 
-/// Hard-delete a role only if no ACTIVE `person_roles` reference it (single
-/// atomic statement — the in-use guard). Returns rows affected: 1 = deleted,
-/// 0 = missing or in use.
-/// The correlated `NOT EXISTS` guard has no `toolkit-db` builder form → raw SQL
-/// (see `infra::db` module docs + constructorfabric/gears-rust#4239).
-///
-/// # Errors
-///
-/// Returns an error if the delete fails.
 pub async fn try_delete_if_unused(db: &DatabaseConnection, role_id: Uuid) -> anyhow::Result<u64> {
     const SQL: &str = r"
         DELETE FROM roles
@@ -183,12 +135,6 @@ pub async fn try_delete_if_unused(db: &DatabaseConnection, role_id: Uuid) -> any
     Ok(db.execute_raw(stmt).await?.rows_affected())
 }
 
-/// Count active `person_roles` referencing a role across ALL tenants — feeds the
-/// in-use error message.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn count_active_assignments_any_tenant(
     db: &DatabaseConnection,
     role_id: Uuid,

@@ -1,34 +1,22 @@
-//! Outbound client for the Anthropic Messages API.
-//!
-//! The caller's own key pays for the call, so it arrives per request and is
-//! never held on the client. Upstream failures are mapped to a small typed set
-//! here; the API layer decides what each one means on the wire.
-
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-/// Wire version the Messages API requires on every request.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 #[derive(Debug, thiserror::Error)]
 pub enum AnthropicError {
-    /// Anthropic refused the key.
     #[error("the key was rejected upstream")]
     TokenRejected,
-    /// Rate limited, overloaded, or a 5xx.
     #[error("the model is unavailable right now")]
     Unavailable,
-    /// The request never completed in time.
     #[error("the model did not answer in time")]
     Timeout,
-    /// Anything else — a malformed body, a transport failure.
     #[error("the model call failed")]
     Failed,
 }
 
-/// What one answer cost to produce, as the vendor reported it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Usage {
     pub input_tokens: u32,
@@ -48,9 +36,6 @@ pub struct AnthropicClient {
 }
 
 impl AnthropicClient {
-    /// # Errors
-    ///
-    /// Returns an error when the HTTP client cannot be built.
     pub fn new(api_base: &str, timeout: Duration) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder().timeout(timeout).build()?;
 
@@ -60,11 +45,6 @@ impl AnthropicClient {
         })
     }
 
-    /// Ask for one answer. `token` is used and dropped.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AnthropicError`] describing what the upstream did.
     pub async fn message(
         &self,
         token: &Zeroizing<String>,

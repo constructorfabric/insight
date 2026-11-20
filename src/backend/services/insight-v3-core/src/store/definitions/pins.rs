@@ -20,14 +20,10 @@ ORDER BY dashboard_pins.pinned_at, dashboard_pins.dashboard";
 const IS_PINNED: &str =
     "SELECT COUNT(*) AS total FROM dashboard_pins WHERE person = ? AND dashboard = ?";
 
-/// Only the pins the person still sees count against the cap, since the
-/// rest are neither listed nor reachable to unpin.
 const COUNT_PINS: &str = "SELECT COUNT(*) AS total
 FROM dashboard_pins JOIN dashboards ON dashboards.id = dashboard_pins.dashboard
 WHERE dashboard_pins.person = ? AND {visible}";
 
-/// Inserts nothing unless the person sees the dashboard as the row lands, so a
-/// pin cannot rely on a grant withdrawn meanwhile.
 const INSERT_PIN: &str = "INSERT INTO dashboard_pins (person, dashboard, pinned_at)
 SELECT ?, dashboards.id, UTC_TIMESTAMP(6) FROM dashboards
 WHERE dashboards.id = ? AND {visible}";
@@ -49,7 +45,6 @@ fn not_found(dashboard: &DefinitionId) -> PinError {
     PinError::DashboardNotFound(dashboard.as_str().to_owned())
 }
 
-/// A query over one caller's pins that they still see.
 pub(super) fn visible_pins(template: &str, caller: Caller) -> Statement {
     let (visible, visible_values) = dashboard_visible(caller);
     let mut values: Vec<sea_orm::Value> = vec![caller.person.to_string().into()];

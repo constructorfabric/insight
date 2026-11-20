@@ -1,5 +1,3 @@
-//! Compile-and-run endpoint for stored metric definitions.
-
 use std::sync::Arc;
 
 use axum::extract::{Extension, Path};
@@ -70,8 +68,6 @@ pub(crate) fn register_routes(
     router.merge(run)
 }
 
-/// What a caller may ask a run for. An absent body asks for none of it:
-/// unbounded, unbucketed and UTC.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RunBody {
@@ -107,7 +103,6 @@ async fn run_metric(
     Ok(Json(result).into_response())
 }
 
-/// The window a run body asks for; an absent body asks for none.
 pub(super) fn window(
     body: Option<Json<serde_json::Value>>,
 ) -> Result<WindowRequest, CanonicalError> {
@@ -122,7 +117,6 @@ pub(super) fn window(
         .map_err(|error| MetricRunApiError::window_error(&error))
 }
 
-/// A run's failure as an administrator reads it, the cause and all.
 pub(super) fn run_error(error: crate::domain::surfaces::CustomError) -> CanonicalError {
     MetricRunApiError::custom_error(error)
 }

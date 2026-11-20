@@ -1,14 +1,7 @@
-//! The one source an installation trusts to say who exists.
-
-/// Accounts from the roster are minted a person even with no address to match
-/// on; every other source keeps needing one, because minting from two rosters
-/// gives one human two persons and nothing can join them afterwards.
 #[derive(Debug)]
 pub(crate) struct RosterSource(String);
 
 impl RosterSource {
-    /// Read the configured source type. Blank — the default — is not a source
-    /// name but the absence of one: no roster, mint from an address only.
     pub(crate) fn parse(configured: &str) -> Option<Self> {
         let name = configured.trim();
         if name.is_empty() {
@@ -17,9 +10,6 @@ impl RosterSource {
         Some(Self(name.to_owned()))
     }
 
-    /// Whether observations from this source type carry the roster's authority.
-    /// Exact match: a source type is an identifier the connectors emit, and a
-    /// near miss must read as "not the roster" rather than as a guess.
     pub(crate) fn speaks_for(&self, source_type: &str) -> bool {
         self.0 == source_type
     }

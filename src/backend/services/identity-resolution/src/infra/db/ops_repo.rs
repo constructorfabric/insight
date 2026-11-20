@@ -1,27 +1,10 @@
-//! Operations audit/job-tracking store (MariaDB `operations` table).
-//!
-//! An async operation (persons-seed) moves `queued → running → completed/failed`.
-//! The POST handler enqueues a row; the worker flips it to `running`
-//! (`try_start`, so two workers can't double-run), then `complete`s or `fail`s
-//! it. GETs poll status.
-//!
-//! Raw SQL on the self-managed pool (like the rest of `infra::db`): the atomic
-//! `queued→running` transition (`try_start`) and the cross-tenant startup
-//! `sweep_zombies` are conditional DML that `toolkit-db`'s scoped builder can't
-//! express, so the whole repo stays on raw SQL for consistency. Values are
-//! bound params; see `infra::db` module docs + constructorfabric/gears-rust#4239.
-
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
-/// `operation_type` value of persons-seed runs — shared by the CLI runner
-/// (writes) and the `GET /v1/persons-seed*` journal endpoints (filter).
 pub const PERSONS_SEED_OP: &str = "persons-seed";
-/// Operation type of the persons→ClickHouse sync (`sync` subcommand).
 pub const PERSONS_SYNC_OP: &str = "persons-sync";
 
-/// Lifecycle phase of an operation. DB column is a `VARCHAR(16)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationStatus {
     Queued,
@@ -52,9 +35,7 @@ impl OperationStatus {
     }
 }
 
-/// One row of the `operations` table.
-// Field names mirror the DB columns (`operation_id` / `operation_type`), so
-// keep the shared prefix.
+// Field names mirror the DB columns (`operation_id` / `operation_type`).
 #[expect(clippy::struct_field_names)]
 #[derive(Debug, Clone)]
 pub struct Operation {
@@ -73,11 +54,6 @@ pub struct Operation {
 const COLUMNS: &str = "operation_id, operation_type, status, insight_tenant_id, author_person_id, \
      request_json, summary_json, error_message, started_at, completed_at";
 
-/// Insert a new `queued` operation.
-///
-/// # Errors
-///
-/// Returns an error if the insert fails.
 pub async fn enqueue(
     db: &DatabaseConnection,
     operation_id: Uuid,
@@ -107,12 +83,6 @@ pub async fn enqueue(
     Ok(())
 }
 
-/// Flip `queued → running`, atomically. Returns `true` if this call won the
-/// transition (so a second worker sees `false` and skips — no double-run).
-///
-/// # Errors
-///
-/// Returns an error if the update fails.
 pub async fn try_start(db: &DatabaseConnection, operation_id: Uuid) -> anyhow::Result<bool> {
     const SQL: &str =
         "UPDATE operations SET status = 'running' WHERE operation_id = ? AND status = 'queued'";
@@ -126,11 +96,6 @@ pub async fn try_start(db: &DatabaseConnection, operation_id: Uuid) -> anyhow::R
     Ok(res.rows_affected() > 0)
 }
 
-/// Mark an operation `completed` with its summary.
-///
-/// # Errors
-///
-/// Returns an error if the update fails.
 pub async fn complete(
     db: &DatabaseConnection,
     operation_id: Uuid,
@@ -150,11 +115,6 @@ pub async fn complete(
     Ok(())
 }
 
-/// Mark an operation `failed` with an error message.
-///
-/// # Errors
-///
-/// Returns an error if the update fails.
 pub async fn fail(
     db: &DatabaseConnection,
     operation_id: Uuid,
@@ -177,11 +137,6 @@ pub async fn fail(
     Ok(())
 }
 
-/// Fetch one operation within the tenant.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored value is malformed.
 pub async fn get_by_id(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -203,16 +158,6 @@ pub async fn get_by_id(
     row.map(|r| row_to_operation(&r)).transpose()
 }
 
-/// List operations for the tenant (newest first), optionally filtered by
-/// `operation_type` and `status`, capped at `limit` rows. The shared
-/// `operations` table holds every job kind, so callers push their type filter
-/// (and the cap) into SQL rather than scanning + filtering in application code.
-/// The `operation_id DESC` tiebreak keeps the order deterministic when rows
-/// share a `started_at` (parity with `OperationsRepository.ListAsync`).
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored value is malformed.
 pub async fn list(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -243,16 +188,6 @@ pub async fn list(
     rows.iter().map(row_to_operation).collect()
 }
 
-/// Every correction call that named this account, newest first.
-///
-/// The binding journal records WHAT each decision did; the operation records
-/// who ran it, why they said they ran it, and how many accounts went with it.
-/// Matching is by containment in the request payload rather than by time, so
-/// nothing is attributed to a call that did not name the account.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn corrections_for_account(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -283,16 +218,6 @@ pub async fn corrections_for_account(
     rows.iter().map(row_to_operation).collect()
 }
 
-/// Fail every `queued`/`running` operation whose `started_at` is older than
-/// `older_than`. Run once at worker startup so a pod restart cannot leave a row
-/// stuck in `running` forever (its in-memory job is gone). Intentionally NOT
-/// tenant-scoped — the single-process worker owns all in-flight operations
-/// across tenants. Returns the number
-/// of rows reclaimed.
-///
-/// # Errors
-///
-/// Returns an error if the update fails.
 pub async fn sweep_zombies(db: &DatabaseConnection, older_than: DateTime) -> anyhow::Result<u64> {
     const SQL: &str = r"
         UPDATE operations

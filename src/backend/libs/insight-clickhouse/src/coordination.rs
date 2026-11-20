@@ -1,21 +1,8 @@
-//! How long a statement a `Replicated` database replays waits for the other
-//! replicas.
-//!
 //! The server's default is to wait for every replica, active or not, for
 //! three minutes, and then to answer with a timeout for a statement that has
 //! already landed on the live ones. A service calling from a request handler
 //! cannot wait that long, and a replica that is down will not confirm anything
-//! however long the wait: it replays its queue entry when it returns. So in
-//! cluster mode every statement [`execute_ddl`](crate::Client::execute_ddl)
-//! runs waits for the active replicas only, for at most [`DDL_TASK_TIMEOUT`],
-//! which is also what the deploy's own DDL does (`scripts/lib/ch-exec.sh`).
-//!
-//! A caller that bounds the call on its side keeps its bound above
-//! [`DDL_TASK_TIMEOUT`]: that way the warehouse, not the caller, is the one
-//! to report a statement that did not finish, and a statement that did finish
-//! is never mistaken for one that did not.
-//!
-//! Empty on a standalone warehouse: there is nothing to wait for.
+//! however long the wait: it replays its queue entry when it returns.
 
 use std::time::Duration;
 
@@ -26,7 +13,6 @@ use crate::missing_relation::reported_code;
 /// the warehouse reports it unfinished.
 pub const DDL_TASK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// `TIMEOUT_EXCEEDED`.
 const TIMEOUT_EXCEEDED: u32 = 159;
 const OUTPUT_MODE: &str = "distributed_ddl_output_mode";
 const ACTIVE_REPLICAS_ONLY: &str = "throw_only_active";
@@ -40,13 +26,11 @@ const TASK_TIMEOUT: &str = "distributed_ddl_task_timeout";
 pub struct Unfinished;
 
 impl Unfinished {
-    /// Reads a `ClickHouse` error.
     #[must_use]
     pub fn from_error(error: &clickhouse::error::Error) -> Option<Self> {
         Self::from_message(&error.to_string())
     }
 
-    /// Reads a server message a caller holds as text rather than as an error.
     #[must_use]
     pub fn from_message(message: &str) -> Option<Self> {
         (reported_code(message)? == TIMEOUT_EXCEEDED).then_some(Self)

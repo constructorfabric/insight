@@ -116,8 +116,6 @@ async fn editing_someone_elses_entry_reads_as_absent() -> TestResult {
         .ok_or("the created entry carries an id")?
         .to_owned();
 
-    // A real row belonging to somebody else in the same tenant — the property
-    // worth proving. A random id only shows that an unknown id is unknown.
     let other = Uuid::now_v7();
     let resp = app_as(db.clone(), tenant, other, enabled_config())
         .oneshot(json_req(
@@ -128,7 +126,6 @@ async fn editing_someone_elses_entry_reads_as_absent() -> TestResult {
         .await?;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-    // And it is still the owner's, unchanged.
     let mine = app(db, tenant, enabled_config())
         .oneshot(get("/v1/ai/context")?)
         .await?;

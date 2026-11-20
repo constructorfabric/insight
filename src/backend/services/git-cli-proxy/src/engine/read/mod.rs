@@ -9,18 +9,12 @@ use serde::Serialize;
 
 use super::page::PageToken;
 
-/// One page of rows plus the cursor that continues the walk.
 #[derive(Debug, Serialize)]
 pub struct Page<T> {
     pub items: Vec<T>,
     pub next_page_token: Option<String>,
 }
 
-/// Cut `headers`-ordered rows down to one page, starting strictly after
-/// `after` and yielding at most `page_size` rows.
-///
-/// INVARIANT: rows arrive ascending by `key`; the cursor resumes strictly
-/// after the last emitted key.
 pub fn slice_page<T, K>(
     rows: Vec<T>,
     after: Option<&PageToken>,
@@ -146,9 +140,6 @@ mod live_tests {
         }
     }
 
-    /// Every reader against a real blobless clone: parsing is unit-tested,
-    /// this proves the git invocations themselves — including that numstat and
-    /// patches see blobs only because of the batch prefetch.
     #[tokio::test]
     async fn readers_agree_on_a_real_repository() {
         let f = fixture("readers");
@@ -260,9 +251,6 @@ mod live_tests {
         );
     }
 
-    /// The author walk against a real clone: one row per e-mail whatever the
-    /// spelling of the name, counted across every branch, and `since` bounded
-    /// by the same instant comparison the commit walk uses.
     #[tokio::test]
     async fn authors_fold_the_walk_to_one_row_per_email() {
         let f = fixture("authors");
@@ -293,7 +281,6 @@ mod live_tests {
             Err(e) => panic!("authors::read: {e}"),
         };
 
-        // The fixture's own root commit is authored by test@example.com.
         assert_eq!(
             rows.iter()
                 .map(|r| r.author_email.as_str())
@@ -336,9 +323,6 @@ mod live_tests {
         );
     }
 
-    /// The identity a consumer deduplicates on: the same content entering the
-    /// repository on two lines of history is two commits but one post-image
-    /// oid, while different content at the same path is two.
     #[tokio::test]
     async fn identical_content_added_twice_shares_one_post_image_oid() {
         let f = fixture("blob-identity");
@@ -400,9 +384,6 @@ mod live_tests {
 
     #[tokio::test]
     async fn stat_retention_stops_at_the_row_cap_and_totals_stay_whole() {
-        // The per-file map is only needed up to the row cap — nothing past it
-        // is ever emitted — while /v1/commits needs a number for EVERY commit
-        // in the window, which is why it gets aggregates instead of detail.
         let f = fixture("stat-budget");
         sh(
             &f.root.join("origin"),
@@ -461,16 +442,9 @@ mod live_tests {
         }
     }
 
-    /// The load-bearing test of the whole index design: for every filter
-    /// combination the endpoints use, paging through the index and paging
-    /// through the live walks must produce byte-identical sequences. Any
-    /// daylight between them is a correctness bug the fallback would let ship
-    /// silently.
     #[tokio::test]
     async fn the_index_and_the_live_walk_agree_page_by_page() {
         let f = fixture("index-parity");
-        // Mixed offsets (the ordering trap), a merge (the filter trap), and a
-        // side branch (the membership trap).
         sh(
             &f.root.join("origin"),
             "GIT_AUTHOR_DATE='2026-08-02T10:00:00+0200' GIT_COMMITTER_DATE='2026-08-02T10:00:00+0200' \
@@ -525,8 +499,6 @@ mod live_tests {
             );
         }
 
-        // Membership parity: the index bit against the live rev-list, over
-        // every commit at once.
         let shas: Vec<String> = all.iter().map(|key| key.sha.clone()).collect();
         let live = match commits::default_branch_membership(runner, git_dir, &shas, &creds()).await
         {
@@ -559,7 +531,6 @@ mod live_tests {
         Option<Vec<String>>,
     );
 
-    /// The fallback path's pagination, applied to completion.
     fn page_all_by_walk(
         all: &[CommitKey],
         since: Option<&str>,
@@ -588,7 +559,6 @@ mod live_tests {
         }
     }
 
-    /// The index path's pagination, applied to completion.
     fn page_all_by_index(
         git_dir: &std::path::Path,
         generation: u64,
@@ -630,10 +600,6 @@ mod live_tests {
 
     #[tokio::test]
     async fn patch_retention_stops_at_the_response_budget() {
-        // The per-file cap bounds one diff; it bounds nothing at page scale.
-        // Retention has to stop too, or a page of ten thousand commits keeps
-        // every diff it parsed before any response cap is consulted — and the
-        // invocation itself has already buffered them all.
         let f = fixture("patch-budget");
         sh(
             &f.root.join("origin"),
@@ -666,8 +632,6 @@ mod live_tests {
         };
         assert_eq!(all.len(), shas.len(), "every commit is read when unbounded");
 
-        // A zero budget is met by the first batch, so no later batch is even
-        // invoked — the point of the bound is that the work is not done.
         let clipped = match patches::read(runner, git_dir, &shas, 64 * 1024, 0, &creds()).await {
             Ok(t) => t,
             Err(e) => panic!("patches::read: {e}"),
@@ -702,8 +666,6 @@ mod live_tests {
         let recent = commits::retain_keys_since(all.clone(), Some("2026-08-02T00:00:00Z"));
         assert_eq!(recent.len(), 1, "only the newer commit survives the bound");
 
-        // The bound is an instant, not a string: an equivalent offset spelling
-        // bounds the same.
         let all_utc = commits::retain_keys_since(all.clone(), Some("2026-08-02T00:00:00+00:00"));
         assert_eq!(
             all_utc.len(),

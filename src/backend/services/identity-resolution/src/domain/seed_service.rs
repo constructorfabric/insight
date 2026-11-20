@@ -1,8 +1,3 @@
-//! Persons-seed orchestration: tie the reader → build → group → resolve →
-//! row-build → apply pipeline together.
-//! The input source and the store are behind traits so this is unit-testable
-//! with fakes (no `ClickHouse` / MariaDB).
-
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
@@ -18,16 +13,11 @@ use super::seed::{
     resolve_assignments,
 };
 
-/// Streams the raw `identity_inputs` observations for a tenant, delivered
-/// **latest-first per account** (so [`build_profiles`] folds them correctly).
-/// The concrete implementation reads `identity.identity_inputs` from `ClickHouse`.
 #[async_trait]
 pub trait IdentityInputsReader {
     async fn stream(&self, tenant_id: Uuid) -> anyhow::Result<Vec<IdentityInputRow>>;
 }
 
-/// The persons-seed store: the two resolver-feeding reads and the transactional
-/// apply. Implemented over MariaDB by `infra::db::seed_repo`.
 #[async_trait]
 pub trait SeedStore {
     async fn known_account_bindings(
@@ -50,8 +40,6 @@ pub trait SeedStore {
     ) -> anyhow::Result<ApplyCounts>;
 }
 
-/// Row counts from one [`SeedStore::apply`]: the net-new observations appended
-/// and the `org_chart` rows rebuilt. Both are surfaced in the seed summary.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ApplyCounts {
     pub observations_inserted: u64,
@@ -61,11 +49,6 @@ pub struct ApplyCounts {
     pub people_unchanged: u64,
 }
 
-/// Outcome of one persons-seed run (feeds the operation status).
-// The serialized field names (`accounts_*` prefix, `accounts_minted_new`,
-// `org_chart_rows_rebuilt`) are the `summary` JSON contract.
-// `known_binding_conflicts` is additive (observability of a silent identity
-// merge) — additive keys are ignored by conformant consumers.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SeedSummary {
     pub people_opened: u64,
@@ -82,35 +65,18 @@ pub struct SeedSummary {
     pub skipped_closed: usize,
     #[serde(rename = "accounts_skipped_no_email")]
     pub skipped_no_email: usize,
-    /// Accounts no connector states an id for — left unbound, never minted.
     #[serde(rename = "accounts_skipped_no_source_id")]
     pub skipped_no_source_id: usize,
     pub observations_inserted: u64,
     pub org_chart_rows_rebuilt: u64,
-    /// Divergent e-mail groups with no operator-authored binding (surfaced).
     pub known_binding_conflicts: usize,
-    /// Divergent e-mail groups settled by an operator decision (kept silent).
     pub operator_settled_groups: usize,
-    /// Unbound accounts whose e-mail is contested between persons (not linked).
     pub skipped_contested_email: usize,
-    /// Accounts bound to the excluded person (nothing re-emitted, values link
-    /// nobody).
     pub skipped_excluded: usize,
-    /// Addressless roster accounts minted a person; each reaches the queue.
     #[serde(rename = "accounts_minted_from_roster")]
     pub minted_from_roster: usize,
 }
 
-/// Run one persons-seed over an already-read input: fold to per-account
-/// profiles, group by email, resolve each group to a `person_id`, build the
-/// observation rows, and apply them (append + rebuild caches). The caller
-/// (`crate::seed_runner`) reads the input itself so its guards can inspect
-/// the rows between the `ClickHouse` read and the MariaDB writes. `mint` is
-/// injected so tests are deterministic.
-///
-/// # Errors
-///
-/// Propagates store errors.
 pub async fn seed_from_rows<S>(
     rows: Vec<IdentityInputRow>,
     store: &S,
@@ -122,12 +88,10 @@ pub async fn seed_from_rows<S>(
 where
     S: SeedStore + ?Sized,
 {
-    // 1. Build per-account profiles from the (latest-first) input stream.
     let profiles = build_profiles(rows);
     let accounts_read = profiles.len();
     warn_if_roster_spans_instances(&profiles, roster);
 
-    // 2. Group by email; resolve each group against the current bindings/emails.
     let groups = group_by_email(profiles);
     let known = store.known_account_bindings(tenant_id).await?;
     let email_to_person = store.latest_email_to_person(tenant_id).await?;
@@ -143,7 +107,6 @@ where
     );
     warn_if_roster_matched_nothing(&outcome, roster);
 
-    // 3. Materialize the resolved observations and apply them.
     let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id, &known);
     let people_changes = people::changes(&outcome.assignments, roster);
     let retained_people = retained_roster_people(&known, &outcome.assignments, roster);
@@ -221,10 +184,6 @@ fn retained_roster_people(
     Some(holders.into_values().collect())
 }
 
-/// A configured roster that matched nothing is indistinguishable from one that
-/// had nothing to do — and the likeliest cause is a name that does not exist. A
-/// source type is not the connector package it ships in (the GitHub roster
-/// package emits `github`), so a plausible-looking value can match no account.
 fn warn_if_roster_matched_nothing(outcome: &ResolveOutcome, roster: Option<&RosterSource>) {
     let Some(roster) = roster else {
         return;
@@ -242,10 +201,6 @@ fn warn_if_roster_matched_nothing(outcome: &ResolveOutcome, roster: Option<&Rost
     );
 }
 
-/// The roster is named by source type, but an account is keyed by type AND
-/// connector instance — so two instances of the roster's type would each mint
-/// their own person for one addressless human, and nothing could join them.
-/// Naming the type cannot prevent that; saying so can.
 fn warn_if_roster_spans_instances(profiles: &[SeedProfile], roster: Option<&RosterSource>) {
     let Some(roster) = roster else {
         return;
@@ -302,7 +257,6 @@ mod tests {
             people: &[PersonChange],
             _retained_people: Option<&HashSet<Uuid>>,
         ) -> anyhow::Result<ApplyCounts> {
-            // Net-inserted (no dedup in the fake); org_chart rebuild is DB-only.
             Ok(ApplyCounts {
                 observations_inserted: rows.len() as u64,
                 org_chart_rows_rebuilt: 0,
@@ -342,10 +296,6 @@ mod tests {
     #[tokio::test]
     async fn seed_from_rows_wires_pipeline_end_to_end() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
-        // Anna across two sources (shared email) + Boris; empty store → all mint.
-        // Every account states its own id, as a connector's identity inputs do:
-        // that row is what becomes the binding, and without one the seed mints
-        // nobody.
         let rows = vec![
             input("bamboohr", "5001", "id", "5001", t),
             input("bamboohr", "5001", "email", "anna@corp.com", t),
@@ -377,8 +327,6 @@ mod tests {
         );
         assert_eq!(summary.reused_known, 0);
         assert_eq!(summary.linked_by_email, 0);
-        // Anna: id+email+display_name (5001) + id+email (U777) = 5;
-        // Boris: id+email = 2.
         assert_eq!(summary.observations_inserted, 7);
         Ok(())
     }
@@ -422,10 +370,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_roster_this_service_is_handed_is_the_one_that_mints() -> anyhow::Result<()> {
-        // The pipeline is what carries the configured roster to the decision, and
-        // every other roster test calls the resolver directly — so without this
-        // one, dropping the argument here leaves the feature dead and the suite
-        // green.
         let at: DateTime = "2026-01-01T00:00:00".parse()?;
         let rows = vec![
             input("bamboohr", "e-1", "id", "e-1", at),

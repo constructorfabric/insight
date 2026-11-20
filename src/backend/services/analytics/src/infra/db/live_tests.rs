@@ -1,15 +1,3 @@
-//! Live `MariaDB` integration tests for the migration lifecycle.
-//!
-//! `#[ignore]`d and skip silently when `INTEGRATION_TESTS_MARIADB_URL` is unset,
-//! so `cargo test` stays green on a stock dev machine (same convention as
-//! `domain/metric_definitions/live_tests.rs`). CI runs them with
-//! `--include-ignored` against a MariaDB the `migrate` CLI has already
-//! provisioned, so the first run here is already a re-run.
-//!
-//! These cover the two properties the rest of the system now depends on: the
-//! migrator converges when re-run, and the boot gate tolerates a schema ahead
-//! of the binary while refusing one behind it.
-
 use std::sync::LazyLock;
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -17,16 +5,11 @@ use sea_orm_migration::MigratorTrait;
 
 use super::{assert_schema_compatible, connect};
 
-/// Serializes the tests in this module: each mutates `seaql_migrations`
-/// transiently, and one test's in-flight ledger state would fail another's
-/// compatibility assertion under the harness's default parallelism.
 static LEDGER_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 
-/// A version string that sorts after every real migration, standing in for a
-/// release newer than this build.
 const FUTURE_VERSION: &str = "m99999999_000001_from_a_newer_release";
 
 fn url_or_skip() -> Option<String> {
@@ -45,9 +28,6 @@ async fn count(db: &sea_orm::DatabaseConnection, sql: &str) -> anyhow::Result<i6
     Ok(row.try_get_by_index::<i64>(0)?)
 }
 
-/// The migrator must be safe to re-run: the deployment Job retries on failure,
-/// and an operator re-runs it by hand. A second pass applies nothing new and
-/// leaves the ledger holding exactly the embedded set.
 #[tokio::test]
 #[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn migrator_converges_when_re_run() -> anyhow::Result<()> {
@@ -75,9 +55,6 @@ async fn migrator_converges_when_re_run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The rollback case. A ledger row this build does not embed must not block
-/// boot — that tolerance is the whole reason an application image can be rolled
-/// back over a forward-only schema.
 #[tokio::test]
 #[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn newer_ledger_rows_do_not_block_boot() -> anyhow::Result<()> {
@@ -107,9 +84,6 @@ async fn newer_ledger_rows_do_not_block_boot() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The inverse: an embedded migration with no ledger row means the schema is
-/// behind the binary, and serving would hit missing columns at query time. The
-/// gate must refuse to boot rather than defer the failure to the first request.
 #[tokio::test]
 #[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn schema_behind_the_build_fails_the_boot_gate() -> anyhow::Result<()> {
@@ -133,9 +107,6 @@ async fn schema_behind_the_build_fails_the_boot_gate() -> anyhow::Result<()> {
 
     let verdict = assert_schema_compatible(&db).await;
 
-    // Restore the ledger row directly rather than re-running the migrator: the
-    // migration itself is still applied to the schema, only its bookkeeping was
-    // removed.
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         "INSERT INTO seaql_migrations (version, applied_at) VALUES (?, 0)",

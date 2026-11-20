@@ -191,9 +191,6 @@ fn a_challenge_names_this_server_s_own_metadata_document_and_scope() {
 
 #[test]
 fn the_keys_can_be_fetched_from_somewhere_the_advertised_origin_is_not() {
-    // A local stand advertises `localhost` because the MCP client will not send
-    // credentials over http to anything else — and inside this process
-    // `localhost` is this container, not the gateway.
     let Ok(verifier) = TokenVerifier::new(
         "http://localhost:8080",
         "http://gateway:8080/.well-known/jwks.json",
@@ -206,7 +203,6 @@ fn the_keys_can_be_fetched_from_somewhere_the_advertised_origin_is_not() {
         verifier.inner.jwks_url,
         "http://gateway:8080/.well-known/jwks.json"
     );
-    // The token still has to name the origin the client saw.
     assert_eq!(verifier.inner.audience, "http://localhost:8080/mcp/v3");
     assert_eq!(verifier.inner.issuer, "http://localhost:8080");
 }

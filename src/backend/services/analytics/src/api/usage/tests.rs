@@ -9,7 +9,6 @@ fn the_widest_window_is_the_one_the_message_promises() {
         }
         .window()
     };
-    // Both bounds are inclusive, so 400 days spans since..=since+399.
     assert!(window("2026-01-01", "2027-02-04").is_ok(), "400 days");
     assert!(window("2026-01-01", "2027-02-05").is_err(), "401 days");
 }

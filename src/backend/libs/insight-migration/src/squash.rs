@@ -1,39 +1,11 @@
-//! Squashed migration history.
-//!
-//! A service squashes a prefix of its history into one baseline migration
-//! without losing the names of what it squashed. The squashed names stay in
-//! the migrator as [`Squashed`] entries that apply nothing, ordered after the
-//! baseline, so:
-//!
-//! - a fresh database runs the baseline, which builds the whole squashed
-//!   schema, and then records every squashed name — its ledger reads the same
-//!   as one that walked the old history;
-//! - a database that walked the whole old history already holds every
-//!   squashed name; only the baseline is pending, and it applies nothing;
-//! - a database that walked only part of it is refused by the baseline, before
-//!   anything is written, because nothing left in the build can bring it
-//!   forward — it must first upgrade through a release that still carries the
-//!   old history;
-//! - an older image rolled back onto a squashed database finds every name it
-//!   embeds in the ledger, so the boot gate ([`crate::assert_compatible`])
-//!   still lets it serve. Only the server rolls back: an older image's
-//!   `migrate` refuses a ledger holding the baseline, as it refuses any
-//!   migration newer than itself.
-//!
 //! The names must stay exactly as they were: sea-orm refuses to run against a
-//! ledger naming a migration the build does not embed, and
-//! [`crate::assert_compatible`] refuses to serve a build whose names are not
-//! all recorded.
+//! ledger naming a migration the build does not embed.
 
 use sea_orm::{ColumnTrait, DbErr, EntityTrait, QueryFilter};
 use sea_orm_migration::{
     MigrationName, MigrationTrait, MigratorTrait, SchemaManager, seaql_migrations,
 };
 
-/// A squashed migration: the name it was applied under, applying nothing.
-///
-/// Its schema is built by the baseline that squashed it; the entry exists only
-/// so the ledger keeps the name.
 pub struct Squashed(pub &'static str);
 
 impl MigrationName for Squashed {
@@ -49,8 +21,6 @@ impl MigrationTrait for Squashed {
     }
 }
 
-/// The [`Squashed`] entries for `names`, in order, ready to follow the
-/// baseline in a migrator's list.
 #[must_use]
 pub fn squashed(names: &'static [&'static str]) -> Vec<Box<dyn MigrationTrait>> {
     names
@@ -59,7 +29,6 @@ pub fn squashed(names: &'static [&'static str]) -> Vec<Box<dyn MigrationTrait>> 
         .collect()
 }
 
-/// What a baseline finds in the ledger about the history it squashed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum History {
     /// None of the squashed names is recorded: the baseline builds the schema.
@@ -112,7 +81,6 @@ where
     classify(names, &recorded, upgrade_through)
 }
 
-/// The decision [`history`] makes, apart from the read.
 fn classify(names: &[&str], recorded: &[String], upgrade_through: &str) -> Result<History, DbErr> {
     if recorded.is_empty() {
         return Ok(History::Fresh);

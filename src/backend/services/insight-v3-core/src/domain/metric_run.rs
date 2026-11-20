@@ -1,5 +1,3 @@
-//! Running a stored metric over a window the reader picked.
-
 use chrono::Utc;
 
 use super::datasets::{self, Datasets};
@@ -13,31 +11,22 @@ use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
 use crate::domain::query::metric_query::TableEngine;
 
-/// A metric compiled for a reader that orders and pages it: the query with
-/// nothing cut off it, what each column holds, and where the rows come from.
 #[derive(Debug)]
 pub(crate) struct Prepared {
     pub(crate) compiled: CompiledQuery,
     pub(crate) kinds: Vec<(String, ColumnKind)>,
-    /// The order the metric asks for itself, if it asks for one.
     pub(crate) own_order: Option<(String, bool)>,
     pub(crate) source: Source,
-    /// The body as stored, which is what a page has to be bound to.
     pub(crate) body: serde_json::Value,
 }
 
-/// What a stored metric's rows hold, read from its definition alone: each
-/// result column and its kind, and the columns the rows are grouped by.
 #[derive(Debug)]
 pub(crate) struct Columns {
     pub(crate) kinds: Vec<(String, ColumnKind)>,
     pub(crate) groups: Vec<String>,
-    /// Where a run of it stops without the metric having asked to.
     pub(crate) imposed_limit: Option<usize>,
 }
 
-/// A stored metric's rows, the columns of the definition they came from,
-/// and what that definition is called.
 #[derive(Debug)]
 pub(crate) struct NamedRun {
     pub(crate) result: RunResult,
@@ -45,8 +34,6 @@ pub(crate) struct NamedRun {
     pub(crate) name: String,
 }
 
-/// Where a metric's rows come from, as far as a reader paging through them
-/// needs to know.
 #[derive(Debug)]
 pub(crate) enum Source {
     Table {
@@ -54,19 +41,15 @@ pub(crate) enum Source {
         table: String,
     },
     Dataset {
-        /// The table the records are in, named for the attempt that made it.
         table: String,
     },
 }
 
-/// Everything a metric needs to answer: the definition it is stored as, the
-/// dataset it reads, and the warehouse the records are kept in.
 #[derive(Debug)]
 pub(crate) struct MetricRuns<'a> {
     definitions: &'a dyn Definitions,
     metrics: &'a MetricRunner,
     datasets: &'a dyn Datasets,
-    /// The database every dataset's records are kept in.
     datasets_database: &'a str,
 }
 
@@ -85,15 +68,12 @@ impl<'a> MetricRuns<'a> {
         }
     }
 
-    /// The window as of now: a named range means the period it is named
-    /// after whether or not the data reaches that far.
     pub(crate) fn resolve(request: &WindowRequest) -> Result<Window, CustomError> {
         request
             .resolve(Utc::now())
             .map_err(|error| CustomError::Compile(error.into()))
     }
 
-    /// A dataset's records as a metric is compiled against them.
     fn over_of<'d>(&'d self, declaration: &'d Declaration, table: &'d str) -> Over<'d> {
         Over {
             declaration,
@@ -102,7 +82,6 @@ impl<'a> MetricRuns<'a> {
         }
     }
 
-    /// The stored body of a metric, or the refusal that there is none.
     async fn body_of(&self, id: &DefinitionId) -> Result<serde_json::Value, CustomError> {
         self.definitions
             .get(DefinitionKind::Metric, id)
@@ -111,8 +90,6 @@ impl<'a> MetricRuns<'a> {
             .ok_or_else(|| missing_metric(id))
     }
 
-    /// The stored metric with what it is called, or the refusal that there
-    /// is none.
     async fn stored_of(&self, id: &DefinitionId) -> Result<StoredDefinition, CustomError> {
         self.definitions
             .read(DefinitionKind::Metric, id)
@@ -121,8 +98,6 @@ impl<'a> MetricRuns<'a> {
             .ok_or_else(|| missing_metric(id))
     }
 
-    /// The columns a stored metric answers, from its definition and its
-    /// dataset's declaration. Nothing is run.
     pub(crate) async fn columns(&self, name: &DefinitionId) -> Result<Columns, CustomError> {
         let body = self.body_of(name).await?;
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
@@ -136,8 +111,6 @@ impl<'a> MetricRuns<'a> {
         Ok(columns_of(&metric, Some(&declaration)))
     }
 
-    /// Runs a stored metric as [`MetricRuns::run`] does, and answers the
-    /// columns and the name of the same definition the rows came from.
     pub(crate) async fn run_named(
         &self,
         id: &DefinitionId,
@@ -166,9 +139,6 @@ impl<'a> MetricRuns<'a> {
         })
     }
 
-    /// Runs a stored metric over the window the caller asked for, resolved
-    /// against the wall clock, so a named range means the period it is named
-    /// after whether or not the data reaches that far.
     pub(crate) async fn run(
         &self,
         name: &DefinitionId,
@@ -185,9 +155,6 @@ impl<'a> MetricRuns<'a> {
         self.run_over_dataset(&metric, named, request).await
     }
 
-    /// Compiles a stored metric for a reader that orders and pages it, over
-    /// a window already resolved - the same one for every page of a walk.
-    /// Nothing is run.
     pub(crate) async fn prepare(
         &self,
         name: &DefinitionId,
@@ -246,7 +213,6 @@ impl<'a> MetricRuns<'a> {
         })
     }
 
-    /// Runs a metric over the warehouse table it names, as the table is.
     async fn run_over_table(
         &self,
         metric: &MetricQuery,
@@ -272,8 +238,6 @@ impl<'a> MetricRuns<'a> {
         Ok(result)
     }
 
-    /// The rows of a compiled run, and beside them, for a ranged one, how many
-    /// rows the window left out. The two reads are independent.
     async fn counted(
         &self,
         metric: &MetricQuery,
@@ -293,11 +257,6 @@ impl<'a> MetricRuns<'a> {
         Ok(result)
     }
 
-    /// Runs a metric over the dataset it reads.
-    ///
-    /// The relation, where each value sits and which records count as one all
-    /// come from the declaration, so the metric contributes the question and
-    /// the dataset contributes everything about the records.
     async fn run_over_dataset(
         &self,
         metric: &MetricQuery,
@@ -338,8 +297,6 @@ impl<'a> MetricRuns<'a> {
         Ok(result)
     }
 
-    /// Runs a metric nobody stored: the assistant's own, written to answer one
-    /// question and kept nowhere.
     pub(crate) async fn answer(&self, metric: &MetricQuery) -> Result<RunResult, CustomError> {
         let Some(named) = metric.dataset() else {
             let unranged = WindowRequest::parse(None, None)
@@ -349,9 +306,6 @@ impl<'a> MetricRuns<'a> {
         };
         let (declaration, table) = self.ready_dataset(named).await?;
 
-        // Nobody stored this one, so nothing has checked it against the
-        // dataset yet. A query the declaration cannot answer is refused here
-        // rather than sent to the warehouse to fail there.
         let violations = answerable::check(metric, &declaration);
         if !violations.is_empty() {
             return Err(CustomError::Unanswerable(violations));
@@ -373,11 +327,6 @@ impl<'a> MetricRuns<'a> {
         Ok(result)
     }
 
-    /// The declaration and the table of a dataset that is ready to be read.
-    ///
-    /// A dataset that is absent, still being made or being removed answers
-    /// nothing: a run over it would read a table that is not there yet or is
-    /// about to go.
     async fn ready_dataset(&self, named: &str) -> Result<(Declaration, String), CustomError> {
         let ready = datasets::ready(self.datasets, named)
             .await
@@ -411,8 +360,6 @@ fn missing_metric(id: &DefinitionId) -> CustomError {
     }
 }
 
-/// What a definition says its rows hold, given the declaration of the
-/// dataset it reads, when it reads one.
 fn columns_of(metric: &MetricQuery, declaration: Option<&Declaration>) -> Columns {
     Columns {
         kinds: metric.column_kinds(declaration, false),

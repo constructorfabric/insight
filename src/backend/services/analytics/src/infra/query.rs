@@ -116,16 +116,6 @@ where
         })
 }
 
-/// One failure line per stage. The SQL never reaches the line — a drilldown or
-/// saved-query predicate can embed a person's name or address (insight#2488
-/// AC-4) — so the line carries its SHA-256 instead, joinable against the
-/// ClickHouse query log via `log_comment`. The server echoes the query into
-/// exception text too (syntax and analyzer errors quote it), so the error is
-/// scrubbed of any echo before it is logged.
-///
-/// A relation the warehouse has not built yet is not a failure: it reports
-/// through the throttled not-ready line instead, which a cold dashboard cannot
-/// turn into a flood.
 pub(crate) fn log_query_failure(error: &str, log_comment: &str, sql: &str, message: &str) {
     if matches!(ErrorClass::classify(error), ErrorClass::RelationMissing) {
         not_ready::warn_throttled(error, log_comment);
@@ -145,8 +135,6 @@ pub(crate) fn log_query_failure(error: &str, log_comment: &str, sql: &str, messa
 fn scrub_query_echo<'a>(error: &'a str, sql: &str) -> std::borrow::Cow<'a, str> {
     const ECHO_MARKERS: [&str; 3] = ["failed at position", "while processing query", "in query:"];
 
-    // SAFETY: byte-offset search; a match starts with an ASCII byte, so
-    // slicing `error` at the returned index stays on a char boundary.
     let find_ascii_ci = |haystack: &str, needle: &str| {
         haystack
             .as_bytes()

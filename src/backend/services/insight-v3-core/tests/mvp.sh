@@ -37,7 +37,6 @@ cleanup() {
   status=$?
   trap - EXIT
   if [[ "$datasets_declared" == "true" ]]; then
-    # A dataset takes its records with it, so the table goes too.
     for removed in "$table_name" "$pulls_table_name"; do
       http DELETE "/v1/datasets/$removed" >/dev/null 2>&1 || true
     done

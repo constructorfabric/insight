@@ -1,16 +1,3 @@
-//! Live `ClickHouse` tests for the windowed metric path: the SQL the compiler
-//! emits, executed for real, asserted on the rows that come back.
-//!
-//! Each test owns a table of its own, named after a fresh id, and drops it
-//! again — so the suite is parallel-safe and needs nothing seeded. The rows
-//! are synthetic and written here.
-//!
-//! These skip silently when `INTEGRATION_TESTS_CLICKHOUSE_URL` is unset, the
-//! convention the analytics live tests use; optional auth comes from
-//! `INTEGRATION_TESTS_CLICKHOUSE_USER` / `_PASSWORD`. They are not `#[ignore]`d
-//! because this crate's CI runs plain `cargo test`, which would never reach an
-//! ignored test.
-
 use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -28,8 +15,6 @@ struct Stand {
     table: String,
 }
 
-// Empty counts as unset: the CI matrix passes '' to entries without a
-// provisioned ClickHouse, and set-but-empty must skip exactly like absent.
 async fn stand_or_skip(schema: &str) -> Option<Stand> {
     let url = std::env::var(URL_VAR).unwrap_or_default();
     if url.is_empty() {
@@ -48,8 +33,6 @@ async fn stand_or_skip(schema: &str) -> Option<Stand> {
     );
     let user = std::env::var("INTEGRATION_TESTS_CLICKHOUSE_USER").unwrap_or_default();
     let password = std::env::var("INTEGRATION_TESTS_CLICKHOUSE_PASSWORD").unwrap_or_default();
-    // Half a credential would silently connect as nobody and read an empty
-    // stand, which passes every assertion below for the wrong reason.
     assert_eq!(
         user.is_empty(),
         password.is_empty(),
@@ -179,8 +162,6 @@ fn pairs(result: &RunResult) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A `VALUES` row holding one instant, in the second precision a `DateTime`
-/// column keeps.
 fn stamp(instant: chrono::DateTime<Utc>) -> String {
     format!(
         "(toDateTime('{}', 'UTC'))",

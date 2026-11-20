@@ -1,10 +1,3 @@
-//! `/v1/ai*` — the written context, the tenant system prompt, per-person keys,
-//! and the explain call.
-//!
-//! Every route but `/v1/ai/config` is gated on the stand switch: a deployment
-//! with the feature off answers "not found" rather than advertising a surface
-//! its operator did not turn on.
-
 pub mod context;
 pub mod credentials;
 pub mod explain;
@@ -25,11 +18,6 @@ pub(crate) const ADMIN_ONLY_CONTEXT: &str = "admin role required to write organi
 pub(crate) const ADMIN_ONLY_EXPLAIN: &str = "admin role required to ask for an explanation";
 pub(crate) const ADMIN_ONLY_PROMPT: &str = "admin role required to write the system prompt";
 
-/// `GET /v1/ai/config` — whether this deployment offers explanations.
-///
-/// Deliberately answers on a stand with the feature off: "off" IS the answer
-/// the SPA needs, and a 404 here would be indistinguishable from a version that
-/// predates the feature.
 pub async fn get_ai_config(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Result<impl IntoResponse, CanonicalError> {
@@ -41,7 +29,6 @@ pub async fn get_ai_config(
     }))
 }
 
-/// Refuse every other AI route when the stand switch is off.
 pub(crate) fn ensure_enabled(state: &AppState) -> Result<(), CanonicalError> {
     if state.config.ai_assist.enabled {
         return Ok(());

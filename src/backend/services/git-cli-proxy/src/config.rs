@@ -1,64 +1,22 @@
-//! Gear configuration.
-//!
-//! Loaded via `GearCtx::config::<GearConfig>()` from the
-//! `gears.git-cli-proxy.config` YAML section. Env overrides are
-//! `APP__gears__git_cli_proxy__config__<field>`.
-//!
-//! Every operationally load-bearing field is **required**: the committed YAML
-//! ships empty/zero placeholders and [`GearConfig::validate`] fails the boot
-//! when a value is missing — no silent defaults for budgets, paths, or the
-//! auth token (deployment supplies them via Helm).
-
 use serde::Deserialize;
 
-/// Configuration consumed by the git-cli-proxy gear. Deserialized from
-/// `gears.git-cli-proxy.config`.
 #[derive(Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct GearConfig {
-    /// Address the HTTP host binds, `host:port`.
     pub bind_addr: String,
-    /// Root directory of the repository cache (a PVC mount in K8s).
     pub data_dir: String,
-    /// Total disk budget for the cache, bytes. Must sit 10–15% below the
-    /// volume size (headroom for transient packs / git temp files).
     pub disk_budget_bytes: u64,
-    /// Per-repository size cap, bytes. A clone/fetch that would exceed it is
-    /// aborted and surfaced as a permanent (non-retryable) error.
     pub max_repo_bytes: u64,
-    /// Default freshness window, seconds — a repo fetched more recently than
-    /// this is served without contacting origin. Per-request override:
-    /// `X-Max-Staleness` header.
     pub default_max_staleness_seconds: u64,
-    /// Concurrency cap for heavy git operations (clone / fetch / repack).
     pub heavy_ops_concurrency: usize,
-    /// Concurrency cap for page serves. Each serve runs git children whose
-    /// memory scales with the window's blob bytes, so the pod's peak is
-    /// roughly this cap times the heaviest window; excess requests wait
-    /// in-connection for a slot.
     pub serve_concurrency: usize,
-    /// Static bearer token protecting every `/v1` route (service-to-service
-    /// auth; the service is cluster-internal and never behind the platform
-    /// gateway). Supplied per-deployment, never committed.
     pub proxy_token: String,
-    /// PEM bundle for origins whose TLS chain is not in the system store —
-    /// a self-hosted vendor behind a private CA. Empty means "system store
-    /// only", which is correct for the public clouds.
     pub ca_cert_path: String,
-    /// Accept `file://` origins. Test-harness escape hatch only: the hermetic
-    /// suite clones from local fixture repositories. No deployment sets it —
-    /// the chart hard-codes `false`.
     pub allow_file_repos: bool,
-    /// Exceptions to the built-in refusal of loopback, link-local, private and
-    /// cluster-internal names. Additive only: a public vendor needs no entry,
-    /// so tenants add sources without an operator redeploying.
     #[serde(default, deserialize_with = "empty_when_null")]
     pub allowed_repo_hosts: Vec<String>,
 }
 
-/// `key:` with nothing after it is YAML null, and it is how a human writes an
-/// empty list. Refusing to start on it is a worse answer than reading it as
-/// one.
 fn empty_when_null<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -66,7 +24,6 @@ where
     Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
-/// Never prints the token: gear init logs the whole config at boot.
 impl std::fmt::Debug for GearConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GearConfig")
@@ -89,13 +46,6 @@ impl std::fmt::Debug for GearConfig {
 }
 
 impl GearConfig {
-    /// Fail-fast validation of the required fields. Called from gear init so a
-    /// misconfigured deployment dies loudly at boot, not on the first request.
-    ///
-    /// # Errors
-    ///
-    /// Returns a single aggregated error naming every missing/invalid field
-    /// (so one boot failure surfaces the whole gap, not the first field).
     pub fn validate(&self) -> anyhow::Result<()> {
         let mut missing: Vec<&str> = Vec::new();
         if self.bind_addr.is_empty() {
@@ -265,9 +215,6 @@ mod tests {
 
     #[test]
     fn repo_cap_above_the_reclaim_watermark_fails() {
-        // Admission reserves max_repo_bytes before a clone, so a cap between
-        // the high watermark and the budget boots fine and then refuses every
-        // request forever — used=0, nothing to reclaim, 429 in a loop.
         let cases = vec![
             ("cap over the whole budget", 20_000_000_000_u64),
             (
@@ -301,8 +248,6 @@ mod tests {
 
     #[test]
     fn an_empty_allowlist_may_be_written_as_a_bare_key() {
-        // `allowed_repo_hosts:` with nothing after it is YAML null, which is
-        // how a human writes an empty list.
         let json = r#"{
             "data_dir": "/data",
             "disk_budget_bytes": 10,

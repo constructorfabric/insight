@@ -1,7 +1,3 @@
-//! Against a real Redis, because the claims are about what `BullMQ` holds:
-//! a scheduler per rule, replaced not duplicated, gone when removed. Run
-//! with `INTEGRATION_TESTS_REDIS_URL` set.
-
 use std::error::Error;
 
 use uuid::Uuid;
@@ -62,9 +58,6 @@ fn a_scheduler_key_names_its_rule_and_nothing_else_is_a_rule() {
     assert_eq!(rule_of("other:thing"), None);
 }
 
-/// The whole loop against a real Redis: a rule is scheduled, the worker
-/// takes its first check, runs the metric against a warehouse that answers
-/// one row over the threshold, and the store ends up owing a notification.
 mod worker {
     use std::sync::Arc;
     use std::time::Duration;
@@ -101,7 +94,6 @@ mod worker {
         }
     }
 
-    /// A warehouse that answers one row: `total` above any threshold here.
     async fn warehouse() -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -263,10 +255,6 @@ mod worker {
     }
 }
 
-/// Delivery end to end against a real Redis: an owed notification is
-/// queued, the delivery worker sends it to a server playing the provider,
-/// and the row ends up sent with the provider's receipt — or, after an
-/// unconfirmed answer, retried and then sent.
 mod delivery {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -412,8 +400,6 @@ mod delivery {
         panic!("the notification was never settled");
     }
 
-    /// A finished job leaves the queue whichever way it ended, so that the
-    /// next enqueue of the same id is a new job.
     async fn wait_until_forgotten(deliveries: &RedisDeliveries, id: Uuid) {
         for _ in 0..50 {
             let held = deliveries
@@ -430,8 +416,6 @@ mod delivery {
         panic!("the finished delivery job was kept");
     }
 
-    /// One delivery queue per Redis, so the cases take turns: a worker
-    /// started by one would otherwise take the jobs of another.
     static QUEUE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn run(fail_first: usize, attempts: u32) -> Option<(Notification, usize)> {

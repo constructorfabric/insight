@@ -74,7 +74,6 @@ pub struct ListQuery<'a> {
     pub org_chart_source_type: &'a str,
     pub terms: &'a [String],
     pub person_ids: &'a [Uuid],
-    /// People any one of whom a row may be; empty asks for no such narrowing.
     pub any_of: &'a [Uuid],
     pub restrict: Restrict<'a>,
     pub after: Option<After<'a>>,

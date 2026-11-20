@@ -2,8 +2,6 @@ use super::*;
 
 #[test]
 fn the_admin_role_id_matches_the_identity_services_own_constant() {
-    // identity-resolution's roles_repo::ADMIN_ROLE_ID, and the id the
-    // front end gates on. A mismatch would deny every caller.
     assert_eq!(
         ADMIN_ROLE_ID.to_string(),
         "a4d11000-0000-4000-8000-000000000001"
@@ -26,7 +24,6 @@ fn a_trailing_slash_does_not_double_up_in_the_path() {
 fn identity_refusing_the_caller_is_told_apart_from_identity_failing() {
     assert!(IdentityError::Refused(401).is_about_the_caller());
     assert!(IdentityError::Refused(403).is_about_the_caller());
-    // A broken identity service is our problem, not the caller's.
     assert!(!IdentityError::Refused(500).is_about_the_caller());
     assert!(!IdentityError::Refused(502).is_about_the_caller());
 }

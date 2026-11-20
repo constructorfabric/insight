@@ -2,11 +2,8 @@ use insight_migration::squash::{self, History};
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-/// The last releases that still carry the unsquashed history.
 const UPGRADE_THROUGH: &str = "insight umbrella 0.7.169, or a release-2026.09 build from 0.6.92 on";
 
-/// Identity tables only the unsquashed history leaves behind: the retired
-/// applier's ledger, the binding cache 015 dropped, and `persons` before 009.
 const UNLEDGERED_SCHEMA_PROBE: &str = "
     SELECT TABLE_NAME FROM information_schema.TABLES
     WHERE TABLE_SCHEMA = DATABASE()
@@ -37,10 +34,6 @@ impl MigrationTrait for Migration {
     }
 }
 
-/// Refuse an empty ledger over a schema the unsquashed history built.
-///
-/// The baseline only creates what is missing, so over such a schema it would
-/// record the history as walked while leaving the tables in their old shape.
 async fn refuse_unledgered_schema(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
     let rows = manager
         .get_connection()

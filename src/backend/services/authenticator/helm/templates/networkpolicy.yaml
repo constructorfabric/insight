@@ -1,16 +1,4 @@
 {{- if .Values.networkPolicy.enabled }}
-{{- /*
-  G4 layer 2 (NGINX_BFF.md §10 G4): the authenticator main port carries /auth/*,
-  JWKS, and /internal/authz -- and /internal/authz turns a stolen cookie into a
-  signed JWT, so only the gateway should reach it. Downstream services fetch
-  JWKS *through* the gateway (GATEWAY_JWKS_URL), never this port directly.
-
-  Cross-chart dependency: `gatewayPodSelector` must match the insight-gateway
-  chart's pod labels (it sets app.kubernetes.io/name: gateway). Layer 3 (each
-  endpoint authenticates its caller) still holds regardless, so this policy is
-  defense-in-depth, not the authentication -- consistent with the R1 rule that
-  network position is never trust.
-*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -39,14 +27,6 @@ spec:
 {{- end }}
 {{- if .Values.networkPolicy.tokenPort.enabled }}
 ---
-{{- /*
-  G4 layer 2, token port (NGINX_BFF.md §10 G4): /internal/token is reached by
-  the app-namespace service pods that need service tokens (analytics, seeds, the
-  future permissions service) -- a deliberately wider scope than the main port.
-  This is defense-in-depth: the endpoint still demands a valid RFC 7523
-  assertion regardless of network position (layer 3). Empty clientPodSelector
-  ({}) admits every pod in the namespace.
-*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

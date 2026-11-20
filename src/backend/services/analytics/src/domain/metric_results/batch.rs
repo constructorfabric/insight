@@ -45,11 +45,7 @@ pub enum UnbatchedView {
     Rollup {
         dimensions: Vec<String>,
     },
-    // Histogram bins one entity's own per-event values; it never batches with
-    // other metrics (per-entity bin membership is metric-specific).
     Histogram,
-    // The pooled shape bins the same values per dimension tuple instead, with
-    // no entity grain — same reason it cannot batch.
     PooledHistogram {
         dimensions: Vec<String>,
     },
@@ -89,9 +85,6 @@ pub struct PlannedRanking {
     pub query: CompiledQuery,
 }
 
-/// Ranking pre-pass outcomes: the groups for rankings that answered and the
-/// reason the others have none. A view whose ranking did not answer plans as
-/// `PlannedQuery::Unanswered` instead of aborting the whole request.
 #[derive(Debug, Default)]
 pub struct RankingResults {
     pub groups: BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
@@ -115,9 +108,6 @@ pub enum PlannedQuery {
         view: UnbatchedView,
         query: CompiledQuery,
     },
-    // A view settled before planning (its group ranking query did not answer);
-    // it flows through the same execution pipeline so the response keeps every
-    // requested view slot.
     Unanswered {
         metric_index: usize,
         view_index: usize,
@@ -163,9 +153,6 @@ pub fn plan_rankings(req: &ValidatedMetricResultsRequest) -> Vec<PlannedRanking>
         .collect()
 }
 
-/// Both histogram shapes are single (never batched) queries; which one is
-/// planned is decided by whether the request asked to bin per dimension tuple
-/// instead of per entity.
 fn plan_histogram(
     req: &ValidatedMetricResultsRequest,
     metric: &ValidatedMetricRequest,
@@ -437,9 +424,6 @@ pub(crate) fn period_alias(item_index: usize) -> String {
     format!("m{item_index}")
 }
 
-/// The alias carrying one item's value over the comparison window. The primary
-/// period keeps the bare `period_alias`, so a request without a comparison
-/// window compiles unchanged.
 pub(crate) fn period_compare_alias(item_index: usize) -> String {
     format!("m{item_index}_compare")
 }
@@ -921,8 +905,6 @@ mod tests {
 
     #[test]
     fn demux_peer_parses_quoted_n() {
-        // ClickHouse quotes UInt64 in JSONEachRow output by default; the
-        // demuxed row must decode "7" through PeerQueryRow's optional_u64.
         let rows = vec![PeerWideRow {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             extra: [

@@ -1,15 +1,3 @@
-"""Session orchestrator for the downstream-verification e2e.
-
-Owns the compose stack lifecycle (Keycloak + authenticator + gateway + the REAL
-analytics and identity services) and exposes a small HTTP client plus a
-service-token minter. Tests live in test_downstream.py.
-
-The IdP is a real Keycloak importing the generated roster realm
-(`insight-seed-realm`, generated here into ./keycloak-import). pytest runs on
-the host; the OIDC redirect chain uses in-network hostnames, so the client
-rewrites them to the published localhost ports.
-"""
-
 from __future__ import annotations
 
 import http.cookiejar
@@ -28,10 +16,6 @@ import pytest
 HERE = Path(__file__).parent
 REPO_ROOT = HERE.parents[5]
 
-# Exchange-cache window (seconds). Drives the authenticator's
-# authz_cache_max_age_seconds via the compose `${AUTHZ_CACHE_MAX_AGE:-3}`
-# default, so it must be exported into the compose subprocess environment
-# before the stack starts (otherwise the harness never comes up).
 AUTHZ_CACHE_MAX_AGE = int(os.environ.setdefault("AUTHZ_CACHE_MAX_AGE", "3"))
 
 COMPOSE = ["docker", "compose", "-f", str(HERE / "docker-compose.e2e.yml")]
@@ -52,25 +36,20 @@ SERVICES = [
 GW = "http://localhost:18080"
 KEYCLOAK = "http://localhost:18084"
 AUTHENTICATOR = "http://localhost:18083"
-AUTH_TOKEN = "http://localhost:18093"  # authenticator token listener
-ANALYTICS_DIRECT = "http://localhost:18081"  # bypasses the gateway (R1 proof)
-IDENTITY_DIRECT = "http://localhost:18082"  # bypasses the gateway (R1 proof)
+AUTH_TOKEN = "http://localhost:18093"
+ANALYTICS_DIRECT = "http://localhost:18081"
+IDENTITY_DIRECT = "http://localhost:18082"
 
-# The service-token assertion audience — must match the authenticator's baked
-# service_tokens.audience (config/insight.yaml).
 SERVICE_TOKEN_AUDIENCE = "http://localhost:8093/internal/token"
 
 REWRITES = {"http://gateway:8080": GW, "http://keycloak:8085": KEYCLOAK}
 
 KC_REALM = "insight"
 KC_DISCOVERY = f"{KEYCLOAK}/realms/{KC_REALM}/.well-known/openid-configuration"
-# The realm's dev-lead persona; the generator bakes one dev password for all users.
 E2E_USER = "dev@company.nonpresent"
 E2E_PASSWORD = "insight-dev"
-# The realm users' tenant claim; also the tenant of TENANT_DEV in the tests.
 TENANT_ID = "00000000-df51-5b42-9538-d2b56b7ee953"
 
-# Anchored on login-actions/authenticate, not "the first <form>".
 _LOGIN_FORM = re.compile(r'<form[^>]+action="([^"]*login-actions/authenticate[^"]*)"', re.IGNORECASE)
 
 
@@ -89,9 +68,6 @@ def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 
 
 class Client:
-    """Minimal HTTP client: no auto-redirects, case-insensitive headers, an OIDC
-    login helper that drives Keycloak's HTML login form, and a form POST for
-    the service-token exchange."""
 
     def request(self, url, headers=None, method="GET", data=None, jar=None):
         body = None
@@ -126,14 +102,6 @@ class Client:
         return url
 
     def login(self, user=None):
-        """Drive the OIDC code flow through the gateway; return the __Host-sid value.
-
-        Keycloak serves a real HTML login form, so the middle of the chain is:
-        GET the authorize URL (collecting the IdP's auth-session cookies), parse
-        the form action, POST the credentials, then deliver the code redirect to
-        the gateway callback. `user` optionally picks another realm user (by
-        email); omit for the default dev-lead persona.
-        """
         _, h, _ = self.request(f"{GW}/auth/login?return_to=/")
 
         jar = http.cookiejar.CookieJar(policy=_SendSecureOverHttp())
@@ -148,7 +116,7 @@ class Client:
         )
         assert status == 302, f"credential POST expected 302, got {status}"
 
-        status, h, _ = self.request(self._rewrite(h["location"]))  # gateway /auth/callback
+        status, h, _ = self.request(self._rewrite(h["location"]))
         assert status == 302, f"callback expected 302, got {status}"
         for part in h.get("set-cookie", "").split(";"):
             part = part.strip()
@@ -172,10 +140,6 @@ def _wait_http(url, want, timeout_s=120):
 
 
 def _generate_realm(import_dir: Path) -> None:
-    """Generate the Keycloak import realm with `insight-seed-realm`.
-
-    The redirect is passed explicitly: --authenticator-redirect REPLACES the
-    defaults, which would deregister the gateway callback."""
     seed = REPO_ROOT / "src" / "ingestion" / "tools" / "seed"
     import_dir.mkdir(exist_ok=True)
     subprocess.run(
@@ -251,7 +215,6 @@ def _gen_tls_certs(certs: Path) -> None:
         check=True,
         capture_output=True,
     )
-    # Trust the self-signed leaf directly as a root (it validates itself).
     (certs / "ca.pem").write_bytes((certs / "server.pem").read_bytes())
     for f in ("server.key", "server.pem", "ca.pem"):
         (certs / f).chmod(0o644)
@@ -261,18 +224,11 @@ def _gen_tls_certs(certs: Path) -> None:
 def stack():
     keys = HERE / "keys"
     keys.mkdir(exist_ok=True)
-    # ES256 gateway signing key (EC P-256): the downstream verifiers — the
-    # oidc-authn-plugin in analytics and identity-resolution — validate the
-    # ES256 gateway JWT the authenticator signs.
     _genpkey_ec(keys / "current.pem")
     (keys / "current.pem").chmod(0o644)
-    # TLS discovery front certs (authn-tls) into ./certs.
     certs = HERE / "certs"
     certs.mkdir(exist_ok=True)
     _gen_tls_certs(certs)
-    # Service-token client keypair: the baked `testclient` registry entry
-    # references testclient.pub.pem (resolved against public_key_dir=/keys). It
-    # stays EC — the RFC 7523 client assertion is ES256.
     _genpkey_ec(keys / "testclient.key.pem")
     subprocess.run(
         [
@@ -293,13 +249,10 @@ def stack():
     try:
         _compose("up", "-d", "--build", *SERVICES)
         # Keycloak start + realm import runs tens of seconds; the realm
-        # discovery document answers only once its import committed. The
-        # authenticator discovers per-op, so it needs no restart after this.
+        # discovery document answers only once its import committed.
         _wait_http(KC_DISCOVERY, want={200}, timeout_s=240)
         _wait_http(f"{GW}/healthz", want={200})
         _wait_http(f"{GW}/auth/login", want={302})
-        # Both downstream services up: /health is public on each host, and a
-        # no-cookie /api/* through the gateway must already be 401 (auth wired).
         _wait_http(f"{ANALYTICS_DIRECT}/health", want={200})
         _wait_http(f"{IDENTITY_DIRECT}/healthz", want={200})
         yield
@@ -338,11 +291,7 @@ def _gateway_kid(pub) -> str:
 
 
 def mint_gateway_jwt(claims: dict) -> str:
-    """Sign a gateway JWT directly with the e2e gateway key (keys/current.pem),
-    using ES256 + the authenticator's RFC 7638 kid so the downstream plugin
-    finds the key in the JWKS. Lets a test forge an otherwise-valid token that
-    omits a required claim (e.g. `tenant_id`) to prove the plugin rejects it."""
-    jwt = pytest.importorskip("jwt")  # PyJWT
+    jwt = pytest.importorskip("jwt")
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
     key_pem = (HERE / "keys" / "current.pem").read_bytes()
@@ -352,11 +301,7 @@ def mint_gateway_jwt(claims: dict) -> str:
 
 
 def mint_service_token(tenant: str) -> str:
-    """Run the step-06 RFC 7523 flow: sign a client assertion with the testclient
-    key, exchange it at the authenticator's token endpoint for a gateway service
-    token (sub = a per-service UUID, sub_type=service, roles include `service`).
-    Requires PyJWT."""
-    jwt = pytest.importorskip("jwt")  # PyJWT; skip scenario 4 if unavailable
+    jwt = pytest.importorskip("jwt")
     key_pem = (HERE / "keys" / "testclient.key.pem").read_text()
     now = int(time.time())
     assertion = jwt.encode(

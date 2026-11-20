@@ -1,6 +1,3 @@
-//! The chat endpoint: answers a question from the data, or writes
-//! metric/widget/dashboard definitions.
-
 use std::sync::Arc;
 
 use axum::extract::Extension;
@@ -73,7 +70,6 @@ struct ChatAnswerResponse {
 struct ChatCreatedResponse {
     reply: String,
     created: Written,
-    /// What already existed under these ids and now holds something else.
     updated: Written,
 }
 
@@ -179,7 +175,6 @@ async fn handle_chat(
     }
 }
 
-/// What was created and what was replaced, by id and name.
 fn reported(stored: &[StoredItem]) -> (Written, Written) {
     let mut created = Written::default();
     let mut updated = Written::default();
@@ -203,11 +198,6 @@ fn reported(stored: &[StoredItem]) -> (Written, Written) {
     (created, updated)
 }
 
-/// What an answer says when its query found nothing.
-///
-/// The reply is written before the query runs, so a model that promised rows
-/// and got none would present its own sentence over an empty result. It does
-/// not get to be the one talking about data that is not there.
 fn no_rows(table: Option<&str>) -> String {
     match table {
         Some(table) => format!("No data: that query returned no rows from {table}."),
@@ -215,10 +205,6 @@ fn no_rows(table: Option<&str>) -> String {
     }
 }
 
-/// The rows behind an answer.
-///
-/// No query means the reply stands on its own - a question about what data
-/// exists is answered by the table list in the prompt.
 async fn answered_with(
     state: &AppState,
     query: Option<MetricQuery>,

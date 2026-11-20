@@ -11,11 +11,6 @@ pub async fn reconcile_builtin_definitions(db: &DatabaseConnection) -> Result<()
         reconcile_source(db, builtin_source).await?;
     }
 
-    // One metric's definition and all its child rows (inputs, dimensions, tags)
-    // converge in a single transaction: a mid-way failure never leaves a metric
-    // with a partial child set, and a concurrent reconciler on another replica
-    // sees the whole prior set or the whole new one, never a delete-in-progress.
-    // DESIGN requires builtin upserts to be idempotent and race-safe.
     for metric in builtin_metrics() {
         let txn = db.begin().await?;
         let source_id = fetch_source_id(&txn, &metric.source_key).await?;

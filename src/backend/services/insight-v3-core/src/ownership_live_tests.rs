@@ -26,7 +26,6 @@ fn a_person() -> PersonId {
     PersonId::new(Uuid::now_v7())
 }
 
-/// A tag name no other run holds, within the tag name length.
 fn unique_tag(prefix: &str) -> String {
     let id = Uuid::now_v7().simple().to_string();
 
@@ -178,8 +177,6 @@ async fn the_ownership_schema_is_in_place_after_the_migrations_ran_twice() {
     }
 }
 
-/// What one caller is answered: the listing by `prefix`, each of `boards` by
-/// one lookup, and the listing's total.
 type Answered = (Caller, Vec<(String, Access)>, Vec<(String, Access)>, u64);
 
 async fn answer_of(

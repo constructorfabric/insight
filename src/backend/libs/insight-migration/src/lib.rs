@@ -1,24 +1,9 @@
-//! Migration lifecycle for the Rust services that own a `MariaDB` schema.
-//!
-//! Schema history is forward-only: a release applies migrations, and rolling
-//! the application image back does not roll the schema back. Two pieces make
-//! that contract safe, and both live here so every service gets identical
-//! semantics.
-//!
-//! [`assert_compatible`] is the server-boot gate. A binary starts iff every
-//! migration it embeds is recorded applied; rows written by a NEWER release
-//! that this binary does not carry are tolerated. `SeaORM` cannot express this:
+//! `SeaORM` cannot express [`assert_compatible`]:
 //! every `MigratorTrait` status accessor — including the 2.0 `*_read_only`
 //! variants — treats `applied - embedded` as a fatal "migration file is
 //! missing" error, which is exactly the rollback case this gate exists to
 //! allow. The ledger is therefore read directly through the public
 //! [`sea_orm_migration::seaql_migrations`] entity and compared here.
-//!
-//! [`with_migration_session`] is the writer. It owns pool construction because
-//! `GET_LOCK` is session-scoped: the lock, the DDL, and the release must all
-//! run on one connection. Taking the URL rather than a caller-supplied pool
-//! makes it impossible to hand this function a pool that would scatter those
-//! statements across sessions.
 
 pub mod squash;
 
@@ -32,38 +17,25 @@ use sea_orm::{
 };
 use sea_orm_migration::{MigratorTrait, SchemaManager, seaql_migrations};
 
-/// How many missing versions to name before truncating the boot error.
 const MAX_REPORTED_MISSING: usize = 5;
 
-/// Idle/lifetime ceiling for a migration session.
-///
 /// `sea-orm` exposes `idle_timeout`/`max_lifetime` as `Duration` and forwards
 /// them to `sqlx` only when set, so leaving them unset means `sqlx`'s own
 /// defaults apply — a 10-minute idle timeout and a 30-minute maximum lifetime.
 /// Either would reap the connection holding the advisory lock partway through
 /// a long migration and hand the next statement a fresh session with no lock.
 /// `None` is not reachable through `ConnectOptions`, so the ceiling is pushed
-/// far past any plausible migration instead, and
-/// [`with_migration_session`] additionally verifies it still holds the lock
-/// before reporting success.
+/// far past any plausible migration instead.
 const SESSION_LIFETIME: Duration = Duration::from_hours(24);
 
-/// One variant per way the migration lifecycle can fail.
 #[derive(Debug, thiserror::Error)]
 pub enum MigrationError {
-    /// The connection URL selects no default database, so every schema probe
-    /// would filter on `DATABASE()` = NULL and misread a misconfigured URL as
-    /// "schema is behind this build".
     #[error("connection URL selects no database — the migration ledger cannot be located")]
     NoDatabaseSelected,
 
-    /// The migrator overrides `migration_table_name`, which the ledger read
-    /// here does not support (the public entity is hardwired to the default).
     #[error("unsupported custom migration table name `{0}`")]
     UnsupportedTableName(String),
 
-    /// The schema is behind the binary: embedded migrations without a ledger
-    /// row. Serving would hit missing columns at query time.
     #[error(
         "schema is behind this build: {missing} of {embedded} embedded migrations are not \
          recorded applied: {shown}. Run this service's `migrate` entrypoint against the \
@@ -75,7 +47,6 @@ pub enum MigrationError {
         shown: String,
     },
 
-    /// Another migrator held the advisory lock for the whole wait window.
     #[error(
         "could not acquire the `{lock_name}` advisory lock within {timeout_secs}s — is \
          another migration run stuck?"
@@ -85,8 +56,6 @@ pub enum MigrationError {
         timeout_secs: u64,
     },
 
-    /// The session no longer held the advisory lock after the body ran, so
-    /// the migration cannot be assumed to have run serialized.
     #[error(
         "the `{lock_name}` advisory lock was no longer held by this session when the \
          migration finished — the connection was replaced mid-run, so the migration cannot \
@@ -94,21 +63,16 @@ pub enum MigrationError {
     )]
     LockLost { lock_name: String },
 
-    /// A probe query returned no row at all.
     #[error("{0} returned no row")]
     ProbeEmpty(&'static str),
 
-    /// The database rejected or dropped a query.
     #[error(transparent)]
     Db(#[from] DbErr),
 
-    /// The caller-supplied migration body failed.
     #[error(transparent)]
     Body(anyhow::Error),
 }
 
-/// Read the applied migration versions out of the ledger table.
-///
 /// Returns an empty set when the ledger table does not exist, which is the
 /// fresh-database case: no migration has been applied yet. Never issues DDL —
 /// a server boot must not create tables, so the `install`-first
@@ -260,7 +224,6 @@ where
     Ok(value)
 }
 
-/// Connect with a pool pinned to exactly one long-lived connection.
 async fn connect_pinned(database_url: &str) -> Result<DatabaseConnection, MigrationError> {
     let mut opts = ConnectOptions::new(database_url);
     opts.max_connections(1)
@@ -304,7 +267,6 @@ async fn acquire_lock(
     Ok(())
 }
 
-/// Whether this session is the one holding `lock_name`.
 async fn holds_lock(db: &DatabaseConnection, lock_name: &str) -> Result<bool, MigrationError> {
     // Compared server-side and CAST for the same reason as `acquire_lock`.
     // `IS_USED_LOCK` yields NULL when nobody holds the lock, so the comparison
@@ -322,11 +284,6 @@ async fn holds_lock(db: &DatabaseConnection, lock_name: &str) -> Result<bool, Mi
     Ok(held == Some(1))
 }
 
-/// Fail with a readable error when the connection URL selects no database.
-///
-/// Without this, every schema probe filters on `DATABASE()` = NULL, reports
-/// the ledger absent, and the boot gate misdiagnoses a misconfigured URL as
-/// "schema is behind this build".
 async fn assert_default_database_selected(db: &DatabaseConnection) -> Result<(), MigrationError> {
     let selected: Option<String> = db
         .query_one_raw(Statement::from_string(

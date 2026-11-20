@@ -12,9 +12,6 @@ const FORMER: PersonId = PersonId::new(Uuid::from_u128(1));
 const CALLER: PersonId = PersonId::new(Uuid::from_u128(2));
 const RACER: PersonId = PersonId::new(Uuid::from_u128(3));
 
-/// Identity as a list of administrators, which hands the dashboard to
-/// someone else the moment its owner is looked up, as a second transfer
-/// landing between the read and the write would.
 struct Racing<'a> {
     store: &'a MemoryDefinitions,
     dashboard: DefinitionId,
@@ -80,7 +77,6 @@ async fn a_transfer_that_loses_the_race_is_refused_and_leaves_the_winner_owning_
     assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(RACER)));
 }
 
-/// Identity where only the people listed hold the administrator role.
 struct Listed(Vec<PersonId>);
 
 #[async_trait]
@@ -134,7 +130,6 @@ async fn a_transferred_dashboard_takes_its_tags_from_the_new_owners_scope() {
     );
 }
 
-/// Identity that fails every look at who holds the role.
 struct Unreachable;
 
 #[async_trait]

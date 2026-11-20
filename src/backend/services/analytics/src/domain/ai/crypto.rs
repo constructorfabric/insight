@@ -1,27 +1,15 @@
-//! Sealing for stored Anthropic tokens.
-//!
-//! AES-256-GCM with a per-write nonce. The associated data is the row's tenant
-//! and person, so a ciphertext lifted into another person's row fails to open
-//! rather than handing that person someone else's key.
-
 use toolkit_security::crypto::aead::{Aes256Gcm, NONCE_LEN};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::config::KEY_BYTES;
 
-/// A sealed token as it is stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sealed {
     pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,
 }
 
-/// Seal `token` for exactly this tenant and person.
-///
-/// # Errors
-///
-/// Returns an error when the AEAD refuses to encrypt.
 pub fn seal(
     key: &[u8; KEY_BYTES],
     tenant: Uuid,
@@ -41,12 +29,6 @@ pub fn seal(
     })
 }
 
-/// Open a sealed token stored against this tenant and person.
-///
-/// # Errors
-///
-/// Returns an error when the nonce is the wrong length, the ciphertext was
-/// tampered with, the key is wrong, or the row belongs to someone else.
 pub fn open(
     key: &[u8; KEY_BYTES],
     tenant: Uuid,
@@ -74,7 +56,6 @@ pub fn open(
     Ok(Zeroizing::new(token.to_owned()))
 }
 
-/// The last four characters of a token — all the UI ever learns about it.
 pub fn hint(token: &str) -> String {
     let trimmed = token.trim();
     let count = trimmed.chars().count();
@@ -162,9 +143,6 @@ mod tests {
         Ok(())
     }
 
-    // A row sealed outside insight (python `cryptography` AESGCM, same key,
-    // tenant/person AAD and token as above). Stored rows must keep opening
-    // whatever AES-GCM implementation seals new ones.
     #[test]
     fn opens_a_row_sealed_by_another_implementation() -> anyhow::Result<()> {
         let sealed = Sealed {

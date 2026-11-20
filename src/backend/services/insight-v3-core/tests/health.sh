@@ -19,10 +19,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The definition store and the identity service the config demands at startup.
-# CI hands us a MariaDB (see scripts/ci/components.py); a local run falls back
-# to the compose stand's, and identity is only dialed by a request that needs a
-# person resolved — no live service is required to boot.
 database_url="${INTEGRATION_TESTS_MARIADB_URL:-mysql://insight:insight@127.0.0.1:3306/insight_v3}"
 identity_url="${INTEGRATION_TESTS_IDENTITY_URL:-http://identity.invalid}"
 

@@ -1,11 +1,3 @@
-//! A book on disk: one small document per mirror, and an append-only log of
-//! author stamps — so a refresh writes what it changed, not the whole book.
-//!
-//! ```text
-//! <book>/entries/<mirror dir name>.json
-//! <book>/stamps.log      one `{"e","f","c"}` line per stamp, last one wins
-//! ```
-
 use std::collections::HashMap;
 use std::io::{BufRead as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -18,12 +10,9 @@ use super::book::{AuthorStamps, Book, EntryRecord};
 const ENTRIES_DIR: &str = "entries";
 const STAMPS_LOG: &str = "stamps.log";
 
-/// A log this many times longer than its live stamps is rewritten.
 const COMPACT_RATIO: usize = 4;
-/// Below this many lines a log is never worth rewriting.
 const COMPACT_FLOOR: usize = 4096;
 
-/// INVARIANT: every in-flight atomic write targets a distinct temporary path.
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,7 +25,6 @@ struct StampLine {
     changed_us: i64,
 }
 
-/// A book's directory and how long its stamp log has grown.
 #[derive(Debug)]
 pub(super) struct Shelf {
     dir: PathBuf,
@@ -45,7 +33,6 @@ pub(super) struct Shelf {
 }
 
 impl Shelf {
-    /// A shelf for a book nothing was read for.
     pub(super) fn empty(dir: PathBuf) -> Self {
         Self {
             dir,
@@ -54,8 +41,6 @@ impl Shelf {
         }
     }
 
-    /// Read a book; what is missing or unreadable is logged and treated as
-    /// absent, so its authors re-surface as their mirrors are fetched again.
     pub(super) fn load(dir: PathBuf) -> (Self, Book, bool) {
         let mut damaged = false;
         let mut entries: HashMap<String, EntryRecord> = HashMap::new();
@@ -88,9 +73,6 @@ impl Shelf {
         }
 
         let (stamps, log_lines, log_damaged) = read_stamps(&dir.join(STAMPS_LOG));
-        // An entry naming an author with no stamp would never report them: its
-        // snapshot reads as folded, so nothing stamps them again. Dropping it
-        // makes its next refresh fold it afresh and stamp every author it holds.
         let before = entries.len();
         entries.retain(|_, record| {
             record
@@ -114,8 +96,6 @@ impl Shelf {
         )
     }
 
-    /// Make one refresh durable: the stamps before the entry record, so a
-    /// crash in between re-folds the entry instead of losing its changes.
     pub(super) fn persist(
         &mut self,
         stamped: &[(String, AuthorStamps)],
@@ -139,7 +119,6 @@ impl Shelf {
         Ok(())
     }
 
-    /// Remove a forgotten entry's record.
     pub(super) fn remove_entry(&self, dir_name: &str) -> std::io::Result<()> {
         match std::fs::remove_file(self.dir.join(ENTRIES_DIR).join(format!("{dir_name}.json"))) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
@@ -166,8 +145,6 @@ impl Shelf {
             .append(true)
             .open(self.dir.join(STAMPS_LOG))?;
         let intact_len = log.metadata()?.len();
-        // A failed append can leave a partial line; cut it off, or the next
-        // append glues onto it and both lines are lost to the reader.
         if let Err(e) = log.write_all(&bytes).and_then(|()| log.sync_all()) {
             if let Err(cut) = log.set_len(intact_len) {
                 tracing::error!(error = %cut, "could not cut a failed append off the author stamp log");
@@ -178,7 +155,6 @@ impl Shelf {
         Ok(())
     }
 
-    /// Rewrite the log as one line per live author.
     fn compact(&mut self, book: &Book) -> std::io::Result<()> {
         let mut bytes = Vec::new();
         for (email, stamps) in book.stamps() {
@@ -198,9 +174,6 @@ impl Shelf {
     }
 }
 
-/// Replay the stamp log, last line per author winning. A torn final line —
-/// a crash mid-append — is cut off, or the next append would glue a good
-/// line onto it and lose both.
 fn read_stamps(path: &Path) -> (HashMap<String, AuthorStamps>, usize, bool) {
     let mut stamps = HashMap::new();
     let Ok(file) = std::fs::File::open(path) else {
@@ -254,7 +227,6 @@ fn truncate_to(path: &Path, len: u64) {
     }
 }
 
-/// Temporary file, fsync, rename; the temporary is removed on any failure.
 fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = path.with_extension(format!("tmp.{}.{seq}", std::process::id()));
@@ -269,7 +241,6 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     renamed
 }
 
-/// Remove temporaries a killed writer left anywhere under `root`.
 pub(super) fn sweep_temporaries(root: &Path) {
     let Ok(listing) = std::fs::read_dir(root) else {
         return;
@@ -376,7 +347,6 @@ mod tests {
             ))
             .collect(),
         };
-        // The entry document landed; its stamp did not.
         if let Err(e) = shelf.persist(&[], Some(&("app".to_owned(), record)), &book) {
             panic!("persist: {e}");
         }

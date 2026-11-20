@@ -1,19 +1,9 @@
-//! Whether a submitted declaration is even shaped like one.
-//!
-//! Reading the body into a [`Declaration`] stops at the first thing it cannot
-//! read, and answers with a place in the text rather than a place in the
-//! document. A reader correcting a form needs every problem at once, against
-//! the field that carries it, so the shape is checked here first and the
-//! deserialiser only ever sees a body it can read.
-
 use serde_json::Value;
 
 use super::declaration::{FieldRole, FieldType, PersonHandle};
 use crate::domain::violation::{Reason, Violation};
 
-/// What a declaration may say at the top.
 const DECLARATION_KEYS: [&str; 4] = ["title", "description", "fields", "row_identity"];
-/// What one field may say.
 const FIELD_KEYS: [&str; 8] = [
     "name",
     "path",
@@ -25,8 +15,6 @@ const FIELD_KEYS: [&str; 8] = [
     "default_clock",
 ];
 
-/// Every way this body is not a declaration, each against the place in it that
-/// is wrong.
 pub(crate) fn check(body: &Value) -> Vec<Violation> {
     let mut violations = Vec::new();
 
@@ -149,8 +137,6 @@ fn check_row_identity(identity: Option<&Value>, violations: &mut Vec<Violation>)
     }
 }
 
-/// A key nothing reads is a mistake worth naming: it is usually the right
-/// value under the wrong name.
 fn unknown_keys<'a>(
     given: impl Iterator<Item = &'a String>,
     admissible: &[&str],

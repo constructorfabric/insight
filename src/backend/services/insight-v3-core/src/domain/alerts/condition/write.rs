@@ -1,6 +1,3 @@
-//! A condition written back as the JSON a draft takes, so what a reader is
-//! shown can be sent again unchanged.
-
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 

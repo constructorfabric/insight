@@ -1,14 +1,3 @@
-//! Custom-metric CRUD + export/import handlers — `/v1/metrics*`.
-//!
-//! Every request is tenant-scoped from the session `SecurityContext` and only
-//! ever touches `origin='custom'` rows, so a builtin (`registry.yaml`-owned) key
-//! is invisible here and can never be mutated. The observation SQL is validated
-//! two ways on write: the single-SELECT gate (pure) and a `LIMIT 0` column
-//! probe against ClickHouse that fails the write if the SQL does not emit the
-//! observation contract. Export strips tenant/origin; import re-homes each graph
-//! to the caller's tenant, keys on `metric_key`, and skips one that already
-//! exists (idempotent).
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,14 +19,10 @@ use crate::domain::metric_crud::{
     normalize_observation_sql, replace_custom_metric, validate_graph,
 };
 
-/// The observation-contract columns a custom source's SQL must emit. Probed as
-/// a `LIMIT 0` projection so a malformed source fails on write, not at render.
 const OBSERVATION_CONTRACT_COLUMNS: &str = "tenant_id, source_key, entity_type, entity_id, \
     metric_date, measure_key, observed_at, value, subject_key, dimensions";
 
-/// ClickHouse-side execution cap for the observation probe (seconds).
 const PROBE_MAX_EXECUTION_SECS: u32 = 5;
-/// Outer wall-clock deadline for the observation probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);
 
 pub async fn list_custom_metrics(
@@ -92,8 +77,6 @@ pub async fn update_custom_metric_handler(
     Json(mut graph): Json<CustomMetric>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant_id = ctx.subject_tenant_id();
-    // The path key is authoritative — a custom metric's identity never changes
-    // under an update.
     graph.metric_key = metric_key.clone();
     graph.origin = None;
     graph.observation_sql = normalize_observation_sql(&graph.observation_sql);
@@ -149,8 +132,6 @@ pub async fn import_custom_metrics_handler(
         }));
     }
 
-    // Validate and probe the whole batch before writing any row, so a malformed
-    // metric fails the import cleanly instead of after earlier ones have landed.
     let tenant_id = ctx.subject_tenant_id();
     let mut graphs = req.metrics;
     for graph in &mut graphs {
@@ -168,22 +149,10 @@ pub async fn import_custom_metrics_handler(
     Ok(Json(ImportCustomMetricsResponse { imported, skipped }))
 }
 
-// ── Helpers ─────────────────────────────────────────────────
-
-/// Author-time observation-contract probe: wrap the (already single-SELECT
-/// gated) SQL exactly as the compiler does and project the contract columns
-/// with `LIMIT 0`, so a source that omits a column or does not parse fails the
-/// write. The raw engine message is logged, never returned, so ClickHouse
-/// internals do not leak to the client.
 async fn probe_observation_sql(
     ch: &insight_clickhouse::Client,
     sql: &str,
 ) -> Result<(), CanonicalError> {
-    // The probe runs author-supplied SQL, so it is bounded twice: ClickHouse
-    // `SETTINGS` cap the work the engine will do, and an outer wall-clock
-    // deadline caps a stalled connection — neither the engine nor the request
-    // thread can be held open by an expensive source.
-    //
     // INVARIANT: no `max_rows_to_read` here — ClickHouse enforces it against
     // the planner's storage-scan estimate before `LIMIT 0` applies, so any cap
     // rejects every real (multi-row) source while `LIMIT 0` already keeps the
@@ -267,10 +236,6 @@ fn db_error(error: DbErr) -> CanonicalError {
     CanonicalError::internal("custom metric operation failed").create()
 }
 
-/// Live ClickHouse tests for the observation probe. `#[ignore]`d and skip
-/// silently when `INTEGRATION_TESTS_CLICKHOUSE_URL` is unset (same convention
-/// as the MariaDB `live_tests`); optional auth via
-/// `INTEGRATION_TESTS_CLICKHOUSE_USER` / `INTEGRATION_TESTS_CLICKHOUSE_PASSWORD`.
 #[cfg(test)]
 mod probe_live_tests {
     use uuid::Uuid;
@@ -279,8 +244,6 @@ mod probe_live_tests {
 
     const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
-    // Empty counts as unset: the CI matrix passes '' to entries without a
-    // provisioned ClickHouse, and set-but-empty must skip exactly like absent.
     fn client_or_skip() -> Option<insight_clickhouse::Client> {
         let url = std::env::var(URL_VAR).unwrap_or_default();
         if url.is_empty() {

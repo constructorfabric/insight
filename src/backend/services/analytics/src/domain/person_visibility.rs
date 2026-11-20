@@ -115,8 +115,6 @@ async fn authorize_visible_person_ids(
             unavailable()
         })?;
 
-    // Only the count leaves this function: which ids were refused is not told
-    // to the caller (an id they may not see is not theirs to learn about).
     let unmatched = person_ids
         .iter()
         .filter(|person_id| !visible.contains(*person_id))
@@ -128,8 +126,6 @@ async fn authorize_visible_person_ids(
     Err(denied(caller, unmatched))
 }
 
-// INVARIANT: the gate's only 403 — identity answered "not visible". Anything
-// that stops the check from running uses `unavailable` instead.
 fn denied(caller: Uuid, unmatched: usize) -> CanonicalError {
     tracing::warn!(
         caller = %caller,
@@ -141,8 +137,6 @@ fn denied(caller: Uuid, unmatched: usize) -> CanonicalError {
         .create()
 }
 
-// `internal`, not `service_unavailable`: 500 is in the operation's declared
-// response set.
 fn unavailable() -> CanonicalError {
     CanonicalError::internal("metric access could not be authorized").create()
 }

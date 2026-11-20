@@ -1,24 +1,4 @@
-//! Authenticator — OIDC login, opaque sessions, and the cookie-to-JWT exchange
-//! behind the nginx gateway (the BFF / token-handler pattern; NGINX_BFF.md §4.1,
-//! §11).
-//!
-//! Runs as a gears-rust host on [`toolkit::bootstrap::run_server`]. The REST
-//! host is the gears-rust toolkit `api-gateway` system gear
-//! (`cf-gears-api-gateway`, the HTTP-server framework every gear runs on — NOT
-//! the Insight platform api-gateway service that the nginx edge replaces); the
-//! authenticator functionality is [`gear::AuthenticatorGear`] (`rest` +
-//! `stateful`). Its `/auth/*` and `/internal/authz` endpoints are `.anonymous().exposed()`
-//! — the credential is the session cookie, checked in the handler.
-//!
-//! # Usage
-//! ```text
-//! authenticator -c config/insight.yaml run    # start the host
-//! authenticator -c config/insight.yaml check  # validate config and exit
-//! ```
-
-// Doc comments reference spec artifacts (NGINX_BFF.md, DESIGN, RFC ids, header
-// names) heavily; the pedantic doc_markdown lint would demand backticks around
-// all of them, which hurts readability of the prose more than it helps.
+// Pedantic style lint: backticking every spec and header name in prose hurts readability.
 #![allow(clippy::doc_markdown)]
 
 mod api;
@@ -41,9 +21,6 @@ mod service_token;
 mod session;
 
 // System gears — linked via inventory for the REST host + auth pipeline.
-// Mirrors the analytics service's set. The oidc-authn-plugin verifies gateway
-// JWTs on the `.authenticated()` admin surface (session revoke-by-user) — the
-// authenticator trusts its own tokens exactly like any downstream service.
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
@@ -118,18 +95,13 @@ async fn main() -> Result<()> {
             run_server(config).await
         }
         Commands::Check => {
-            // Loading + parsing the config already validated its shape.
             println!("configuration OK");
             Ok(())
         }
-        // Emit the OpenAPI document offline (no backends) — see `print_openapi`.
         Commands::Openapi => print_openapi(),
     }
 }
 
-/// Print the authenticator `OpenAPI` document in canonical JSON. Offline — see
-/// [`api::openapi_document`]. No config or backends are touched, and no logging
-/// subscriber is initialized on this path, so stdout stays pure JSON.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
     print!("{}", insight_openapi::canonical_json(&doc)?);

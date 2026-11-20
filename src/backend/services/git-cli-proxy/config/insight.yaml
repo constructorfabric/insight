@@ -2,12 +2,6 @@
 #
 # Usage: git-cli-proxy --config config/insight.yaml
 #
-# The service hosts its own routes (no api-gateway gear) and is
-# cluster-internal (consumed by Airbyte connector pods, never routed through
-# the platform gateway): its /v1 surface is guarded by the service's own static
-# bearer token (`gears.git-cli-proxy.config.proxy_token`) instead of the
-# gateway-JWT pipeline. /healthz is public for probes.
-#
 # Env overrides (scalar leaves only; prefix `APP__gears__<gear>__config__…`):
 #   APP__gears__git_cli_proxy__config__bind_addr
 #   APP__gears__git_cli_proxy__config__data_dir

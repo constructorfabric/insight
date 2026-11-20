@@ -1,23 +1,11 @@
-//! Operator identity corrections: the pure core.
-//!
-//! A correction is an appended binding observation in `persons` — never an
-//! update. This module decides *whether* a correction has anything to append
-//! and *what* the appended rows look like; the repository performs the write.
-
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
 
 use super::observation_slot::{self, SlotAllocator};
 use super::seed::{KnownBinding, SourceAccountKey};
 
-/// The reserved person meaning "not a human". Bots, CI and service accounts
-/// bind here; every consumer treats it as no person (NULL in analytics, not
-/// served by the read API, hidden from the review queue). Unmintable: UUIDv7
-/// never produces an all-ones value.
 pub const EXCLUDED_PERSON: Uuid = Uuid::from_u128(u128::MAX);
 
-/// Which verb produced a correction — stamped into `persons.reason` so the
-/// journal explains itself without joining the operations log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
     Bind,
@@ -38,21 +26,12 @@ impl Verb {
     }
 }
 
-/// What a correction does to one account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
-    /// The identical operator decision is already recorded — nothing to append.
     AlreadyDecided,
-    /// Append a binding observation for this account.
     Append,
 }
 
-/// Decide whether a correction has anything to append.
-///
-/// Idempotency is **decision-aware**: repeating an operator's own decision is a
-/// no-op, but re-asserting a binding that automation made is the confirm act
-/// and must be recorded — that is what takes the account out of the review
-/// queue and makes the binding authoritative.
 #[must_use]
 pub fn decide(current: Option<KnownBinding>, target_person_id: Uuid) -> Outcome {
     match current {
@@ -65,7 +44,6 @@ pub fn decide(current: Option<KnownBinding>, target_person_id: Uuid) -> Outcome 
     }
 }
 
-/// A binding observation to append for one account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingRow {
     pub account: SourceAccountKey,
@@ -75,21 +53,12 @@ pub struct BindingRow {
     pub created_at: DateTime,
 }
 
-/// One account and the person the operator wants it bound to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub account: SourceAccountKey,
     pub person_id: Uuid,
 }
 
-/// Build the rows one correction appends, skipping targets whose decision is
-/// already recorded. `at` is the operation's instant, truncated to whole
-/// microseconds (`DATETIME(6)` stores nothing finer, and the write path
-/// compares its rows against the stored ones); rows that would collide inside
-/// the natural key are nudged forward (see [`SlotAllocator`]).
-///
-/// The whole operation shares one allocator — a bulk call may name several
-/// persons, and two of its rows can still collide on the same key.
 #[must_use]
 pub fn build_rows<'a>(
     targets: impl IntoIterator<Item = (&'a Target, Option<KnownBinding>)>,
@@ -126,11 +95,6 @@ pub fn build_rows<'a>(
     rows
 }
 
-/// Re-stamp rows the database refused so a retry cannot collide again: every
-/// row moves past the last instant the operation used. The natural key has no
-/// account discriminator, so two operations racing on the same microsecond can
-/// have one of their rows dropped by the insert — this is how the caller
-/// recovers the dropped row instead of losing a binding.
 #[must_use]
 pub fn restamp(rows: &[BindingRow], after: DateTime) -> Vec<BindingRow> {
     let after = observation_slot::truncate_to_micros(after);
@@ -153,9 +117,6 @@ pub fn restamp(rows: &[BindingRow], after: DateTime) -> Vec<BindingRow> {
         .collect()
 }
 
-/// The rows the journal does not hold, in input order — what a short write has
-/// to retry. `present` is the answer to "which of these exact observations
-/// landed", one flag per row.
 #[must_use]
 pub fn missing(rows: &[BindingRow], present: &[bool]) -> Vec<BindingRow> {
     rows.iter()
@@ -165,10 +126,6 @@ pub fn missing(rows: &[BindingRow], present: &[bool]) -> Vec<BindingRow> {
         .collect()
 }
 
-/// Fold a retry's outcome back into the first attempt's: the n-th row that was
-/// missing is answered by the n-th flag of `recovered`, and rows that already
-/// landed are never revisited. A gap with no answer stays refused — a row the
-/// database would not take twice is reported, not counted as applied.
 pub fn apply_recovery(present: &mut [bool], recovered: &[bool]) {
     let mut answers = recovered.iter();
     for landed in present.iter_mut().filter(|landed| !**landed) {
@@ -176,8 +133,6 @@ pub fn apply_recovery(present: &mut [bool], recovered: &[bool]) {
     }
 }
 
-/// Binding observations are `value_type='id'` rows whose value is the account id
-/// (ADR-0002).
 pub const BINDING_VALUE_TYPE: &str = "id";
 
 #[cfg(test)]
@@ -224,8 +179,6 @@ mod tests {
 
     #[test]
     fn confirming_an_automation_binding_appends() {
-        // Same person, but the binding came from automation: the operator's
-        // confirmation must be recorded — this is what clears the review item.
         let outcome = decide(Some(seed_bound(5)), Uuid::from_u128(5));
         assert_eq!(outcome, Outcome::Append);
     }
@@ -281,8 +234,6 @@ mod tests {
 
     #[test]
     fn same_source_accounts_get_distinct_timestamps() {
-        // Two accounts of one source rebound to one person in one operation:
-        // their id rows share every other natural-key column.
         let a = account("bamboohr", "1");
         let b = account("bamboohr", "2");
 
@@ -325,8 +276,6 @@ mod tests {
 
     #[test]
     fn restamped_rows_move_past_the_contended_instant() {
-        // The recovery path: a row the insert refused is re-stamped after the
-        // moment two operations fought over, so the retry cannot collide again.
         let account = account("slack", "U1");
         let refused = vec![BindingRow {
             account: account.clone(),
@@ -347,8 +296,6 @@ mod tests {
 
     #[test]
     fn restamping_keeps_colliding_rows_apart() {
-        // Two refused rows of one source retried together must not collide
-        // with each other on the way back in.
         let rows = vec![
             BindingRow {
                 account: account("bamboohr", "1"),
@@ -383,9 +330,6 @@ mod tests {
 
     #[test]
     fn only_the_rows_the_journal_lacks_are_retried() {
-        // Re-sending a row that landed would duplicate history, so the retry
-        // set is exactly the gaps — in input order, since the caller answers
-        // its items by position.
         let rows = [row("U1"), row("U2"), row("U3")];
 
         let retry = missing(&rows, &[true, false, false]);
@@ -399,8 +343,6 @@ mod tests {
 
     #[test]
     fn recovery_answers_the_gaps_in_order_and_leaves_landed_rows_alone() {
-        // The n-th retried row answers the n-th gap: an off-by-one here would
-        // credit one account's write to another.
         let mut present = vec![true, false, true, false];
 
         apply_recovery(&mut present, &[false, true]);
@@ -410,8 +352,6 @@ mod tests {
 
     #[test]
     fn a_row_the_database_refuses_twice_stays_refused() {
-        // Fewer answers than gaps: the unanswered row is reported as refused
-        // rather than optimistically counted as applied.
         let mut present = vec![false, false];
 
         apply_recovery(&mut present, &[true]);
@@ -448,8 +388,6 @@ mod tests {
 
     #[test]
     fn excluded_sentinel_is_not_a_mintable_uuid() {
-        // UUIDv7 sets version/variant bits, so an all-ones value can never be
-        // minted for a real person.
         assert_ne!(EXCLUDED_PERSON.get_version_num(), 7);
         assert_eq!(EXCLUDED_PERSON, Uuid::from_u128(u128::MAX));
     }

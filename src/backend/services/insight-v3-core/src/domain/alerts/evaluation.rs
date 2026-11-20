@@ -1,6 +1,3 @@
-//! One check of one rule: run the metric as an on-demand run would, judge
-//! the condition over its rows, record what was found.
-
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -13,19 +10,15 @@ use crate::domain::query::metric_query::MetricRunError;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::CustomError;
 
-/// The check a scheduler hands a worker: which rule, at which revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct EvaluationJob {
     pub(crate) rule_id: Uuid,
     pub(crate) revision: u32,
 }
 
-/// How a check ended.
 #[derive(Debug)]
 pub(crate) enum Evaluated {
-    /// Recorded on the rule, with the notification it owes if any.
     Recorded(Recorded),
-    /// Nothing to check: the rule is gone, off, or has moved on.
     Skipped(Skipped),
 }
 
@@ -57,10 +50,6 @@ impl<'a> Evaluator<'a> {
         Self { store, runs }
     }
 
-    /// Runs the check the job asks for and records it.
-    ///
-    /// Only a store failure is an error: a metric that does not answer is a
-    /// finding about the rule, recorded as unknown, not a failed job.
     pub(crate) async fn evaluate(&self, job: EvaluationJob) -> Result<Evaluated, AlertStoreError> {
         let Some(rule) = self.store.get(job.rule_id).await? else {
             return Ok(Evaluated::Skipped(Skipped::RuleMissing));
@@ -114,19 +103,12 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-/// What one check found, and what the metric was called when it was read.
 #[derive(Debug)]
 pub(crate) struct Observed {
     pub(crate) outcome: Outcome,
-    /// None when the metric could not be run.
     pub(crate) metric_name: Option<String>,
 }
 
-/// What a check of `metric` over `window` finds now: the run judged by the
-/// condition, or the unknown a run that did not answer is. The groups, the
-/// row bound and the name come from the same definition the rows did.
-/// `label` names the rule, or what asked, in the log; `context` the columns
-/// the witness keeps beside the condition's.
 pub(crate) async fn observe(
     runs: &MetricRuns<'_>,
     label: &str,
@@ -155,8 +137,6 @@ pub(crate) async fn observe(
     }
 }
 
-/// Which unknown a failed run is. What the warehouse said is logged here,
-/// where the rule is known, and never stored.
 fn unknown_because(rule: &str, error: &CustomError) -> UnknownReason {
     match error {
         CustomError::NotFound { .. } => UnknownReason::MetricMissing,

@@ -1,12 +1,3 @@
-//! Roles catalogue HTTP surface — CRUD over the global `roles` table.
-//!
-//! Admin-gated. Hard-DELETE with an atomic in-use guard (a role with active
-//! `person_roles` assignments cannot be deleted); ADR-0013. The "role in
-//! use" refusal is surfaced as `aborted` (409) — gears canonical errors have
-//! no 422, the same mapping the other data-invariant guards use
-//! (`ambiguous_profile`, `last_admin_protected`), pinned by the identity
-//! contract suite.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -26,7 +17,7 @@ use super::error::RoleError;
 use super::gate::require_admin;
 use crate::infra::db::roles_repo::{self, Role};
 
-const MAX_ROLE_NAME_LEN: usize = 64; // VARCHAR(64)
+const MAX_ROLE_NAME_LEN: usize = 64;
 
 /// Body of `POST /v1/roles`.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -62,7 +53,6 @@ pub struct RoleListResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for RoleListResponse {}
 
-/// `POST /v1/roles` — create a role (admin only).
 pub async fn create_role(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -70,9 +60,6 @@ pub async fn create_role(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let author = require_admin(&state.db, &ctx).await?;
 
-    // Trim before validating / storing / duplicate-checking so whitespace-only
-    // variants (" Admin " vs "Admin") don't accumulate as near-duplicates in the
-    // global catalogue.
     let name = req.name.trim().to_owned();
     if !role_name_valid(&name) {
         return Err(RoleError::invalid_argument()
@@ -84,8 +71,6 @@ pub async fn create_role(
             .create());
     }
 
-    // Pre-check duplicate name → friendly 409 (the UNIQUE(name) index would
-    // otherwise surface as an opaque 500).
     if roles_repo::get_by_name(&state.db, &name)
         .await
         .map_err(read_err)?
@@ -96,9 +81,6 @@ pub async fn create_role(
 
     let role_id = Uuid::now_v7();
     if let Err(e) = roles_repo::insert_role(&state.db, role_id, &name).await {
-        // Lost the UNIQUE(name) race with a concurrent create between the
-        // pre-check and here → 409, not an opaque 500. Re-read to confirm it was
-        // a duplicate rather than a real failure.
         if roles_repo::get_by_name(&state.db, &name)
             .await
             .map_err(read_err)?
@@ -116,7 +98,6 @@ pub async fn create_role(
     Ok((StatusCode::CREATED, [(LOCATION, location)], Json(body)))
 }
 
-/// `GET /v1/roles` — list all roles (admin only).
 pub async fn list_roles(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -131,8 +112,6 @@ pub async fn list_roles(
     }))
 }
 
-/// `DELETE /v1/roles/{id}` — hard-delete a role (admin only); refuses with a
-/// precondition error if the role still has active assignments.
 pub async fn delete_role(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -156,8 +135,6 @@ pub async fn delete_role(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 0 rows: either the role vanished between the fetch and the delete (404),
-    // or the in-use guard fired (a second read + count tells which).
     if roles_repo::get_by_id(&state.db, id)
         .await
         .map_err(read_err)?
@@ -194,8 +171,6 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read roles").create()
 }
 
-/// `name` must be non-empty (ignoring surrounding whitespace) and at most 64
-/// chars.
 fn role_name_valid(name: &str) -> bool {
     !name.trim().is_empty() && name.chars().count() <= MAX_ROLE_NAME_LEN
 }

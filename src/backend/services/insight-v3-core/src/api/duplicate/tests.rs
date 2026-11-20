@@ -100,8 +100,6 @@ impl Harness {
         answer.body
     }
 
-    /// A dashboard filed in a folder, tagged and pinned, by the id it was
-    /// given.
     async fn filed_tagged_and_pinned(&self) -> String {
         let made = self
             .sent(

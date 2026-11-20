@@ -1,15 +1,3 @@
-//! CSRF defense for state-changing `/auth/*` methods (PRD 5.11, DESIGN §4.2).
-//!
-//! `SameSite=Strict` on the session cookie is the primary defense; this is the
-//! second line: `X-CSRF-Token` compared in constant time against the token
-//! bound to the session at login, with an `Origin`-allowlist fallback
-//! (`csrf_origins`; empty = fail closed, token required). Both failing yields
-//! 403. The per-session token is issued at login, fetched via `GET /auth/csrf`,
-//! and echoed by `/auth/me`.
-//!
-//! The back-channel logout endpoint is exempt: it is IdP server-to-server and
-//! its credential is the signed `logout_token`, not a browser session.
-
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
@@ -23,7 +11,6 @@ use crate::api::AppState;
 use crate::api::error::SessionError;
 use crate::cookie;
 
-/// Paths under `/auth/` that skip CSRF checks: not browser-session-driven.
 const EXEMPT_PATHS: &[&str] = &[
     "/auth/oidc/back-channel-logout",
     "/auth/oauth/register",
@@ -31,16 +18,12 @@ const EXEMPT_PATHS: &[&str] = &[
     "/auth/oauth/revoke",
 ];
 
-/// The verdict of the pure check (unit-tested separately from the middleware).
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
     Pass,
     Forbidden(&'static str),
 }
 
-/// Pure CSRF decision for one state-changing request with a live session:
-/// header token (constant-time) first, `Origin` allowlist as fallback,
-/// fail closed when neither verifies.
 fn verdict(
     header_token: Option<&str>,
     session_token: &str,
@@ -48,7 +31,6 @@ fn verdict(
     allowlist: &[String],
 ) -> Verdict {
     if let Some(presented) = header_token {
-        // Fixed-size digests keep the token length out of the comparison.
         let a = Sha256::digest(presented.as_bytes());
         let b = Sha256::digest(session_token.as_bytes());
         if constant_time_eq(&a, &b) && !session_token.is_empty() {
@@ -64,10 +46,6 @@ fn verdict(
     Verdict::Forbidden("csrf_token_required")
 }
 
-/// Axum middleware over the authenticator's route table. Only state-changing
-/// `/auth/*` requests that present a resolvable session are checked — without
-/// a session there is nothing to forge (the handler answers 401), and the
-/// gateway-facing / well-known surfaces are not browser-state-changing.
 pub async fn middleware(
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
@@ -85,13 +63,12 @@ pub async fn middleware(
     }
 
     let Some(token) = cookie::read(&jar) else {
-        return next.run(request).await; // no session → handler 401s
+        return next.run(request).await;
     };
     let record = match state.sessions.resolve_by_token(&token).await {
         Ok(Some((_, record))) => record,
-        Ok(None) => return next.run(request).await, // dead session → handler 401s
+        Ok(None) => return next.run(request).await,
         Err(e) => {
-            // Store down: fail closed like every auth path (503, not a bypass).
             tracing::warn!(error = %e, "csrf: session store unavailable");
             return toolkit_canonical_errors::CanonicalError::service_unavailable()
                 .with_detail("session store unavailable")
@@ -149,8 +126,6 @@ mod tests {
 
     #[test]
     fn mismatched_header_token_is_forbidden_even_with_allowed_origin() {
-        // A presented-but-wrong token is an attack signal; the Origin fallback
-        // must not rescue it.
         let allow = vec!["https://app.example".to_owned()];
         assert_eq!(
             verdict(
@@ -178,7 +153,6 @@ mod tests {
 
     #[test]
     fn empty_allowlist_fails_closed() {
-        // Default config: no origins → the header token is mandatory.
         assert_eq!(
             verdict(None, SESSION_TOKEN, Some("https://app.example"), &[]),
             Verdict::Forbidden("csrf_token_required")
@@ -191,7 +165,6 @@ mod tests {
 
     #[test]
     fn empty_session_token_never_matches() {
-        // A session with no CSRF token (defensive) must not pass an empty header.
         assert_eq!(
             verdict(Some(""), "", None, &[]),
             Verdict::Forbidden("csrf_token_mismatch")

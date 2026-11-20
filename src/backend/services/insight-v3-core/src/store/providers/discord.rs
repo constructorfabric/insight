@@ -1,5 +1,5 @@
-//! Discord, through an incoming webhook. `wait=true` makes the webhook
-//! answer with the message it created rather than 204, which is the receipt.
+//! `wait=true` makes the webhook answer with the message it created rather
+//! than 204, which is the receipt.
 
 use async_trait::async_trait;
 use secrecy::{ExposeSecret as _, SecretString};

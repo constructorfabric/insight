@@ -1,8 +1,3 @@
-//! The single owner of the session cookie (DESIGN §4.1). Attributes are
-//! hard-coded — only `Max-Age` varies. Built on axum-extra's `CookieJar`, so
-//! reads (extractor) and writes (Set-Cookie response part) go through the
-//! standard `cookie` crate instead of hand-rolled header strings.
-
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use time::Duration;
 
@@ -10,7 +5,6 @@ use time::Duration;
 /// + `Path=/`, pinning the cookie to one host.
 pub const COOKIE_NAME: &str = "__Host-sid";
 
-/// The hardened session cookie carrying `token`, valid for `max_age_seconds`.
 #[must_use]
 pub fn session_cookie(token: &str, max_age_seconds: u64) -> Cookie<'static> {
     build(
@@ -19,13 +13,11 @@ pub fn session_cookie(token: &str, max_age_seconds: u64) -> Cookie<'static> {
     )
 }
 
-/// A cookie that clears the session (logout): empty value, `Max-Age=0`.
 #[must_use]
 pub fn clear_cookie() -> Cookie<'static> {
     build(String::new(), Duration::ZERO)
 }
 
-/// The session token from the request jar, if present and non-empty.
 #[must_use]
 pub fn read(jar: &CookieJar) -> Option<String> {
     jar.get(COOKIE_NAME)
@@ -34,8 +26,6 @@ pub fn read(jar: &CookieJar) -> Option<String> {
 }
 
 fn build(value: String, max_age: Duration) -> Cookie<'static> {
-    // HttpOnly keeps it out of JS; SameSite=Strict blocks CSRF; Secure + Path=/
-    // + the __Host- prefix (no Domain) pin it to the single gateway host.
     Cookie::build((COOKIE_NAME, value))
         .path("/")
         .secure(true)

@@ -383,8 +383,6 @@ fn required_values_must_not_be_empty() {
     }
 }
 
-/// The datasets database is a name this service writes into SQL and the one
-/// place it creates and drops tables, so it is a plain identifier of its own.
 #[test]
 fn the_datasets_database_is_an_identifier_apart_from_the_warehouse() {
     let cases = [

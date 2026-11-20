@@ -14,9 +14,7 @@ spec:
       labels:
         {{- include "insight-identity-resolution.selectorLabels" . | nindent 8 }}
       annotations:
-        # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
         checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -43,10 +41,6 @@ spec:
           image: "{{ .Values.waitForMariadb.image.repository }}:{{ .Values.waitForMariadb.image.tag }}"
           imagePullPolicy: IfNotPresent
           envFrom:
-            # The umbrella publishes MARIADB_HOST + MARIADB_PORT here via
-            # `insight.mariadb.host` / `.port` helpers — works for both
-            # mariadb.deploy=true and =false. The chart is published only
-            # as part of the umbrella, so this ref is hardcoded.
             - configMapRef:
                 name: {{ .Release.Name }}-platform
           command:
@@ -85,8 +79,6 @@ spec:
         - name: identity-resolution
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # gears-rust host: structural config from the mounted ConfigMap;
-          # leaf values (DB/ClickHouse) from the Secret via envFrom below.
           command: ["/app/identity-resolution"]
           args: ["-c", "/app/config/insight.yaml"]
           volumeMounts:
@@ -95,7 +87,6 @@ spec:
               subPath: insight.yaml
               readOnly: true
             {{- if .Values.gateway.caCertSecret }}
-            # Discovery-issuer CA for the oidc-authn-plugin's https JWKS fetch.
             - name: authn-ca
               mountPath: /etc/insight/authn-ca
               readOnly: true
@@ -111,18 +102,10 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-          # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
-          # config is nested/list-shaped and rendered into the ConfigMap from
-          # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),
-          # so there are no APP__ env overrides for it here.
           envFrom:
-            # Umbrella observability contract; optional so standalone installs schedule.
             - configMapRef:
                 name: {{ .Release.Name }}-platform
                 optional: true
-            # Operator MUST pre-create this Secret (umbrella does it
-            # automatically as `insight-identity-resolution-config`). Provides
-            # the APP__gears__identity_resolution__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
           securityContext:

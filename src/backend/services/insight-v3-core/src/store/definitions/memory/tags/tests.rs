@@ -41,7 +41,6 @@ fn someone_else() -> PersonId {
     PersonId::new(uuid::Uuid::from_u128(2))
 }
 
-/// The scope an ownerless board's tags are named in.
 const OWNERLESS: Owner = Owner::Unowned;
 
 fn tagged(needle: &str, folder: Option<FolderFilter>, filter: TagFilter) -> DashboardQuery {

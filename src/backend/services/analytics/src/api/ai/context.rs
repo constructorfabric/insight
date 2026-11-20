@@ -1,8 +1,3 @@
-//! `/v1/ai/context` — the entries people write for the model to read.
-//!
-//! A person owns their own entries; the organisation's are an admin's to write
-//! and everyone's to read, because they shape every explanation in the tenant.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -29,7 +24,6 @@ use crate::domain::ai::prompt::Entry;
 use crate::infra::db::entities::ai_context_entries as entries;
 use crate::migration::ai_assist_schema;
 
-/// `GET /v1/ai/context` — the caller's own entries and the organisation's.
 pub async fn list_context(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -43,7 +37,6 @@ pub async fn list_context(
     }))
 }
 
-/// `POST /v1/ai/context` — add an entry to one scope.
 pub async fn create_context(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -72,20 +65,11 @@ pub async fn create_context(
         updated_at: Set(now),
     };
 
-    // Insert first, then count what the scope now holds, and roll back when
-    // that is over the cap.
-    //
     // INVARIANT: the count must NOT lock. Checking the cap under `FOR UPDATE`
     // before inserting reads a range that holds no rows for a scope's first
     // entry, so InnoDB gap-locks to the index supremum; two tenants adding
     // their first entry at the same moment then deadlock on the insert
-    // intention and one caller gets a 500. Verified against MariaDB's own
-    // deadlock report.
-    //
-    // The cost is that two writes racing on a scope holding exactly the last
-    // free slot can both commit, leaving one entry over. That is a courtesy
-    // limit on how much context a prompt carries, not an invariant anything
-    // depends on — and a scope of 21 is cheaper than a failed first write.
+    // intention and one caller gets a 500.
     let stored = state
         .db
         .transaction::<_, entries::Model, CanonicalError>(move |tx| {
@@ -104,7 +88,6 @@ pub async fn create_context(
     Ok((StatusCode::CREATED, Json(to_response(stored))))
 }
 
-/// `PATCH /v1/ai/context/{id}` — edit one entry the caller may write.
 pub async fn update_context(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -134,7 +117,6 @@ pub async fn update_context(
     Ok(Json(to_response(stored)))
 }
 
-/// `DELETE /v1/ai/context/{id}` — remove one entry the caller may write.
 pub async fn delete_context(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -153,7 +135,6 @@ pub async fn delete_context(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The two scopes the explain path reads, oldest first within each.
 pub(crate) async fn prompt_entries(
     state: &AppState,
     tenant: Uuid,
@@ -200,7 +181,6 @@ async fn visible_rows(
         .map_err(|e| read_error(&e, "context list"))
 }
 
-/// The row this caller is allowed to change, or why they may not.
 async fn writable_row(
     state: &AppState,
     ctx: &SecurityContext,
@@ -251,7 +231,6 @@ async fn refuse_when_scope_is_full(
         .await
         .map_err(|e| read_error(&e, "context count"))?;
 
-    // Counted after the insert, so the caller's own row is included.
     if count > ai_assist_schema::MAX_ENTRIES_PER_SCOPE {
         return Err(AiError::invalid_argument()
             .with_field_violation(
@@ -268,8 +247,6 @@ async fn refuse_when_scope_is_full(
     Ok(())
 }
 
-/// A transaction reports either our own refusal or a database failure; the
-/// caller only ever sees a canonical error either way.
 fn unwrap_transaction_error(error: TransactionError<CanonicalError>) -> CanonicalError {
     match error {
         TransactionError::Transaction(inner) => inner,

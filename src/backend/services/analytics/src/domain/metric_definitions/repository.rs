@@ -302,8 +302,6 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
             .entry(row.metric_definition_id)
             .or_insert_with(|| ClassifiedInputs::Available(Vec::new()));
 
-        // Corrupt config must stay loud regardless of row order: it wins
-        // over Unavailable, which wins over Available.
         let role = MetricInputRole::from_db(&row.input_role);
         let kind = SourceKind::from_db(&row.source_kind);
         let observation = match (role, kind) {
@@ -311,9 +309,6 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
                 ObservationRelation::parse(&row.source_ref)
                     .map(|relation| (role, ObservationSource::Managed(relation)))
             }
-            // The biconditional CHECK ties custom_observation_sql to a non-NULL
-            // observation_sql, so an absent one here is a corrupt row, not a
-            // custom source we cannot execute.
             (Some(role), Some(SourceKind::CustomObservationSql)) => {
                 row.observation_sql.clone().map(|sql| {
                     (
@@ -561,9 +556,6 @@ fn build_definition(
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
         MetricComputation::Percentile => {
-            // The `scale` column doubles as the quantile for percentile
-            // metrics (see SeedComputation::scale); the CHECK constraint
-            // pairs it with the computation type.
             let q = row.scale.ok_or_else(|| {
                 config_error(&format!("missing percentile q for {}", row.metric_key))
             })?;
@@ -670,11 +662,6 @@ pub async fn all_managed_sources(
     .await
 }
 
-/// What a measure claims its evidence rows look like: the granularity they
-/// carry, and the declaration of the columns the drilldown projects out of
-/// them. A declaration that does not parse survives as
-/// [`StoredPresentation::Unreadable`] rather than being dropped — the validator
-/// reports it, so the loader must not hide it.
 pub struct SourceMeasureEvidence {
     pub measure_key: String,
     pub evidence_granularity: Option<String>,
@@ -830,20 +817,10 @@ pub async fn update_definition_status(
     first_observed: OldestObservation,
     last_observed: Option<chrono::NaiveDate>,
 ) -> Result<(), sea_orm::DbErr> {
-    // last_observed_date is monotonic knowledge, not per-sweep state: keep the
-    // stored value when the sweep produced none (NULL — config errors bail
-    // before the observation probe) or an older date (retention drop, shrunk
-    // measure set), and only advance when the new date is strictly newer.
     let last_val = match last_observed {
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
-    // first_observed_date takes the sweep's answer instead, because it reports
-    // what the relation still holds rather than what it once held: retention
-    // moves the bound forward, and clearing the last of it is the same fact
-    // said at its limit. A sweep that established nothing writes neither, which
-    // is why the flag is separate from the value — as one nullable column they
-    // would be indistinguishable.
     let (write_first, first_val) = match first_observed {
         OldestObservation::At(date) => (true, Value::from(date.to_string())),
         OldestObservation::Absent => (true, Value::String(None)),
@@ -883,18 +860,10 @@ pub async fn update_definition_status(
     Ok(())
 }
 
-/// What a sweep established about the oldest observation a definition holds.
-///
-/// Three outcomes, because two of them are the same value as a bare `Option`: a
-/// sweep that read the relation and found it empty must clear the stored bound,
-/// while one that established nothing at all must leave it standing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OldestObservation {
-    /// The probe found rows, the oldest on this date.
     At(chrono::NaiveDate),
-    /// The probe read the relation and it holds nothing for these measures.
     Absent,
-    /// Nothing was established; whatever is stored stands.
     Unknown,
 }
 
@@ -1169,8 +1138,6 @@ mod tests {
 
     #[test]
     fn classify_marks_custom_sql_without_observation_sql_corrupt() {
-        // The biconditional CHECK forbids this at write, so a NULL here is a
-        // corrupt row that must stay loud, not a silently-dropped source.
         let id = Uuid::now_v7();
         let mut row = input_row(id, "value", true, "ok");
         row.source_kind = "custom_observation_sql".to_owned();
@@ -1253,7 +1220,6 @@ mod tests {
             other => panic!("expected a percentile spec, got {other:?}"),
         }
 
-        // The quantile is mandatory and must be a probability.
         let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
         row.computation_type = "percentile".to_owned();
         assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());

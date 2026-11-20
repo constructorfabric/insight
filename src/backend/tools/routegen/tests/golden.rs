@@ -1,13 +1,3 @@
-//! Golden-file snapshot tests for the emitted nginx.conf, plus a rejection case
-//! for every validation rule (gateway DESIGN 3.8, 3.9; DD-GW-02).
-//!
-//! Regenerate the golden files after an intentional emitter change:
-//! ```text
-//! cargo run -p routegen -- --routes tools/routegen/tests/fixtures/full.routes.yaml \
-//!   -o tools/routegen/tests/fixtures/full.nginx.conf
-//! cargo run -p routegen -- --routes tools/routegen/tests/fixtures/stripprefix.routes.yaml \
-//!   -o tools/routegen/tests/fixtures/stripprefix.nginx.conf
-//! ```
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
@@ -33,16 +23,11 @@ fn assert_golden(routes: &str, conf: &str) {
 
 #[test]
 fn golden_full() {
-    // The canonical DESIGN 3.8 table exercising the full feature set: per-route
-    // timeout, a websocket route with timeout_ms 0, an operator strip list, and
-    // a shared upstream.
     assert_golden("full.routes.yaml", "full.nginx.conf");
 }
 
 #[test]
 fn golden_strip_prefix() {
-    // strip_prefix (default + per-route override), https upstream, and two
-    // routes collapsing onto one deduplicated upstream block.
     assert_golden("stripprefix.routes.yaml", "stripprefix.nginx.conf");
 }
 
@@ -103,39 +88,28 @@ fn instance_token_route_bypasses_session_and_mcp_oauth() {
     );
 }
 
-/// Every generated `/api/` location must carry the full hygiene block (DESIGN
-/// 3.9): the Lua exchange, no browser Authorization survives, the session cookie
-/// is stripped in Lua, a fresh correlation id, and gateway-authored forwarding.
 #[test]
 fn every_session_location_has_the_hygiene_block() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
-    // One access_by_lua per /api route (3 routes in the fixture).
     assert_eq!(
         conf.matches("access_by_lua_block { require(\"gateway\").exchange() }")
             .count(),
         3
     );
-    // Unmatched /api and the internal surface both fail closed.
     assert!(conf.contains("location /api/ {\n            return 404;"));
     assert!(conf.contains("location /internal/ {\n            return 404;"));
-    // Auth surface is a plain proxy (no exchange) and the SPA rides through.
     assert!(conf.contains("location /auth/ {"));
-    // The SPA front is resolved lazily (variable proxy_pass + resolver) so the
-    // gateway boots without a frontend present.
     assert!(conf.contains("location / {\n            set $insight_front \""));
     assert!(conf.contains("proxy_pass http://$insight_front;"));
-    // HSTS on every response (G9).
     assert!(conf.contains("add_header Strict-Transport-Security"));
 }
 
 #[test]
 fn real_ip_emitted_only_when_trusted_cidrs_configured() {
     let yaml = fixture("full.routes.yaml");
-    // Default (no trusted proxies) -> no real_ip block, no baked network.
     let default = generate(&yaml, &Settings::default()).unwrap();
     assert!(!default.contains("set_real_ip_from"));
     assert!(!default.contains("real_ip_header"));
-    // Configured -> the trust chain is emitted.
     let with_trust = generate(
         &yaml,
         &Settings {
@@ -307,7 +281,6 @@ fn rejects_reserved_strip_headers() {
 
 #[test]
 fn allows_x_tenant_id_in_strip_list() {
-    // X-Tenant-ID is deliberately NOT reserved -- it is the tenant selector.
     let ok = generate(
         "version: 1\ndefaults:\n  strip_request_headers: [X-Tenant-ID]\nroutes: []\n",
         &Settings::default(),
@@ -330,7 +303,6 @@ fn rejects_unknown_yaml_field() {
 
 #[test]
 fn reports_all_violations_at_once() {
-    // Two independent violations in one document -> both reported.
     let e = reject(
         "version: 1\nroutes:\n\
          - {prefix: /nope, upstream: 'http://h:1'}\n\

@@ -1,5 +1,3 @@
-//! OCI registry read access: list the tags of the FE image repository.
-
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -37,8 +35,6 @@ impl Registry {
         })
     }
 
-    /// All tags, following `Link` pagination; past [`MAX_PAGES`] the rest is
-    /// dropped and logged.
     pub async fn list_tags(&self) -> anyhow::Result<Vec<String>> {
         let mut url = format!(
             "{}/v2/{}/tags/list?n={PAGE_SIZE}",
@@ -130,8 +126,6 @@ struct MintedToken {
     token: String,
 }
 
-/// `Bearer realm="…",service="…"` →
-/// `{realm}?service={service}&scope=repository:{repo}:pull`.
 fn token_url(challenge: &str, repo: &str) -> Option<String> {
     let params = challenge.strip_prefix("Bearer ")?;
     let realm = challenge_field(params, "realm")?;

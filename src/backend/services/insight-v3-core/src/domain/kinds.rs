@@ -1,10 +1,3 @@
-//! One module per kind of definition, holding what that kind admits.
-//!
-//! Everything a kind knows about itself lives in its own module; this root
-//! dispatches to them. INVARIANT: every dispatch matches exhaustively, so a
-//! kind added to [`DefinitionKind`] cannot be stored unchecked or leave its
-//! references unseen.
-
 pub(crate) mod dashboard;
 pub(crate) mod dataset;
 pub(crate) mod metric;
@@ -21,8 +14,6 @@ use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 
-/// One definition naming another by id: a widget naming its metric, a board
-/// naming a widget it draws.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Reference {
     pub(crate) kind: DefinitionKind,
@@ -38,7 +29,6 @@ impl Reference {
     }
 }
 
-/// Why a body cannot be stored under its kind.
 #[derive(Debug, Error)]
 pub(crate) enum KindError {
     #[error(transparent)]
@@ -59,12 +49,6 @@ pub(crate) enum KindError {
     Unanswerable(Vec<Violation>),
 }
 
-/// Checks a body against the rules of its kind, before it is stored.
-///
-/// A lookup is passed because a kind may need what another definition holds:
-/// a widget draws its metric's columns, so it reads that metric. The datasets
-/// are passed for the same reason: a metric reads one, and what that dataset
-/// declares is what decides whether the metric has an answer.
 pub(crate) async fn check(
     kind: DefinitionKind,
     body: &Value,
@@ -79,7 +63,6 @@ pub(crate) async fn check(
     }
 }
 
-/// Every definition this body names, whatever kind it is.
 pub(crate) fn refers_to(kind: DefinitionKind, body: &Value) -> Vec<Reference> {
     match kind {
         DefinitionKind::Metric => metric::refers_to(body),
@@ -88,10 +71,6 @@ pub(crate) fn refers_to(kind: DefinitionKind, body: &Value) -> Vec<Reference> {
     }
 }
 
-/// The same body, with every reference to `from` now naming `to`.
-///
-/// A chat proposal's items name each other by a key local to the proposal,
-/// which becomes the id each is stored under.
 pub(crate) fn rename_reference(kind: DefinitionKind, body: Value, from: &str, to: &str) -> Value {
     match kind {
         DefinitionKind::Metric => body,
@@ -100,16 +79,11 @@ pub(crate) fn rename_reference(kind: DefinitionKind, body: Value, from: &str, to
     }
 }
 
-/// The same body, with each reference naming a pair's `from` now naming its
-/// `to`, all in one pass: a `to` that is also another pair's `from` is not
-/// renamed a second time.
 pub(crate) fn rename_references(
     kind: DefinitionKind,
     body: Value,
     pairs: &[(&str, &str)],
 ) -> Value {
-    // INVARIANT: a placeholder holds a control character, which no label and
-    // no id may, so it can never be mistaken for a reference.
     let placeholder = |place: usize| format!("\u{1}{place}");
 
     let parked = pairs
@@ -127,8 +101,6 @@ pub(crate) fn rename_references(
         })
 }
 
-/// The kinds whose bodies can name this one, and so the only kinds worth
-/// reading when asking what still depends on it.
 pub(crate) fn referred_to_by(kind: DefinitionKind) -> &'static [DefinitionKind] {
     match kind {
         DefinitionKind::Metric => &[DefinitionKind::Widget],

@@ -1,32 +1,3 @@
-//! Startup probe for MariaDB CHECK-constraint enforcement.
-//!
-//! Refs #519 / `cpt-metric-cat-constraint-mariadb-check`.
-//!
-//! Our own bitnami-shipped MariaDB is currently 11.x and enforces CHECKs
-//! correctly, so the probe is rarely load-bearing on a stock Insight deploy.
-//! It still earns its keep because:
-//!
-//! - **Customer-managed databases.** On-prem and BYO-DB installs may point
-//!   Insight at a managed MariaDB the customer operates (RDS, Cloud SQL,
-//!   on-prem cluster). We can't audit their version, `sql_mode`, or whether
-//!   `--skip-character-set-client-handshake` style flags are in play.
-//!   MariaDB 10.2 parses CHECK constraints but enforcement is unreliable
-//!   until 10.3, with IS-NULL predicate edge cases still being closed in
-//!   later 10.x point releases — without this probe, a customer on an old
-//!   managed instance would silently degrade our DB-layer validation to
-//!   app-layer-only (and direct-SQL or future-migration writes bypass the
-//!   app layer entirely).
-//! - **Drift after the fact.** A DBA running `ALTER TABLE ... DROP CONSTRAINT`
-//!   to unblock an incident and forgetting to re-add it; a future migration
-//!   accidentally dropping a required CHECK; a rollback that demotes the
-//!   schema. All silent failures without this probe.
-//!
-//! The probe runs once at service boot. It queries
-//! `INFORMATION_SCHEMA.CHECK_CONSTRAINTS` in the current schema and refuses to
-//! start if any required CHECK is missing. It reports every missing CHECK in a
-//! single error so a single bad deploy doesn't require N restarts to surface
-//! all gaps.
-
 use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 
 use crate::migration::REQUIRED_CHECKS_BY_TABLE;
@@ -36,13 +7,6 @@ struct ConstraintRow {
     constraint_name: String,
 }
 
-/// Verify that every CHECK constraint required by the metric-definition schema is
-/// present in the connected database.
-///
-/// # Errors
-///
-/// Returns an error listing every missing CHECK (per table) if any are absent.
-/// Returns an error if the `INFORMATION_SCHEMA` query itself fails.
 pub async fn assert_required_checks(db: &DatabaseConnection) -> anyhow::Result<()> {
     let backend = db.get_database_backend();
     let mut missing: Vec<(String, String)> = Vec::new();
@@ -108,9 +72,6 @@ mod tests {
 
     #[test]
     fn required_checks_table_is_non_empty() {
-        // Sanity: at least one table contributes at least one CHECK. If this
-        // ever returns empty, the probe degrades to a no-op without a compile
-        // error — explicit guard.
         let total: usize = REQUIRED_CHECKS_BY_TABLE
             .iter()
             .map(|(_, checks)| checks.len())
@@ -120,9 +81,6 @@ mod tests {
 
     #[test]
     fn no_duplicate_check_names_across_tables() {
-        // CHECK names are global within a schema in MariaDB. Two tables can't
-        // share a CHECK name without the second CREATE failing. Catch this at
-        // unit-test time instead of at migration time.
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for (table, checks) in REQUIRED_CHECKS_BY_TABLE {
             for name in *checks {
@@ -137,9 +95,6 @@ mod tests {
 
     #[test]
     fn check_names_use_chk_prefix_convention() {
-        // The probe relies on a stable naming scheme. If a future migration
-        // forgets the `chk_` prefix the convention silently drifts; this test
-        // surfaces that before review.
         for (_table, checks) in REQUIRED_CHECKS_BY_TABLE {
             for name in *checks {
                 assert!(

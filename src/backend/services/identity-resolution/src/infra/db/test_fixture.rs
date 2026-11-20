@@ -1,13 +1,3 @@
-//! Live-DB fixture shared by the identity test suites (the repo-level
-//! `visible_set_live_tests` and `binding_reads_live_tests`, and the API-level
-//! `api::http_live_tests`).
-//!
-//! INVARIANT: tests built on this fixture are never `#[ignore]`d — the identity
-//! CI job runs `cargo test` without `--include-ignored`, so an ignored case
-//! silently stops running. They skip at runtime via [`fixture_or_skip`].
-//! INVARIANT: [`FIXTURE_REASON`] must differ from `e2e-seed` — the e2e seeder
-//! deletes by reason with no tenant filter and would wipe fixtures mid-run.
-
 use std::collections::BTreeMap;
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
@@ -18,7 +8,6 @@ use crate::domain::seed::SourceAccountKey;
 use super::{connect_single, roles_repo, subchart_repo};
 use crate::config::VisibilityPolicy;
 
-/// The all-zero author every automatic binding carries.
 const AUTOMATION: Uuid = Uuid::nil();
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
@@ -53,8 +42,6 @@ pub(crate) async fn fixture_or_skip() -> anyhow::Result<Option<Fixture>> {
 }
 
 impl Fixture {
-    /// A second tenant sharing the connection — for the isolation cases, where
-    /// a person must exist somewhere the caller's tenant cannot reach.
     pub(crate) fn in_another_tenant(&self) -> Self {
         Self {
             db: self.db.clone(),
@@ -63,9 +50,6 @@ impl Fixture {
         }
     }
 
-    /// A second instance of the same source type, in the SAME tenant — for the
-    /// cases where WHICH connector instance stated a value is the point: two
-    /// installs of one system can hand out the same account id.
     pub(crate) fn in_another_source_instance(&self) -> Self {
         Self {
             db: self.db.clone(),
@@ -88,8 +72,6 @@ impl Fixture {
         Ok(person_id)
     }
 
-    /// The same row under an id the caller picked — for the cases where WHICH id
-    /// the journal carries is the point, the excluded sentinel above all.
     pub(crate) async fn person_as(&self, person_id: Uuid, email: &str) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
@@ -108,10 +90,6 @@ impl Fixture {
         .await
     }
 
-    /// A person some connector claims as an account holder: an address AND the
-    /// canonical `id` binding that says a system holds it. What a roster
-    /// connector writes, and what the roster lists — [`Self::person`] alone
-    /// leaves an observation nobody has claimed.
     pub(crate) async fn account_holder(&self, email: &str) -> anyhow::Result<Uuid> {
         let person_id = self.person(email).await?;
         self.observed(person_id, "id", &format!("acct-{}", person_id.simple()))
@@ -173,8 +151,6 @@ impl Fixture {
         .await
     }
 
-    /// Append one observation of `value_type` for an existing person — the
-    /// building block for "this person's value changed later" scenarios.
     pub(crate) async fn observed(
         &self,
         person: Uuid,
@@ -199,10 +175,6 @@ impl Fixture {
         .await
     }
 
-    /// The same observation, but stated by a DIFFERENT source. For the cases
-    /// where WHICH source said it is the point — a login resolved by address is
-    /// confined to the roster, so an address only a chat or an issue tracker
-    /// ever observed must admit nobody.
     pub(crate) async fn observed_from(
         &self,
         source_type: &str,
@@ -228,9 +200,6 @@ impl Fixture {
         .await
     }
 
-    /// The same, observed `seconds_ago`. Explicit age is what tells "superseded"
-    /// apart from "inserted first": the currency rule reads the timestamp, and
-    /// two rows written in one test would otherwise differ by microseconds.
     pub(crate) async fn observed_at(
         &self,
         person: Uuid,
@@ -257,10 +226,6 @@ impl Fixture {
         .await
     }
 
-    /// Append an automatic binding observation: this account is held by this
-    /// person, as observed `seconds_ago`. The age is explicit so a test can
-    /// write an older observation AFTER a newer one — the shape that tells the
-    /// latest-by-time rule apart from "the row inserted last".
     pub(crate) async fn bound_at(
         &self,
         account_id: &str,
@@ -272,8 +237,6 @@ impl Fixture {
             .await
     }
 
-    /// The same, authored by an operator — the fact the review surface reads to
-    /// tell a human's decision from automation's.
     pub(crate) async fn bound_by_operator_at(
         &self,
         account_id: &str,
@@ -320,8 +283,6 @@ impl Fixture {
         }
     }
 
-    /// A person the log knows without an email observation — the shape the
-    /// `person_id` key exists to serve and the email key structurally cannot.
     pub(crate) async fn emailless_person(&self) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
         self.exec(
@@ -344,7 +305,6 @@ impl Fixture {
         Ok(person_id)
     }
 
-    /// A person the log holds nothing but a sign-in binding for.
     pub(crate) async fn login_minted_person(&self, login: &str) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
         self.exec(
@@ -383,7 +343,6 @@ impl Fixture {
         .await
     }
 
-    /// `target = None` is the wildcard grant: everyone in the tenant.
     pub(crate) async fn grant(&self, viewer: Uuid, target: Option<Uuid>) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO visibility (visibility_id, insight_tenant_id, viewer_person_id,

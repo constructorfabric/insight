@@ -1,16 +1,8 @@
-//! The definitions as they will read once a batch of writes lands.
-
 use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{Definition, DefinitionId, DefinitionKind, DefinitionStoreError, Lookup};
 
-/// What a batch is about to write, over what is already stored.
-///
-/// One batch can hold a widget and the metric it draws, so checking the widget
-/// against the stored definitions alone would refuse it for naming a metric
-/// that is not there yet. The set it is checked against is the one the write
-/// will leave behind.
 #[derive(Debug)]
 pub(crate) struct Arriving<'a> {
     stored: &'a dyn Lookup,

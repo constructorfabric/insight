@@ -1,19 +1,3 @@
-//! Depth-bounded org subchart reads (recursive CTEs over `org_chart`).
-//!
-//! (#348 / #344), plus the visibility predicate. Every query is a
-//! `WITH RECURSIVE` traversal, and the latest-observation pass uses
-//! `ROW_NUMBER()`; neither construct has a `toolkit-db` builder or raw-SQL path,
-//! so we run raw SQL on the self-managed pool (see `infra::db` module docs +
-//! constructorfabric/gears-rust#4239). The SQL uses named `@params` that
-//! repeat on every recursion level, expanded to positional `?` via
-//! [`super::sql_named::bind_named`]. Values are bound parameters (never
-//! interpolated) and the tenant is always pinned in the `WHERE`.
-//!
-//! Result rows are flat (`person_id`, `parent_person_id`, the four attribute
-//! fields); the tree is assembled in [`crate::domain::subchart`] — this layer
-//! returns a flat set, the domain builds the tree. Roots always surface with
-//! `parent_person_id IS NULL`.
-
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
@@ -22,9 +6,6 @@ use crate::config::VisibilityPolicy;
 
 use super::sql_named::bind_named;
 
-/// One flat node of a subchart traversal. `parent_person_id` is `None` for a
-/// root (the anchor row / a forest top). The four attribute fields are the
-/// latest observation of that `value_type`, or `None` when none exists.
 #[derive(Debug, Clone)]
 pub struct SubchartFlatNode {
     pub person_id: Uuid,
@@ -48,18 +29,7 @@ fn row_to_flat(r: &sea_orm::QueryResult) -> anyhow::Result<SubchartFlatNode> {
     })
 }
 
-/// Predicate "can `viewer_person_id` see `target_person_id`?" as of `valid_at`
-/// (`None` = right now). A single recursive CTE that unions the viewer, their active grant targets, the target itself
-/// when a whole-tenant (wildcard) grant exists, and every `org_chart` descendant
-/// of anyone already visible. The final check is a `SELECT 1 … LIMIT 1`
-/// presence probe (truthiness = row present) rather than `SELECT EXISTS(…)`,
-/// matching the
-/// `roles_repo::has_active_role` convention so it maps cleanly through SeaORM
-/// regardless of how the driver types an `EXISTS` scalar.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
+/// A `LIMIT 1` probe, not `SELECT EXISTS`, for the decode reason `roles_repo::has_active_role` gives.
 pub async fn is_target_in_visible_set(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -130,15 +100,6 @@ pub async fn is_target_in_visible_set(
     Ok(row.is_some())
 }
 
-/// True if `viewer_person_id` currently holds a whole-tenant (wildcard) grant,
-/// meaning the CTEs below would union the whole tenant and a caller may skip the
-/// traversal. Lives here because its validity window must stay identical to
-/// their wildcard arm; `visibility_repo`'s `valid_to IS NULL` would also accept
-/// a future-dated grant.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn has_wildcard_grant(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -164,13 +125,6 @@ pub async fn has_wildcard_grant(
     Ok(db.query_one_raw(stmt).await?.is_some())
 }
 
-/// Batch form of [`is_target_in_visible_set`]: the same union, computed once and
-/// joined against `candidates` instead of traversed per candidate. Authorization
-/// has no point-in-time lens, so `valid_at` is fixed at `UTC_TIMESTAMP(6)`.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
 pub async fn visible_targets(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -259,16 +213,7 @@ pub async fn visible_targets(
         .collect()
 }
 
-/// Depth-bounded subtree rooted at `root_person_id`: a recursive descent over
-/// `org_chart` (anchor = the root with a NULL parent) joined to a
-/// `ROW_NUMBER()` latest-observation
-/// pass. `max_depth = None` = unbounded (bounded by MariaDB's
-/// `cte_max_recursion_depth`). The caller gates visibility on the root before
-/// calling this (see [`is_target_in_visible_set`]).
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
+/// `max_depth = None` is bounded only by MariaDB's `cte_max_recursion_depth`.
 pub async fn get_subchart_flat(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -343,15 +288,6 @@ pub async fn get_subchart_flat(
     rows.iter().map(row_to_flat).collect()
 }
 
-/// Forest variant: every root the `viewer_person_id` can see, one subtree per
-/// visible top of the source's org chart (`visible_set` → `in_source` →
-/// `roots` → `subtree` → `latest_obs`). Roots surface with `parent_person_id IS NULL` regardless of
-/// their stored row; singleton orphans (no children in the source) are dropped
-/// by the `roots` CTE's `EXISTS` guard.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 #[expect(clippy::too_many_lines)] // one verbatim multi-CTE SQL const dominates
 pub async fn get_forest_flat(
     db: &DatabaseConnection,
@@ -493,7 +429,6 @@ pub async fn get_forest_flat(
     rows.iter().map(row_to_flat).collect()
 }
 
-/// UUID → big-endian `BINARY(16)` bound value.
 fn bytes(id: Uuid) -> Value {
     id.as_bytes().to_vec().into()
 }

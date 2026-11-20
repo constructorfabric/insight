@@ -1,5 +1,3 @@
-//! Why an answer carries no rows although nothing failed.
-
 use serde::Serialize;
 
 /// The marker an empty answer carries when its emptiness is not a reading.

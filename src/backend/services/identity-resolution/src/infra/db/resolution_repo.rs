@@ -1,12 +1,3 @@
-//! Operator-correction write store (MariaDB).
-//!
-//! Corrections append binding observations to `persons`. Nothing here updates
-//! or deletes a journal row, and nothing here rebuilds `org_chart`: that stays
-//! the persons-seed's to own, on its own schedule, the way the ClickHouse
-//! mirror already works. The journal is the source of truth and
-//! every read path — the correction verbs, the review queue, the history —
-//! reads it directly, so a correction is visible the moment it commits.
-
 use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
@@ -19,22 +10,11 @@ use crate::domain::provenance::Provenance;
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 
-/// Ceiling for a request handler's whole-tenant read, which holds every row it
-/// gets in memory. Paired with the evidence fold's own cap: the review can only
-/// look up accounts the fold reported, so bindings past that many are unusable
-/// anyway. Reaching it truncates what the operator sees and is reported, not
-/// passed off as a complete answer.
 pub const MAX_TENANT_BINDINGS: u64 = 200_000;
 
-/// How much of the tenant a whole-tenant read may return.
 #[derive(Debug, Clone, Copy)]
 pub enum Ceiling {
-    /// Stop after this many and say so. For a reader that can honestly show a
-    /// prefix — a console page, a rate with a "partial" flag beside it.
     Bounded(u64),
-    /// Every binding, whatever it costs. For a batch whose decisions are wrong
-    /// without them: one missed binding and it mints a second person for an
-    /// account that already has one.
     Unbounded,
 }
 
@@ -47,28 +27,15 @@ impl Ceiling {
     }
 }
 
-/// How many accounts one statement may name.
-///
-/// INVARIANT: keep this small. A statement's cost grows faster than the number
-/// of accounts it names, so raising it to save round trips trades a cheap cost
-/// for an expensive one.
 pub(crate) const LOOKUP_CHUNK: usize = 100;
 
-/// Which accounts a binding read covers — the one difference between the two
-/// readers below, kept a value so a caller cannot hand the query a fragment.
 #[derive(Debug, Clone, Copy)]
 enum Scope {
-    /// These many accounts, named as a bound tuple list.
     Named(usize),
-    /// Every account of the tenant, up to a bound [`Ceiling`].
     WholeTenant,
 }
 
-/// The latest `value_type='id'` observation per account, with its author so the
-/// caller can tell an operator decision from an automatic one.
 fn current_bindings_sql(scope: Scope) -> String {
-    // Ordering only where the ceiling can cut: a bounded read has to return the
-    // same prefix twice, or the queue's counts would move with no data change.
     let (accounts, page) = match scope {
         Scope::Named(count) => (
             format!(
@@ -112,17 +79,6 @@ fn current_bindings_sql(scope: Scope) -> String {
     )
 }
 
-/// Current binding of each requested account. Accounts never observed are simply
-/// absent.
-///
-/// For a handful of accounts — a verb's targets, a page of the listing. A caller
-/// after most of the tenant reads it whole instead
-/// ([`current_bindings_in_tenant`]), because a statement's cost grows faster
-/// than the number of accounts it names.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id column is not 16 bytes.
 pub async fn current_bindings(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -153,37 +109,17 @@ pub async fn current_bindings(
     Ok(map)
 }
 
-/// Every account's current binding in the tenant, and whether the ceiling cut
-/// the read.
 #[derive(Debug, Default)]
 pub struct BindingSnapshot {
     pub by_account: HashMap<SourceAccountKey, KnownBinding>,
-    /// [`MAX_TENANT_BINDINGS`] was reached: these are a prefix of the tenant's
-    /// bindings, so anything derived from them describes a prefix too.
     pub truncated: bool,
 }
 
-/// Current binding of every account in the tenant — for the callers that ask
-/// about all of them: the review surface, and the persons-seed.
-///
-/// INVARIANT: this answers exactly what naming every account would, plus
-/// accounts nobody asked about. The filter it drops sits on the ranking's own
-/// partition key, so removing it cannot change which observation wins for an
-/// account — only which accounts appear. A caller that must not see beyond its
-/// own keys looks them up rather than iterating the map.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id column is not 16 bytes.
 pub async fn current_bindings_in_tenant(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     ceiling: Ceiling,
 ) -> anyhow::Result<BindingSnapshot> {
-    // Ask for one row past the ceiling: its presence is what says another row
-    // exists. Counting the rows against the ceiling instead calls a read that
-    // ended exactly on it truncated, and a caller that refuses to answer on
-    // truncation would then refuse a complete answer.
     let probe = ceiling.rows().saturating_add(1);
     let mut rows = db
         .query_all_raw(Statement::from_sql_and_values(
@@ -238,12 +174,6 @@ fn collect_bindings(
     Ok(())
 }
 
-/// Accounts currently bound to a person (latest binding wins). The merge verb
-/// reads this to know what to rebind.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id column is not 16 bytes.
 pub async fn accounts_of_person(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -295,12 +225,6 @@ pub async fn accounts_of_person(
     Ok(accounts)
 }
 
-/// Whether the tenant's journal knows this person at all — a correction may not
-/// invent a target out of thin air.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn person_exists(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -322,50 +246,8 @@ pub async fn person_exists(
     Ok(row.is_some())
 }
 
-/// Append binding observations in one transaction. Returns the number of rows
-/// actually appended (a re-emitted identical observation is ignored by the
-/// natural key).
-///
-/// The tenant's `org_chart` is deliberately NOT rebuilt here. The rebuild is
-/// whole-tenant — it deletes and re-derives the edges from the entire journal
-/// — and it grows far worse than linearly, so putting it in a request path
-/// makes one operator decision cost minutes on a large tenant. It also buys
-/// nothing: a correction appends only `value_type='id'` rows, while `org_chart`
-/// is derived from the parent, status and e-mail observations a correction
-/// never touches. It stays the seed's to refresh on its own schedule, like the
-/// ClickHouse mirror.
-///
-/// # Errors
-///
-/// Returns an error if any statement fails; the transaction is rolled back.
-/// Append one binding ONLY IF the account has none yet, in a single statement.
-///
-/// The login bootstrap cannot check-then-write: between the two an operator's
-/// exclusion or the seed's own link can land, and because the binding in force
-/// is the LATEST row, an automation row written after it would silently
-/// override a human's decision. Making "nobody has decided this account" part
-/// of the same statement as the insert removes the window — the condition is
-/// evaluated against the same snapshot that writes.
-///
-/// "Nobody has decided it" is scoped exactly as the login lookup scopes it —
-/// by (`source_type`, `value_id`), across every tenant and connector instance.
-/// Narrowing the guard to the instance the evidence names would leave the
-/// decisions it is meant to protect invisible: an exclusion recorded before a
-/// connector was re-registered lives under the OLD instance id, while the
-/// lookup that answers "who is in force" ignores the instance entirely — so a
-/// narrow guard would write, and the fresh row would win.
-///
-/// The inner derived table is not decoration: MariaDB refuses a bare subquery
-/// on the INSERT's own target, and materialising it is what makes the
-/// self-reference legal.
-///
-/// Returns whether the row was written. `false` means somebody else had
-/// already decided the account, and the caller must read what they decided
-/// rather than assume its own row is in force.
-///
-/// # Errors
-///
-/// Returns an error if the statement fails.
+/// MariaDB refuses a bare subquery on the INSERT's own target; the inner derived
+/// table is what makes the self-reference legal.
 pub async fn append_binding_if_unbound(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -391,12 +273,9 @@ pub async fn append_binding_if_unbound(
         )
     ";
 
-    // The isolation level is stated, not inherited: the guard's protection rests
-    // on the self-read seeing the same snapshot the insert writes into, and
-    // under READ COMMITTED that read does not lock, so an operator decision can
-    // slip between them. MariaDB defaults to REPEATABLE READ, which is what
-    // makes `INSERT ... SELECT` take a locking read — a deployment that changed
-    // the default must not silently weaken this.
+    // InnoDB's `INSERT ... SELECT` takes a locking read under REPEATABLE READ but not
+    // under READ COMMITTED, where an operator decision could slip between the guard's
+    // self-read and the insert, so the level is stated rather than inherited.
     let txn = db
         .begin_with_config(
             Some(IsolationLevel::RepeatableRead),
@@ -423,11 +302,6 @@ pub async fn append_binding_if_unbound(
 
     let result = match txn.execute_raw(statement).await {
         Ok(result) => result,
-        // A lock conflict here means another login is writing THIS account
-        // right now. "We did not write" is the truthful answer, and the
-        // caller's read-back then reports whatever the winner decided —
-        // whereas surfacing it would put a 500 on the login screen for a
-        // condition the design already handles.
         Err(e) if is_lock_conflict(&e) => {
             tracing::info!(
                 source_type = %row.account.source_type,
@@ -445,12 +319,6 @@ pub async fn append_binding_if_unbound(
     Ok(result.rows_affected() > 0)
 }
 
-/// Whether MariaDB refused the statement because another transaction held the
-/// rows: deadlock (1213) or lock-wait timeout (1205).
-///
-/// Classified from the message for the same reason `MissingRelation` does it
-/// for ClickHouse — the driver surfaces the server's code in the text and
-/// exposes no typed variant for either condition.
 fn is_lock_conflict(error: &sea_orm::DbErr) -> bool {
     let message = error.to_string();
     message.contains("1213")
@@ -507,8 +375,6 @@ pub async fn append_bindings(
     Ok(appended)
 }
 
-/// One appended observation in an account's history — what the explain surface
-/// shows: who bound it where, when, and why.
 #[derive(Debug, Clone)]
 pub struct BindingHistoryRow {
     pub person_id: Uuid,
@@ -517,11 +383,6 @@ pub struct BindingHistoryRow {
     pub created_at: sea_orm::prelude::DateTime,
 }
 
-/// Every binding observation ever recorded for one account, newest first.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id column is not 16 bytes.
 pub async fn binding_history(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -565,16 +426,6 @@ pub async fn binding_history(
     Ok(history)
 }
 
-/// Which of these exact observations the journal holds.
-///
-/// Identity is the whole natural key including the author and the instant, not
-/// just "the account points at this person": a confirmation appends an
-/// operator-authored row over an automatic binding to the SAME person, so
-/// asking about the person alone cannot tell a landed row from a refused one.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn present_rows(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -653,9 +504,6 @@ mod tests {
 
     use super::*;
 
-    /// A lock conflict is not a fault to surface: it means another login is
-    /// writing this very account, and the caller's read-back is what resolves
-    /// it. Misclassifying either code puts a 500 on the login screen instead.
     #[test]
     fn a_lock_conflict_is_told_apart_from_a_real_failure() {
         for (case, message, expected) in [

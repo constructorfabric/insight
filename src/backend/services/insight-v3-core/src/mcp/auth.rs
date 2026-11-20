@@ -18,12 +18,8 @@ mod tests;
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
 const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_secs(5);
 
-/// The scope a grant for this server carries. The read-only warehouse server
-/// has its own, and neither is valid for the other's resource.
 pub(crate) const MCP_SCOPE: &str = "mcp:author";
 
-/// The path this server answers on, which is also the resource its tokens are
-/// minted for.
 pub(crate) const MCP_PATH: &str = "/mcp/v3";
 
 #[derive(Debug, Deserialize)]
@@ -91,8 +87,6 @@ impl TokenVerifier {
     ) -> anyhow::Result<Self> {
         validate_public_url(public_url, allow_insecure_private_network)?;
         let issuer = public_url.trim_end_matches('/').to_owned();
-        // Only where the keys come from. The token still has to name the
-        // advertised origin, which is checked below against `issuer`.
         let jwks_url = if jwks_url.trim().is_empty() {
             format!("{issuer}/.well-known/jwks.json")
         } else {
@@ -118,8 +112,6 @@ impl TokenVerifier {
         })
     }
 
-    /// The `admin` role is read off the token, not from identity: the gateway
-    /// forwards an MCP bearer unchanged, and only an administrator is granted one.
     pub(crate) async fn verify(&self, token: &str) -> Result<McpAccessClaims, AuthFailure> {
         let header = decode_header(token).map_err(|_| AuthFailure::Unauthorized)?;
         if header.alg != Algorithm::ES256 {

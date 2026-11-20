@@ -3,9 +3,6 @@ defaults:
   timeout_ms: 30000
   strip_prefix: false
   websocket: false
-  # Operator-extensible deny-list. The gateway-reserved set (Authorization,
-  # X-Correlation-Id, X-Forwarded-*, gateway cookies) is always stripped in
-  # addition; X-Tenant-ID is NOT reserved and passes through.
   strip_request_headers:
     - X-Real-IP
     - Forwarded

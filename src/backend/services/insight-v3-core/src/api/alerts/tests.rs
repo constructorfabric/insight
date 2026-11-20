@@ -52,7 +52,6 @@ impl TestHarness {
         Self::build_over(is_admin, alerts_on, alerts, schedule, None)
     }
 
-    /// A harness whose metric runs are answered by the warehouse at `url`.
     fn over_warehouse(url: &str, is_admin: bool) -> Self {
         Self::build_over(
             is_admin,
@@ -235,7 +234,6 @@ fn rule(edit: impl FnOnce(&mut Value)) -> Value {
 }
 
 impl TestHarness {
-    /// Creates a rule and answers its id.
     async fn create(&self, body: Value) -> String {
         let created = self.send("POST", "/v1/alerts", Some(body)).await;
         assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
@@ -247,8 +245,6 @@ impl TestHarness {
     }
 }
 
-/// A missing alert as the document declares it: a problem body naming what
-/// was asked for, whether the id is absent or not an id at all.
 fn assert_not_found(response: &TestResponse, asked: &str) {
     assert_eq!(
         response.status,
@@ -931,12 +927,8 @@ async fn a_notification_shows_its_delivery_state() -> R {
     Ok(())
 }
 
-/// No rows of `engine String`, as `RowBinaryWithNamesAndTypes` writes them:
-/// one column, its name, its type.
 const NO_ENGINE: &[u8] = b"\x01\x06engine\x06String";
 
-/// A warehouse that knows no table engine and answers every metric read
-/// with two teams' counts.
 async fn two_teams() -> (String, tokio::task::JoinHandle<()>) {
     use axum::Json;
     use axum::response::IntoResponse as _;

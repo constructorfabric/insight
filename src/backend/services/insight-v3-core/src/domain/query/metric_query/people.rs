@@ -1,6 +1,3 @@
-//! Reading a person out of the identity store, by whichever handle a metric
-//! holds them under.
-
 use serde::Deserialize;
 
 use super::MetricQueryError;
@@ -11,11 +8,6 @@ const EMAIL_CTE: &str = "__people_by_email";
 const ID_CTE: &str = "__people_by_id";
 const IDENTITY_TABLE: &str = "identity_persons";
 
-/// Which handle a person column carries.
-///
-/// A fact table names a person the way its source system did - the address
-/// they committed under, the id an API returned. Neither is the name anyone
-/// would recognise them by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum PersonHandle {
@@ -42,8 +34,6 @@ impl PersonHandle {
         }
     }
 
-    /// The handle as the identity side spells it: ids are compared as text,
-    /// because the fact table stores one as a UUID, a String, or neither.
     pub(super) fn key(self, read: &str) -> String {
         match self {
             Self::Email => read.to_owned(),
@@ -52,11 +42,6 @@ impl PersonHandle {
     }
 }
 
-/// Where a person's name is resolved from.
-///
-/// The identity database on this stand. Only the database is configurable:
-/// the table and the `value_type` rows inside it are identity's own schema,
-/// not something a stand chooses.
 #[derive(Debug, Clone)]
 pub(crate) struct People {
     database: String,
@@ -69,11 +54,6 @@ impl People {
         }
     }
 
-    /// The `WITH` clauses the joins read from.
-    ///
-    /// INVARIANT: a person accumulates a row per name they have ever had, so
-    /// the latest one wins by `argMax` before anything joins to it. Joining
-    /// the rows directly multiplies every fact by that history.
     pub(super) fn prelude(&self, handles: &[PersonHandle]) -> Result<String, MetricQueryError> {
         if !is_identifier(&self.database) {
             return Err(MetricQueryError::Identifier(self.database.clone()));

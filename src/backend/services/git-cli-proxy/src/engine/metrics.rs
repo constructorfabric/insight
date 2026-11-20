@@ -1,13 +1,5 @@
-//! The service's metric instruments.
-//!
-//! Registered against the global meter provider the host installs, so the
-//! `opentelemetry` major here must match the toolkit's — a different major is
-//! a different global, and instruments would silently record into a no-op.
-//!
-//! Names are the `OpenTelemetry` spelling of the documented Prometheus
-//! families: a
-//! collector's Prometheus exporter renders `git_proxy.disk.used` as
-//! `git_proxy_disk_used_bytes` once the `By` unit is applied.
+// The `opentelemetry` major must match the toolkit's: a different major is a
+// different global, and instruments would silently record into a no-op.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -15,15 +7,10 @@ use std::sync::{Arc, OnceLock};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
-/// Reclaim tier, for `git_proxy_evictions_total{tier=…}`.
 #[derive(Debug, Clone, Copy)]
 pub enum EvictionTier {
-    /// Blobs purged; the entry stays warm.
     Blob,
-    /// The whole entry deleted.
     Full,
-    /// The whole entry deleted because repeated purges could not shed its
-    /// blobs in place.
     PurgeExhausted,
 }
 
@@ -37,14 +24,10 @@ impl EvictionTier {
     }
 }
 
-/// Where the author index failed, for `git_proxy_author_index_failures{stage=…}`.
 #[derive(Debug, Clone, Copy)]
 pub enum AuthorIndexFailure {
-    /// A mirror's authors could not be listed; its next refresh retries.
     Fold,
-    /// What a refresh changed could not be written.
     Persist,
-    /// Part of a book on disk was unreadable and is rebuilt from fetches.
     Load,
 }
 
@@ -58,10 +41,8 @@ impl AuthorIndexFailure {
     }
 }
 
-/// Outcome of a fetch, for `git_proxy_fetches_total{result=…}`.
 #[derive(Debug, Clone, Copy)]
 pub enum FetchResult {
-    /// Origin had nothing new; the snapshot generation is unchanged.
     Noop,
     Updated,
     Error,
@@ -77,23 +58,13 @@ impl FetchResult {
     }
 }
 
-/// Why a request was answered `429`. One label on one counter: the wire
-/// collapses every cause into the same status, and without the split
-/// "transient backpressure while a clone runs" is indistinguishable from
-/// "the cache can never admit this work".
 #[derive(Debug, Clone, Copy)]
 pub enum RejectReason {
-    /// The page-serve headroom check refused a blob prefetch.
     PrefetchHeadroom,
-    /// A prefetch would take one entry past its own cap before a purge.
     EntryOverCap,
-    /// Reclaim ran and the cache is still over the watermark.
     AdmissionExhausted,
-    /// Preparation outlived the bounded inline wait.
     PreparationWait,
-    /// Origin is throttling this client.
     OriginThrottled,
-    /// Every page-serve slot stayed taken for the whole bounded wait.
     ServeSaturated,
 }
 
@@ -236,8 +207,6 @@ pub fn record_fetch(result: FetchResult) {
 }
 
 pub fn record_request(endpoint: &str, status: u16, seconds: f64, bytes: usize) {
-    // INVARIANT: `endpoint` is a ROUTE template, never a request path, so the
-    // label set stays bounded by the route table.
     let endpoint = endpoint.to_owned();
     let attributes = [
         KeyValue::new("endpoint", endpoint.clone()),
@@ -250,12 +219,6 @@ pub fn record_request(endpoint: &str, status: u16, seconds: f64, bytes: usize) {
     );
 }
 
-/// Disk figures the gauges read.
-///
-/// Updated whenever admission recomputes them, and read by the observable
-/// callbacks. The callbacks are synchronous and run on the collector's
-/// schedule, so they must never touch the filesystem — hence a cached
-/// snapshot rather than a live `statvfs` per scrape.
 #[derive(Debug, Default)]
 pub struct DiskGauges {
     used_bytes: AtomicU64,
@@ -271,7 +234,6 @@ impl DiskGauges {
     }
 }
 
-/// Attach the observable disk gauges to `gauges`. Called once at gear init.
 pub fn register_disk_gauges(gauges: &Arc<DiskGauges>) {
     let meter = opentelemetry::global::meter("git-cli-proxy");
 
@@ -321,9 +283,6 @@ mod tests {
 
     #[test]
     fn recording_without_a_provider_is_a_no_op_not_a_panic() {
-        // No global provider is installed in tests; the instruments must still
-        // build and record, or every handler would panic under a host that
-        // disables metrics.
         record_eviction(EvictionTier::Blob);
         record_rejection(RejectReason::AdmissionExhausted);
         record_purge_escalation();

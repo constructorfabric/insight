@@ -1,7 +1,3 @@
-//! Column budgets of `feedback`, read by the writer that holds submissions to
-//! them.
-
-/// `message` is TEXT; this is the product's own limit on one submission.
 pub const MESSAGE: u32 = 4000;
 
 pub const PATH: u32 = 512;

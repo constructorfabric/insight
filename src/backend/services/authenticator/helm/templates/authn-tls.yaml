@@ -1,13 +1,7 @@
 {{- if .Values.tlsDiscovery.enabled }}
 {{- $fullname := include "insight-authenticator.fullname" . }}
 {{- $svc := printf "%s.%s.svc" $fullname .Release.Namespace }}
-# TLS discovery front for the authenticator's OIDC discovery + JWKS. Downstream
-# verifiers (analytics / identity-resolution) run the oidc-authn-plugin, whose
-# runtime resolves the JWKS over HTTPS ONLY. This cert-manager Certificate + the
-# `authn-tls` sidecar (see deployment.yaml) terminate TLS on :{{ .Values.tlsDiscovery.port }}
-# and proxy the well-known endpoints to the authenticator on localhost. `iss` =
-# https://{{ $fullname }}:{{ .Values.tlsDiscovery.port }}; downstream trust the
-# issuer's CA (ca.crt in the cert Secret) via gateway.caCertPaths.
+# Downstream verifiers' oidc-authn-plugin resolves the JWKS over HTTPS only.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -16,8 +10,8 @@ metadata:
     {{- include "insight-authenticator.labels" . | nindent 4 }}
 spec:
   secretName: {{ include "insight-authenticator.authnTlsSecret" . }}
-  duration: 2160h      # 90d
-  renewBefore: 360h    # 15d
+  duration: 2160h
+  renewBefore: 360h
   privateKey:
     algorithm: ECDSA
     size: 256

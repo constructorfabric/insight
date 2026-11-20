@@ -1,15 +1,3 @@
-//! End-to-end layer-2 rate limiting (nginx+auth step 10, item 6) against a
-//! running authenticator + Keycloak + Redis.
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 \
-//!   cargo test -p authenticator --test e2e_ratelimit -- --ignored --nocapture
-//! ```
-//!
-//! Asserts the Redis token buckets (defaults: refresh 5-burst/6-per-min per
-//! session, callback 5-burst/10-per-min per state) answer 429 past the burst,
-//! and that the limit keys on the session — a second session is unaffected.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -49,7 +37,6 @@ async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String
     resp.json::<CsrfBody>().await.unwrap().csrf_token
 }
 
-/// One refresh attempt; returns (status, rotated cookie when present).
 async fn refresh(
     http: &common::Client,
     auth_base: &str,
@@ -75,9 +62,6 @@ async fn refresh_and_callback_buckets_trip_past_burst() {
     let test_user = env("E2E_USER", "dev@company.nonpresent");
     let http = client();
 
-    // 1. Refresh bucket: hammer one session until the (default 5-burst)
-    //    bucket trips. The credential rotates on each 200; the bucket keys on
-    //    the STABLE session id, so rotation does not reset it.
     let mut token = login(&http, &auth_base, &test_user).await;
     let csrf = get_csrf(&http, &auth_base, &token).await;
     let mut tripped_at = None;
@@ -98,15 +82,11 @@ async fn refresh_and_callback_buckets_trip_past_burst() {
         "the burst must absorb a few legitimate retries, tripped at {tripped_at}"
     );
 
-    // 2. A different session is unaffected (the bucket keys per session).
     let other = login(&http, &auth_base, &test_user).await;
     let other_csrf = get_csrf(&http, &auth_base, &other).await;
     let (status, _) = refresh(&http, &auth_base, &other, &other_csrf).await;
     assert_eq!(status, 200, "another session must have its own bucket");
 
-    // 3. Callback bucket: hammering one (bogus) state flips from 302 (the
-    //    unknown-state auth_error redirect, #2032) to 429 once the per-state
-    //    bucket empties.
     let mut saw_429 = false;
     for _ in 1..=8 {
         let resp = http

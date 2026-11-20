@@ -1,27 +1,9 @@
-//! Named-parameter binding for raw SQL.
-//!
-//! The subchart / visibility statements are written with named params
-//! (`@tenant_id`, `@valid_at`, …) that repeat many times inside one statement
-//! (a recursive CTE references them on every level). SeaORM's `Statement`
-//! takes only **positional** `?` placeholders, so [`bind_named`] rewrites each
-//! `@name` occurrence to a `?` and emits the bound value once **per
-//! occurrence**, in left-to-right order — the shape SeaORM expects. Keeping
-//! the named form makes those long CTEs readable. See `infra::db` module docs
-//! + constructorfabric/gears-rust#4239.
+//! SeaORM's `Statement` takes only positional `?` placeholders, so [`bind_named`]
+//! rewrites each `@name` to a `?` and emits its bound value once per occurrence,
+//! in left-to-right order.
 
 use sea_orm::Value;
 
-/// Rewrite `@name` placeholders in `sql` to positional `?`, returning the
-/// rewritten SQL and the values in placeholder order (a value is repeated for
-/// each occurrence of its name). `params` maps each distinct `@name` (without
-/// the `@`) to its bound value.
-///
-/// A `@` not followed by an identifier character is passed through unchanged.
-///
-/// # Errors
-///
-/// Returns an error if the SQL references an `@name` with no entry in `params`
-/// (a wiring bug in the caller, surfaced loudly rather than binding NULL).
 pub fn bind_named(sql: &str, params: &[(&str, Value)]) -> anyhow::Result<(String, Vec<Value>)> {
     let mut out = String::with_capacity(sql.len());
     let mut values = Vec::new();
@@ -32,7 +14,6 @@ pub fn bind_named(sql: &str, params: &[(&str, Value)]) -> anyhow::Result<(String
             out.push(c);
             continue;
         }
-        // Collect the identifier following '@'.
         let mut name = String::new();
         while let Some(&next) = chars.peek() {
             if next.is_ascii_alphanumeric() || next == '_' {
@@ -43,7 +24,6 @@ pub fn bind_named(sql: &str, params: &[(&str, Value)]) -> anyhow::Result<(String
             }
         }
         if name.is_empty() {
-            // Bare '@' (not a placeholder) — pass through untouched.
             out.push('@');
             continue;
         }
@@ -70,7 +50,6 @@ mod tests {
             &[("tenant_id", Value::from(1_i32)), ("x", Value::from(2_i32))],
         )?;
         assert_eq!(out, "SELECT * FROM t WHERE a = ? AND b = ? OR c = ?");
-        // tenant_id appears twice → its value is emitted twice, in position order.
         assert_eq!(values.len(), 3);
         assert_eq!(values[0], Value::from(1_i32));
         assert_eq!(values[1], Value::from(2_i32));
@@ -80,7 +59,6 @@ mod tests {
 
     #[test]
     fn stops_identifier_at_non_word_char() -> anyhow::Result<()> {
-        // `@a,@b` — comma terminates the first name; both bind.
         let (out, values) = bind_named(
             "@a,@b)",
             &[("a", Value::from(7_i32)), ("b", Value::from(8_i32))],

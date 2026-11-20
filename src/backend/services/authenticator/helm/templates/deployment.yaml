@@ -14,18 +14,11 @@ spec:
       labels:
         {{- include "insight-authenticator.selectorLabels" . | nindent 8 }}
       annotations:
-        # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
         checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- if .Values.idp.extraCaCertSecret }}
-        # Roll pods when the idp-extra-ca Secret's DATA changes under the
-        # same name/key (name/key/path changes already alter the pod
-        # template via the volume/env blocks above). `lookup` reads the
-        # live Secret on classic `helm upgrade`. Under GitOps
-        # (`helm template`) `lookup` always returns nil — same documented
-        # limitation as the credential lookups in charts/insight/values.yaml
-        # — so GitOps rotations still need an external rollout trigger.
+        # `lookup` returns nil under `helm template` (GitOps), so GitOps
+        # rotations need an external rollout trigger.
         checksum/idp-extra-ca: {{ lookup "v1" "Secret" .Release.Namespace .Values.idp.extraCaCertSecret | toYaml | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
@@ -38,8 +31,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- end }}
-      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
-      # kubelet auto-injects for every Service in the namespace.
       enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -50,9 +41,6 @@ spec:
         - name: authenticator
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # gears-rust host: structural config from the mounted ConfigMap; leaf
-          # values (Redis/Identity/OIDC) from the Secret via envFrom below; the
-          # ES256 signing keys from a separate mounted Secret.
           command: ["/app/authenticator"]
           args: ["-c", "/app/config/authenticator.yaml", "run"]
           volumeMounts:
@@ -64,25 +52,15 @@ spec:
               mountPath: {{ .Values.signingKeysPath | quote }}
               readOnly: true
             {{- if .Values.tlsDiscovery.enabled }}
-            # CA of the in-pod TLS discovery front — the oidc-authn-plugin
-            # verifies the `.authenticated()` admin surface against our own
-            # issuer through it.
             - name: authn-tls-cert
               mountPath: /app/authn-ca
               readOnly: true
             {{- end }}
             {{- if .Values.idp.extraCaCertSecret }}
-            # Extra CA bundle the binary trusts for the IdP TLS connection
-            # (idp.extraCaCertPath). Mounted read-only from the operator's
-            # Secret; the file's mount path is passed to the binary via the
-            # env var below.
             - name: idp-extra-ca
               mountPath: {{ dir .Values.idp.extraCaCertPath | quote }}
               readOnly: true
             {{- end }}
-            # The only two paths the process writes under a read-only root:
-            # the gears host creates `server.home_dir` at boot, and grpc-hub
-            # binds its UDS under /tmp (both set in the ConfigMap).
             - name: data
               mountPath: /app/data
             - name: tmp
@@ -91,26 +69,17 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-            # Service-token listener (§10 G4 second listener).
             - name: token
               containerPort: {{ .Values.service.tokenPort }}
               protocol: TCP
           envFrom:
-            # Umbrella observability contract; optional so standalone installs schedule.
             - configMapRef:
                 name: {{ .Release.Name }}-platform
                 optional: true
-            # Operator MUST pre-create this Secret (umbrella does it
-            # automatically as `insight-authenticator-config`). Provides the
-            # APP__gears__authenticator__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-authenticator-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
           {{- if .Values.idp.extraCaCertSecret }}
           env:
-            # Point the binary at the mounted extra-CA bundle. Set here (not
-            # via the config Secret) because the path is chart-derived from
-            # idp.extraCaCertPath and must stay in lockstep with the volume
-            # mount above. Overrides any value carried in the config Secret.
             - name: APP__gears__authenticator__config__idp__extra_ca_cert_path
               value: {{ .Values.idp.extraCaCertPath | quote }}
           {{- end }}
@@ -130,10 +99,6 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
         {{- if .Values.tlsDiscovery.enabled }}
-        # TLS discovery front (NGINX_BFF R1): terminates HTTPS on
-        # :{{ .Values.tlsDiscovery.port }} and proxies /.well-known/* to the
-        # authenticator on localhost, so the downstream oidc-authn-plugin can
-        # resolve the JWKS over https. Cert from cert-manager (see authn-tls.yaml).
         - name: authn-tls
           image: "{{ .Values.tlsDiscovery.image.repository }}:{{ .Values.tlsDiscovery.image.tag }}"
           ports:
@@ -149,8 +114,6 @@ spec:
               mountPath: /tls
               readOnly: true
             # nginx-unprivileged keeps its pid and every *_temp dir under /tmp.
-            # Its own volume, not the authenticator's — that one carries the
-            # grpc-hub UDS, which nothing outside the process may reach.
             - name: authn-tls-tmp
               mountPath: /tmp
           securityContext:

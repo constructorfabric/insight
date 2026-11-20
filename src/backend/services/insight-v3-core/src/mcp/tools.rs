@@ -31,8 +31,6 @@ use crate::store::catalog::{CatalogError, TableSchema};
 #[cfg(test)]
 mod tests;
 
-/// How many tables one description spells out. Columns run long, and an
-/// agent that wants more asks again.
 const DESCRIBE_LIMIT: usize = 20;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -196,7 +194,6 @@ impl CustomSurfaces {
         self.state.metric_runs()
     }
 
-    /// One page of ids and names, with how many there are to page through.
     async fn read_page(
         &self,
         caller: Caller,
@@ -274,8 +271,6 @@ impl CustomSurfaces {
         }
     }
 
-    /// A dashboard as `get_definition` answers it, with how the caller sees
-    /// it, the folders they see holding it and its tags.
     async fn read_dashboard(&self, caller: Caller, id: &DefinitionId) -> CallToolResult {
         let surfaces = self.surfaces(caller);
         let stored = match surfaces.read(DefinitionKind::Dashboard, id).await {
@@ -307,7 +302,6 @@ impl CustomSurfaces {
     }
 }
 
-/// What one listing asked for.
 #[derive(Debug, Clone, Copy)]
 struct Asked<'a> {
     needle: &'a str,
@@ -786,8 +780,6 @@ fn table_description(schema: &TableSchema) -> Value {
     })
 }
 
-/// A catalogue that did not answer. The wait is the caller's to retry; what
-/// the warehouse said is logged, not answered.
 fn catalog_error(error: &CatalogError) -> CallToolResult {
     match error {
         CatalogError::Timeout => refuse(&error.to_string()),
@@ -935,12 +927,6 @@ impl ServerHandler for CustomSurfaces {
     }
 }
 
-/// Who is asking, as the token's subject names them. Every call reaches a
-/// tool authenticated, so a subject that is not a person is refused, not
-/// guessed at.
-///
-/// INVARIANT: the MCP surface admits administrators alone, so its caller is
-/// one.
 fn subject(parts: &Parts) -> Result<Caller, CallToolResult> {
     parts
         .extensions
@@ -950,7 +936,6 @@ fn subject(parts: &Parts) -> Result<Caller, CallToolResult> {
         .ok_or_else(|| refuse("only an administrator reaches the definitions"))
 }
 
-/// The caller, dashboard and folder an entry tool names.
 fn entry_of(
     parts: &Parts,
     dashboard: &str,
@@ -967,7 +952,6 @@ fn parse_name(raw: &str) -> Result<DefinitionId, CallToolResult> {
     DefinitionId::parse(raw).map_err(|error| refuse(&error.to_string()))
 }
 
-/// An id a tool was given. One that cannot be an id names nothing.
 fn parse_id(kind: DefinitionKind, raw: &str) -> Result<DefinitionId, CallToolResult> {
     DefinitionId::parse(raw)
         .map_err(|_| refuse(&format!("{} `{raw}` was not found", kind.singular())))
@@ -982,8 +966,6 @@ fn written(id: &DefinitionId, name: &DefinitionLabel, created: bool) -> CallTool
 }
 
 fn tool_error(error: &CustomError) -> CallToolResult {
-    // A refusal the caller caused is theirs to read; a failure of ours says
-    // what the warehouse or the store said, which is not theirs to see.
     if error.is_about_the_caller() {
         return refuse(&error.to_string());
     }

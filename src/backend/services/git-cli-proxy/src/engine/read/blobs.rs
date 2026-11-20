@@ -8,25 +8,14 @@ const FETCH_BATCH: usize = 500;
 const MIN_OID_LEN: usize = 7;
 const FETCH_ATTEMPTS: u32 = 2;
 
-/// Whether a raw-diff field names a real object. The all-zero OID marks an
-/// absent side (added or deleted path) and is not fetchable — its length
-/// varies with the repository's hash algorithm, so it is recognized by shape,
-/// not by comparison with one fixed constant.
 pub(super) fn is_object_oid(field: &str) -> bool {
     field.len() >= MIN_OID_LEN
         && field.chars().all(|c| c.is_ascii_hexdigit())
         && field.chars().any(|c| c != '0')
 }
 
-/// Fetch the blobs a window of commits touches, in batches.
-///
-/// A blobless clone would otherwise make git lazily fetch each blob on its own
-/// round trip while computing numstat/patches. Batching is what git's own
-/// `backfill` does; the OIDs come from tree diffs, which need no blobs.
-///
-/// # Errors
-///
-/// [`GitError`] when listing the OIDs or a batch fetch fails.
+// A blobless clone would otherwise make git lazily fetch each blob on its own
+// round trip while computing numstat/patches.
 pub async fn prefetch(
     runner: &GitRunner,
     git_dir: &Path,
@@ -43,11 +32,6 @@ pub async fn prefetch(
         return Ok(0);
     }
 
-    // Consecutive pages share blobs — the src side of a file changed on this
-    // page is the dst side fetched on the last one — so whenever the purge
-    // has not run in between, most of the window is already local. Fetching
-    // it again pays origin round trips for nothing and lands duplicate
-    // copies in yet another pack.
     let wanted = oids.len();
     let ordered = missing_oids(runner, git_dir, oids, creds).await?;
     for batch in ordered.chunks(FETCH_BATCH) {
@@ -87,9 +71,6 @@ async fn fetch_batch(
     let mut attempt = 1;
     loop {
         let started = Instant::now();
-        // Capped mid-transfer like every other operation that grows the
-        // entry: a window whose blobs would take the repository past its cap
-        // must be refused, not discovered afterwards on a full volume.
         let fetched = runner
             .run_prefetch_capped(git_dir, args, creds, cap_bytes)
             .await;
@@ -128,12 +109,10 @@ async fn fetch_batch(
     }
 }
 
-/// The subset of `oids` absent from the local object store.
-///
-/// `rev-list --missing=print` is the partial-clone-safe form: it REPORTS a
-/// missing object (`?<oid>`) instead of lazily fetching it, which is exactly
-/// the behaviour a presence check must have — `cat-file` would trigger the
-/// one-round-trip-per-blob fetches this module exists to prevent.
+// `rev-list --missing=print` is the partial-clone-safe form: it REPORTS a
+// missing object (`?<oid>`) instead of lazily fetching it, which is exactly
+// the behaviour a presence check must have — `cat-file` would trigger the
+// one-round-trip-per-blob fetches this module exists to prevent.
 async fn missing_oids(
     runner: &GitRunner,
     git_dir: &Path,
@@ -169,10 +148,6 @@ async fn needed_oids(
     shas: &[String],
     creds: &GitCredentials,
 ) -> Result<BTreeSet<String>, GitError> {
-    // Batched like every other window reader: the runner materialises the
-    // child's whole stdout, and a wide window would buffer it all at once.
-    // The oid SET is kept across batches — it is what the fetch needs, and it
-    // is bounded by unique blobs rather than by raw-output bytes.
     let mut oids = BTreeSet::new();
     for batch in shas.chunks(ENUMERATE_BATCH) {
         // `log --no-walk` (not `diff-tree`) is the multi-commit form:
@@ -203,21 +178,13 @@ async fn needed_oids(
     Ok(oids)
 }
 
-/// Commits per raw-diff enumeration; bounds the child's buffered stdout.
 const ENUMERATE_BATCH: usize = 128;
 
-/// Tree entry mode of a submodule reference.
 const GITLINK_MODE: &str = "160000";
 
-/// Collect both sides of every changed path from `--raw` output:
-/// `:<src_mode> <dst_mode> <src_oid> <dst_oid> <status>\t<path>`.
-///
-/// A side whose mode is [`GITLINK_MODE`] is skipped. Its object id names a
-/// commit in the SUBMODULE, which the superproject's origin has never heard
-/// of: asking for it makes the whole batch fetch fail with "not our ref",
-/// which this service reads as an origin refusing promisor wants and answers
-/// by rebuilding the entry as a full clone. One submodule would therefore
-/// force every repository containing it out of the blobless regime for good.
+// A side whose mode is `GITLINK_MODE` is skipped. Its object id names a
+// commit in the SUBMODULE, which the superproject's origin has never heard
+// of: asking for it makes the whole batch fetch fail with "not our ref".
 fn parse_raw_oids(raw: &str) -> BTreeSet<String> {
     let mut oids = BTreeSet::new();
     for line in raw.lines() {
@@ -253,8 +220,6 @@ mod tests {
 
     const PATIENT: Duration = Duration::from_secs(30);
 
-    /// A scratch entry whose `git` runs `first` on its first call and `then`
-    /// on every call, counting its calls.
     struct FakeOrigin {
         root: PathBuf,
         git_dir: PathBuf,
@@ -379,10 +344,6 @@ mod tests {
 
     #[test]
     fn a_submodule_reference_is_never_requested_from_origin() {
-        // `160000` is a gitlink: the id is a commit in the submodule, which
-        // the superproject's origin does not have. Asking for it fails the
-        // whole batch with "not our ref", which this service classifies as a
-        // promisor refusal and answers by promoting the entry to a full clone.
         let raw = concat!(
             ":000000 100644 0000000000000000000000000000000000000000 ",
             "1111111111111111111111111111111111111111 A\to.txt\n",

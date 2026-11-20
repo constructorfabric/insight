@@ -1,5 +1,3 @@
-//! Taking records in: one record, named by the dataset it belongs to.
-
 use std::sync::Arc;
 
 use axum::extract::{Extension, rejection::JsonRejection};
@@ -97,8 +95,6 @@ fn request_rejection(error: &JsonRejection) -> CanonicalError {
         .create()
 }
 
-/// A record can only land in a dataset somebody declared, so a name that is
-/// not one, or names nothing ready, is answered the same way.
 fn not_ready(named: &str) -> CanonicalError {
     RawDataApiError::not_found(format!(
         "no dataset named `{named}` is ready to take records"

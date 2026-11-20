@@ -1,10 +1,3 @@
-//! The rows behind a widget: a stored metric, ordered and paged by the
-//! reader rather than cut by the metric's own limit.
-//!
-//! The metric's compiler knows nothing of this. Its query becomes a subquery,
-//! and the order, the page and the cursor sit outside it, so the same
-//! wrapper serves a grouped metric and a plain one, a dataset and a table.
-
 mod cursor;
 mod order;
 mod paged;
@@ -23,12 +16,9 @@ pub(crate) use cursor::CursorError;
 pub(crate) const DEFAULT_PAGE_ROWS: usize = 100;
 pub(crate) const MAX_PAGE_ROWS: usize = 250;
 
-/// What a reader asked one page for.
 #[derive(Debug)]
 pub(crate) struct Asked {
     pub(crate) window: WindowRequest,
-    /// The window as it was written. A cursor is bound to the words, so a
-    /// page asked for over another window is refused rather than served.
     pub(crate) range: Option<String>,
     pub(crate) bucket: Option<bool>,
     pub(crate) sort: Option<Sort>,
@@ -36,31 +26,24 @@ pub(crate) struct Asked {
     pub(crate) cursor: Option<String>,
 }
 
-/// The column a page is ordered by, and which way.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Sort {
     pub(crate) key: String,
     pub(crate) descending: bool,
 }
 
-/// One column of the page, as far as a reader ordering by or showing it
-/// needs to know.
 #[derive(Debug, Serialize)]
 pub(crate) struct Column {
     pub(crate) key: String,
     pub(crate) kind: ColumnKind,
-    /// Whether its numbers are percentages, which the metric says.
     pub(crate) percent: bool,
     pub(crate) exact: bool,
 }
 
-/// One page of a metric's rows, and how to ask for the next.
 #[derive(Debug)]
 pub(crate) struct Page {
     pub(crate) columns: Vec<Column>,
     pub(crate) rows: Vec<serde_json::Map<String, serde_json::Value>>,
-    /// The order the page is in - always, so a reader that asked for none
-    /// is told what it got.
     pub(crate) sort: Sort,
     pub(crate) next_cursor: Option<String>,
 }
@@ -81,7 +64,6 @@ pub(crate) enum DrilldownError {
     Reserved(String),
 }
 
-/// The rows behind a metric, one page at a time.
 #[derive(Debug)]
 pub(crate) struct Drilldowns<'a> {
     runs: MetricRuns<'a>,
@@ -93,9 +75,6 @@ impl<'a> Drilldowns<'a> {
         Self { runs, runner }
     }
 
-    /// One page of the metric's rows, in the order asked for, over the
-    /// window asked for; and the cursor that continues it, when there is
-    /// more.
     pub(crate) async fn page(
         &self,
         name: &DefinitionId,
@@ -105,8 +84,6 @@ impl<'a> Drilldowns<'a> {
             return Err(DrilldownError::PageSize);
         }
 
-        // A continued walk reads the window its first page resolved, not
-        // the one the same words would resolve to now.
         let resume = asked.cursor.as_deref().map(cursor::decode).transpose()?;
         let window = match &resume {
             Some(envelope) => envelope.window.clone(),
@@ -200,10 +177,6 @@ impl<'a> Drilldowns<'a> {
 }
 
 impl Drilldowns<'_> {
-    /// What a cursor is bound to beside the selection: the table it was read
-    /// from. A warehouse table rebuilt under the same name, or a dataset made
-    /// again, is another table, and a position in the old one means nothing
-    /// in the new.
     async fn snapshot_of(&self, source: &Source) -> Result<String, DrilldownError> {
         match source {
             Source::Table { database, table } => Ok(self
@@ -217,8 +190,6 @@ impl Drilldowns<'_> {
     }
 }
 
-/// The key a cursor holds, once the cursor has proved it was issued over
-/// this very read.
 fn resumed(
     envelope: cursor::Envelope,
     fingerprint: &str,
@@ -236,8 +207,6 @@ fn resumed(
     Ok(envelope.key)
 }
 
-/// The order a page comes in when the reader named none: the metric's own
-/// where it names a column, the first column upward otherwise.
 fn default_sort(own: Option<&(String, bool)>, columns: &[Column]) -> Sort {
     if let Some((key, descending)) = own
         && columns.iter().any(|column| &column.key == key)

@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// ClickHouse database holding the legacy gold serving relations (observations,
-/// evidence, entity cohorts). Single source of truth for the read side so the
-/// deferred `insight` -> `presentation` relocation (#1979) is one atomic flip.
 pub(crate) const GOLD_DATABASE: &str = "insight";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -154,27 +151,12 @@ impl SourceKind {
     }
 }
 
-/// Warehouse relation an observation source reads from, stored as data in
-/// `metric_sources.source_ref` and validated on load. The compile-time gate
-/// is the shape of the name (`<family>_metric_observations` in the `insight`
-/// database); the runtime gate is the schema probe, which checks the actual
-/// columns before the source becomes available. Adding a source is therefore
-/// a dbt model plus registry seed rows — no code change here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservationRelation(String);
 
-/// Inline observation SQL for a `custom_observation_sql` source. Stored on the
-/// source row (`metric_sources.observation_sql`) and wrapped by the compiler as
-/// `FROM (<sql>)`, so it must emit the observation contract columns
-/// (`tenant_id, source_key, entity_type, entity_id, metric_date, measure_key,
-/// observed_at, value, subject_key, dimensions`). Single-SELECT gated on write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomObservationSql(String);
 
-/// Where a metric input reads observations from: a managed gold relation, or
-/// inline custom SQL that emits the same observation contract. Both resolve to
-/// a `FROM` target the compiler wraps its bucketing / tenant filter /
-/// aggregation around unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObservationSource {
     Managed(ObservationRelation),
@@ -193,9 +175,6 @@ pub enum CohortSource {
 pub struct MetricDefinition {
     pub base: MetricBase,
     pub spec: ComputationSpec,
-    /// Post-aggregation `clamp(multiplier * x + offset)` applied to every
-    /// computed value (period, peer, timeseries, breakdown, histogram);
-    /// NULLs pass through untouched.
     pub transform: Option<ValueTransform>,
 }
 
@@ -260,8 +239,6 @@ impl ValueTransform {
 pub struct MetricBase {
     pub key: String,
     pub label: String,
-    /// Compact label for dense surfaces (member grids, heatmap columns);
-    /// None = the full label is already compact enough.
     pub short_label: Option<String>,
     pub description: Option<String>,
     pub explanation: Option<String>,
@@ -284,29 +261,16 @@ pub enum ComputationSpec {
         scale: f64,
         denominator_aggregation: RatioDenominatorAggregation,
     },
-    /// Exact middle of per-event observation values. Median measures emit
-    /// one row per source event (multiple rows per entity/day are the
-    /// intended shape), so the aggregate is over events, not day totals.
     Median {
         value: MetricInput,
     },
-    /// Exact q-quantile of per-event observation values — the tail the median
-    /// hides (p90 duration). Same event-grain observation shape as Median;
-    /// `q` is stored in the definition's `scale` column.
     Percentile {
         value: MetricInput,
         q: f64,
     },
-    /// Sample standard deviation of per-event observation values — the spread
-    /// around the mean. Same event-grain observation shape as Median.
     Stddev {
         value: MetricInput,
     },
-    /// Count of distinct `subject_key` values over the entity's observations
-    /// (e.g. distinct active dates, distinct tools). The measure emits one row
-    /// per subject with the subject stamped on `subject_key`; the aggregate is
-    /// `uniqExact(subject_key)`. Zero-filled like `Sum` — no subjects is a
-    /// genuine zero, not unknown.
     DistinctCount {
         value: MetricInput,
     },
@@ -393,9 +357,6 @@ impl ComputationSpec {
 impl ObservationRelation {
     pub const DATABASE: &'static str = GOLD_DATABASE;
 
-    /// Accepts exactly the managed-observation naming shape:
-    /// lowercase `snake_case` ending in `_metric_observations`, with a
-    /// non-empty family prefix. Anything else is a configuration error.
     pub fn parse(value: &str) -> Option<Self> {
         parse_relation(value, "_metric_observations").map(Self)
     }
@@ -404,8 +365,6 @@ impl ObservationRelation {
         (Self::DATABASE, &self.0)
     }
 
-    /// The stored relation name, as written to `metric_sources.source_ref`.
-    /// Used to group same-source metrics for batched queries.
     pub fn source_ref(&self) -> &str {
         &self.0
     }
@@ -422,10 +381,6 @@ impl CustomObservationSql {
 }
 
 impl ObservationSource {
-    /// The `FROM` target the compiler reads observations from: the qualified
-    /// managed relation (`insight.<relation>`), or the custom SQL wrapped as a
-    /// parenthesized subquery so every predicate/aggregate is applied outside
-    /// it.
     pub fn render_from_clause(&self) -> String {
         match self {
             Self::Managed(relation) => {
@@ -436,9 +391,6 @@ impl ObservationSource {
         }
     }
 
-    /// Stable grouping key for batching metrics that read the same source: the
-    /// managed relation name, or the custom SQL text. Identical custom SQL is
-    /// the same `FROM` and batches; different SQL never collides.
     pub fn source_ref(&self) -> &str {
         match self {
             Self::Managed(relation) => relation.source_ref(),
@@ -670,8 +622,6 @@ mod tests {
         assert_eq!(evidence.table_ref(), ("insight", "ai_metric_evidence"));
         assert_eq!(evidence.source_ref(), "ai_metric_evidence");
 
-        // The cohort source resolves to the same gold database as observations
-        // and evidence — the single flip point for the #1979 relocation.
         assert_eq!(
             CohortSource::MetricEntityCohortsCurrent.table_ref(),
             (GOLD_DATABASE, "metric_entity_cohorts_current")

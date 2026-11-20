@@ -2,24 +2,15 @@ use std::path::Path;
 
 const HIGH_WATERMARK_PCT: u64 = 85;
 const LOW_WATERMARK_PCT: u64 = 65;
-/// A repo must have grown by more than 1/this of its blobless baseline before
-/// a repack is worth its cost.
 const PURGE_MIN_GROWTH_DIVISOR: u64 = 10;
 
-/// What the cache knows about one entry when deciding what to drop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub dir_name: String,
     pub size_bytes: u64,
-    /// Size right after a clone or a purge — the blobless skeleton. Anything
-    /// above it is transient blob weight a purge can reclaim.
     pub skeleton_bytes: u64,
     pub last_accessed_at_epoch_s: u64,
-    /// A repo with readers or a running clone must not be touched.
     pub in_use: bool,
-    /// Promoted out of a partial clone because origin refuses explicit object
-    /// requests. Purging its blobs would strand the entry: they cannot be
-    /// fetched back.
     pub full_clone: bool,
 }
 
@@ -33,11 +24,6 @@ impl Candidate {
     }
 }
 
-/// Bytes held under `dir`, following subdirectories.
-///
-/// Blocking, recursive I/O: call it from `spawn_blocking` on any path where a
-/// large tree is plausible. A path it cannot read counts as zero — a size it
-/// cannot see must not be reported as a breach.
 #[must_use]
 pub fn dir_size(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -57,26 +43,13 @@ pub fn dir_size(dir: &Path) -> u64 {
     total
 }
 
-/// Whether an entry has taken on enough blob weight to be worth a repack.
-///
-/// The single definition of "drifted": the reclaim planner and the post-serve
-/// purge must agree, or one of them repacks entries the other considers fine.
 #[must_use]
 pub fn worth_purging(size_bytes: u64, skeleton_bytes: u64) -> bool {
     skeleton_bytes > 0 && size_bytes > skeleton_bytes + skeleton_bytes / PURGE_MIN_GROWTH_DIVISOR
 }
 
-/// Packs an entry may accumulate before the serve-path purge consolidates
-/// regardless of byte drift. Every page's prefetch writes at least one pack,
-/// and git's object lookup pays a per-pack cost on every invocation — a
-/// backfill of small blobs degrades linearly without ever tripping the byte
-/// threshold. Well under git's own `gc.autoPackLimit` default (50), since
-/// auto-maintenance is disabled on our invocations and this is what replaces
-/// it.
 pub(super) const PACK_CONSOLIDATION_LIMIT: usize = 24;
 
-/// Whether the serve-path purge should repack: byte drift over the skeleton,
-/// or pack-count growth that byte drift cannot see.
 #[must_use]
 pub fn needs_consolidation(size_bytes: u64, skeleton_bytes: u64, packs: usize) -> bool {
     worth_purging(size_bytes, skeleton_bytes) || packs >= PACK_CONSOLIDATION_LIMIT
@@ -116,8 +89,6 @@ mod consolidation_tests {
     }
 }
 
-/// One step of a reclaim plan. Blob purge first — it keeps the repo warm, so
-/// the next sync fetches instead of re-cloning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reclaim {
     PurgeBlobs { dir_name: String, frees: u64 },
@@ -144,15 +115,6 @@ pub struct Budget {
     pub total_bytes: u64,
 }
 
-/// Free bytes on the filesystem backing `path`, from `statvfs`.
-///
-/// The per-entry accounting is a LOWER bound on what the volume holds: it sees
-/// only published entries, never a clone still staging under `tmp/`, and never
-/// anything else sharing the volume. Effective free space is therefore the
-/// minimum of the two views, and this is the second one.
-///
-/// `None` when the syscall fails — a missing view must not be read as "no
-/// space", which would refuse every request.
 #[must_use]
 pub fn volume_available_bytes(path: &Path) -> Option<u64> {
     let stat = rustix::fs::statvfs(path).ok()?;
@@ -163,20 +125,11 @@ pub fn volume_available_bytes(path: &Path) -> Option<u64> {
 }
 
 impl Budget {
-    /// `u64::MAX` is the "no budget" sentinel used by the test constructor.
-    /// An unbounded budget makes every derived figure — watermarks, headroom,
-    /// the volume comparison — meaningless, so callers must ask first.
     #[must_use]
     pub fn is_bounded(self) -> bool {
         self.total_bytes != u64::MAX
     }
 
-    /// Usage as the budget sees it, given both views of free space.
-    ///
-    /// Effective free space is the MINIMUM of the per-entry accounting
-    /// and the volume itself, so effective usage is the maximum of the two.
-    /// The volume view is what notices a clone staging under `tmp/`, or
-    /// another writer on the same mount.
     #[must_use]
     pub fn effective_used(self, accounted: u64, volume_available: Option<u64>) -> u64 {
         let Some(available) = volume_available.filter(|_| self.is_bounded()) else {
@@ -195,25 +148,17 @@ impl Budget {
         self.total_bytes / 100 * LOW_WATERMARK_PCT
     }
 
-    /// Whether `used` has crossed the point where reclaiming starts. Hysteresis
-    /// is the point: reclaim runs to the LOW mark, so the next request does not
-    /// immediately trip the HIGH mark again.
     #[must_use]
     pub fn over_high_watermark(self, used: u64) -> bool {
         used > self.high_watermark()
     }
 
-    /// Bytes to reclaim to get back to the low watermark.
     #[must_use]
     pub fn excess_over_low(self, used: u64) -> u64 {
         used.saturating_sub(self.low_watermark())
     }
 }
 
-/// Order candidates least-recently-used first and pick reclaim steps until
-/// `target_bytes` are freed: blob purges first (cheap, keeps the repo warm),
-/// then whole-entry evictions. In-use entries are never touched — a reader
-/// must never observe a partially deleted repository.
 #[must_use]
 pub fn plan_reclaim(candidates: &[Candidate], target_bytes: u64) -> Vec<Reclaim> {
     if target_bytes == 0 {
@@ -279,8 +224,6 @@ mod tests {
         let budget = Budget {
             total_bytes: 1_000_000,
         };
-        // The volume says 100k free, so 900k is in use — more than the
-        // per-entry accounting can see (a clone staging under tmp/, say).
         assert_eq!(
             budget.effective_used(400_000, Some(100_000)),
             900_000,
@@ -376,8 +319,6 @@ mod tests {
         promoted.full_clone = true;
         let candidates = vec![promoted];
 
-        // Purging would free blobs the origin refuses to serve again, which
-        // would strand the entry: only a whole eviction is safe.
         let plan = plan_reclaim(&candidates, 5_000);
         assert_eq!(
             plan,

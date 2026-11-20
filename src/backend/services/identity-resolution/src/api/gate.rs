@@ -1,10 +1,3 @@
-//! Shared admin gate for the mutating / admin identity-resolution endpoints.
-//!
-//! The caller is the gateway-JWT
-//! subject (`SecurityContext::subject_id`, verified by the host authn pipeline —
-//! `NGINX_BFF` R1), which must hold an active `admin` role in the tenant. Reused
-//! by the persons-seed, roles, person-roles, and visibility endpoints.
-
 use sea_orm::DatabaseConnection;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -13,13 +6,6 @@ use uuid::Uuid;
 use crate::api::error::AccessError;
 use crate::infra::db::roles_repo;
 
-/// Require an identified caller (gateway-JWT subject). Returns the caller
-/// `person_id`, or 401 when the JWT carries no person subject. The baseline gate
-/// for authenticated-but-not-admin endpoints (e.g. subchart).
-///
-/// # Errors
-///
-/// 401 if the JWT carries no person subject.
 pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     let caller = ctx.subject_id();
     if caller.is_nil() {
@@ -27,10 +13,6 @@ pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalErr
             .with_reason("caller not identified: the gateway JWT carries no person subject")
             .create());
     }
-    // A nil tenant reaches here only from a misconfigured token (the gateway JWT
-    // should always carry a real tenant). Surface it as an explicit 400 instead
-    // of silently flowing a nil tenant into every query (→ empty/404), which is
-    // hard to diagnose.
     if ctx.subject_tenant_id().is_nil() {
         return Err(AccessError::failed_precondition()
             .with_precondition_violation(
@@ -43,14 +25,6 @@ pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalErr
     Ok(caller)
 }
 
-/// Resolve the caller (gateway-JWT subject) and require an active `admin` role
-/// in the tenant. Returns the caller `person_id`, or 401 (no subject) / 403
-/// (not admin).
-///
-/// # Errors
-///
-/// 401 if the JWT carries no person subject, 403 if the caller is not an admin,
-/// 500 on DB error.
 pub(crate) async fn require_admin(
     db: &DatabaseConnection,
     ctx: &SecurityContext,
@@ -69,14 +43,6 @@ pub(crate) async fn require_admin(
     Ok(caller)
 }
 
-/// Require a SERVICE principal (gateway JWT `sub_type=service`). Used by the
-/// internal S2S endpoints that run before a tenant/caller identity exists (the
-/// login-bootstrap and `__override` resolve lookups). 403 for any non-service
-/// caller.
-///
-/// # Errors
-///
-/// 403 if the caller is not a service principal.
 pub(crate) fn require_service(ctx: &SecurityContext) -> Result<(), CanonicalError> {
     if ctx.subject_type() != Some("service") {
         return Err(AccessError::permission_denied()
@@ -86,7 +52,6 @@ pub(crate) fn require_service(ctx: &SecurityContext) -> Result<(), CanonicalErro
     Ok(())
 }
 
-/// Whether `caller` holds an active `admin` role in the tenant.
 pub(crate) async fn holds_admin(
     db: &DatabaseConnection,
     ctx: &SecurityContext,

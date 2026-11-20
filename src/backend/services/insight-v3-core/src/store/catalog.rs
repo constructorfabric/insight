@@ -1,10 +1,3 @@
-//! The warehouse catalogue: every table the connected user can see, with its
-//! columns, its engine and the layer its database says it belongs to.
-//!
-//! The datasets database is left out. A dataset is read through its
-//! declaration, never as the table underneath it, so that table is not
-//! offered as something a metric would name.
-
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -15,8 +8,6 @@ use tokio::sync::RwLock;
 #[cfg(test)]
 mod tests;
 
-/// How long one listing serves before the warehouse is asked again. A table
-/// made in between is still readable; it is only not listed yet.
 const CACHE_TTL_SECS: u64 = 5 * 60;
 const READ_TIMEOUT_SECS: u64 = 10;
 
@@ -24,9 +15,6 @@ const BRONZE_PREFIX: &str = "bronze_";
 const SILVER_DATABASE: &str = "silver";
 const IDENTITY_DATABASE: &str = "identity";
 
-/// Every column of every table, in table order, with the engine that holds
-/// the table. The engine's own databases are left out, and so is the one
-/// datasets keep their records in.
 const LIST_COLUMNS: &str = "SELECT c.database AS database, c.table AS table, c.name AS name, c.type AS type, t.engine AS engine
 FROM system.columns AS c
 INNER JOIN system.tables AS t ON t.database = c.database AND t.name = c.table
@@ -34,7 +22,6 @@ WHERE c.database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
   AND c.database != ?
 ORDER BY c.database, c.table, c.position";
 
-/// Which part of the warehouse a table belongs to, read off its database.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Layer {
     Bronze,
@@ -56,30 +43,22 @@ impl Layer {
     }
 }
 
-/// One column, as `system.columns` names and types it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Column {
     pub(crate) name: String,
     pub(crate) kind: String,
 }
 
-/// One table the warehouse holds, with everything a metric author needs to
-/// name it and its columns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TableSchema {
     pub(crate) database: String,
     pub(crate) table: String,
     pub(crate) layer: Layer,
-    /// The engine as `system.tables` spells it, `ReplacingMergeTree` and the
-    /// like, so a reader can tell a table that is read through `FINAL`.
     pub(crate) engine: String,
-    /// In the table's own column order.
     pub(crate) columns: Vec<Column>,
 }
 
 impl TableSchema {
-    /// Whether `database.table`, or a bare table name in any database, means
-    /// this table.
     pub(crate) fn is_named(&self, name: &str) -> bool {
         match name.split_once('.') {
             Some((database, table)) => self.database == database && self.table == table,
@@ -131,8 +110,6 @@ impl Catalog {
         }
     }
 
-    /// A catalogue that already holds these tables and never asks the
-    /// warehouse.
     #[cfg(test)]
     pub(crate) fn fixed(tables: Vec<TableSchema>) -> Self {
         let client = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
@@ -151,13 +128,10 @@ impl Catalog {
         }
     }
 
-    /// Every table the connected user can see, in database and table order.
     pub(crate) async fn tables(&self) -> Result<Vec<TableSchema>, CatalogError> {
         self.read(<[TableSchema]>::to_vec).await
     }
 
-    /// The tables these names mean: `database.table`, or a bare table name,
-    /// which means it in every database that has one.
     pub(crate) async fn describe(
         &self,
         names: &[String],
@@ -172,7 +146,6 @@ impl Catalog {
         .await
     }
 
-    /// One table, if the warehouse has it.
     pub(crate) async fn find(
         &self,
         database: &str,
@@ -187,8 +160,6 @@ impl Catalog {
         .await
     }
 
-    /// Answers `pick` over the cached listing, reloading it once it has aged
-    /// out. Only what `pick` keeps is copied.
     async fn read<T>(&self, pick: impl Fn(&[TableSchema]) -> T) -> Result<T, CatalogError> {
         let ttl = Duration::from_secs(CACHE_TTL_SECS);
         {

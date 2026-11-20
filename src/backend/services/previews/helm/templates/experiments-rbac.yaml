@@ -1,11 +1,3 @@
-# Namespace-scoped RBAC: the service's ServiceAccount may create/list/delete
-# exactly the experiment trio — Deployment/Service/HTTPRoute — and ONLY in the
-# experiments namespace (a Role scopes by its own namespace). No update/patch:
-# the service replaces experiments, it never mutates them in place.
-#
-# INVARIANT: metadata.namespace here and the gear config's `namespace` in
-# configmap.yaml render from the same `experiments.namespace` value — set
-# independently they drift and every create 403s.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

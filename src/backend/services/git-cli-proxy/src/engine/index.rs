@@ -5,53 +5,30 @@ use std::path::{Path, PathBuf};
 use super::page::PageToken;
 use super::read::commits::{CommitKey, parse_instant};
 
-/// One record of the per-generation page index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexRow {
     pub key: CommitKey,
     pub in_default_branch: bool,
 }
 
-/// What one page wants from the index. Mirrors, field for field, the filters
-/// the live walk applies in the API layer — the index is a cache of that walk,
-/// and any semantic daylight between the two is a correctness bug, not a
-/// performance one.
 #[derive(Debug, Clone)]
 pub struct PageQuery {
-    /// Inclusive lower bound as seconds since the epoch. Rows whose
-    /// `committed_date` does not parse are KEPT, exactly as
-    /// `retain_keys_since` keeps them.
     pub since_epoch: Option<i64>,
-    /// Resume strictly after this `(ordinal, sha)` position.
     pub after: Option<PageToken>,
     pub page_size: usize,
-    /// `false` drops merge commits, the `/v1/file-changes` shape.
     pub merges: bool,
-    /// Lowercase hex prefixes; a row is kept when any of them prefixes its
-    /// sha. `None` keeps everything.
     pub sha_prefixes: Option<Vec<String>>,
 }
 
-/// The lines the walks already guarantee cannot contain this byte: `%cI`
-/// dates, hex object ids and a decimal count are all git-generated. This is
-/// NOT the ident separator situation — no attacker-written field is stored.
 const FIELD: char = '\u{1f}';
 const HEADER_V1: &str = "git-cli-proxy page index v1";
 const HEADER: &str = "git-cli-proxy page index v2";
-/// Last line of a v2 index: `count<FIELD><rows>`. The rename can survive a
-/// power loss whose data blocks did not, leaving a file truncated at a line
-/// boundary — every row parses, and pages near the end are silently short.
-/// The trailer is what makes that detectable.
 const TRAILER_TAG: &str = "count";
 
-/// One page of rows plus the cursor to resume after it, `None` when the walk
-/// is complete.
 pub type IndexPage = (Vec<IndexRow>, Option<(String, String)>);
 
-/// Where generation `generation`'s index lives. Under `info/` because git
-/// treats that directory as auxiliary data: `repack` never rewrites it, and
-/// it is measured by the entry's existing size accounting and deleted by the
-/// entry's existing eviction, so the index needs no bookkeeping of its own.
+// Under `info/` because git treats that directory as auxiliary data: `repack`
+// never rewrites it.
 #[must_use]
 pub fn index_path(git_dir: &Path, generation: u64) -> PathBuf {
     git_dir
@@ -59,12 +36,6 @@ pub fn index_path(git_dir: &Path, generation: u64) -> PathBuf {
         .join(format!("page-index-{generation}"))
 }
 
-/// Persist `rows` — already sorted by `(ordinal, sha)` — as the index for
-/// `generation`, atomically, and drop every superseded generation's file.
-///
-/// # Errors
-///
-/// I/O failure writing under `git_dir/info`.
 pub fn write(git_dir: &Path, generation: u64, rows: &[IndexRow]) -> std::io::Result<()> {
     let info = git_dir.join("info");
     std::fs::create_dir_all(&info)?;
@@ -90,9 +61,6 @@ pub fn write(git_dir: &Path, generation: u64, rows: &[IndexRow]) -> std::io::Res
         }
         writeln!(out, "{TRAILER_TAG}{FIELD}{}", rows.len())?;
         out.flush()?;
-        // Flush reaches the OS, not the platter: without this the rename can
-        // be durable while the data is not, and the index survives a power
-        // loss truncated.
         out.get_ref().sync_all()?;
     }
     std::fs::rename(&tmp, &target).inspect_err(|_| {
@@ -103,17 +71,6 @@ pub fn write(git_dir: &Path, generation: u64, rows: &[IndexRow]) -> std::io::Res
     Ok(())
 }
 
-/// One page out of generation `generation`'s index, streamed: peak memory is
-/// the page, never the repository.
-///
-/// `Ok(None)` when no index exists for that generation — the caller falls
-/// back to the live walk, which keeps a warm pre-index entry and a failed
-/// build serving correctly at the old cost.
-///
-/// # Errors
-///
-/// I/O failure reading an index that exists; a malformed file is reported the
-/// same way rather than served partially.
 pub fn read_page(
     git_dir: &Path,
     generation: u64,
@@ -129,7 +86,6 @@ pub fn read_page(
 
     let trailer_expected = match lines.next() {
         Some(Ok(header)) if header == HEADER => true,
-        // A v1 index carries no trailer, so its tail cannot be verified.
         Some(Ok(header)) if header == HEADER_V1 => false,
         Some(Err(e)) => return Err(e),
         _ => return Err(std::io::Error::other("unrecognised page index header")),
@@ -176,10 +132,6 @@ pub fn read_page(
         selected.push(row);
     }
 
-    // Only a page that ran to the end concluded anything from the file's
-    // tail; a truncated tail must fail it rather than read as "walk
-    // complete". The file is dropped so the next fetch rebuilds it — the
-    // no-op-fetch guard skips rebuilding while a file exists.
     if trailer_expected && !more && !trailer_ok {
         let _ = std::fs::remove_file(&path);
         return Err(std::io::Error::other(
@@ -197,7 +149,6 @@ pub fn read_page(
     Ok(Some((selected, cursor)))
 }
 
-/// The shas among `rows` recorded as reachable from the default branch.
 #[must_use]
 pub fn membership_of(rows: &[IndexRow]) -> HashSet<String> {
     rows.iter()
@@ -330,8 +281,6 @@ mod tests {
 
         assert!(!index_path(&dir, 1).is_file(), "generation 1 must be gone");
         assert!(index_path(&dir, 2).is_file());
-        // A continuation pinned to the old generation gets the fallback
-        // signal; the store's generation check has already 409'd it anyway.
         assert!(matches!(read_page(&dir, 1, &everything()), Ok(None)));
         let _ = std::fs::remove_dir_all(&dir);
     }

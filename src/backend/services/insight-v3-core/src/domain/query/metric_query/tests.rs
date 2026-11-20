@@ -427,8 +427,6 @@ fn a_json_clock_reads_a_missing_key_as_no_clock_rather_than_a_failure() {
     );
 }
 
-/// Whether a run has a date to bucket by is the caller's to say: a metric
-/// over a dataset may inherit one the body never names.
 #[test]
 fn only_a_clocked_run_exposes_the_injected_bucket_column() {
     let metric = timed_metric(&json!({ "column": "occurred_at" }));
@@ -452,8 +450,6 @@ fn merged_by_author(person: &str) -> MetricQuery {
 
 #[test]
 fn a_field_aggregates_only_what_its_own_condition_matches() {
-    // A rate's two halves live in one column, told apart by another: the
-    // numerator and the denominator cannot each have their own query.
     let metric = query(json!({
         "database": "insight",
         "table": "ci_metric_observations",
@@ -530,7 +526,6 @@ fn a_ratio_divides_two_of_the_querys_own_fields() {
         .compile(&people())
         .unwrap_or_else(|error| panic!("compiles: {error}"));
 
-    // nullIf, so a denominator of zero is no rate rather than an error.
     assert!(
         compiled
             .sql
@@ -565,7 +560,6 @@ fn a_ratio_can_read_as_a_percentage() {
         "{}",
         compiled.sql
     );
-    // Named, so whoever draws 83.9 can draw 83.9% instead.
     assert_eq!(compiled.percents, ["share"]);
 }
 
@@ -611,8 +605,6 @@ fn a_ratio_naming_a_field_that_is_not_there_is_refused() {
 
 #[test]
 fn a_ratio_reading_a_field_declared_after_it_is_refused() {
-    // The alias only exists once it has been selected, so the order in the
-    // field list is the order the SQL can resolve.
     let metric = query(json!({
         "table": "events",
         "fields": [
@@ -650,8 +642,6 @@ fn a_ratio_needs_exactly_two_fields_to_divide() {
 
 #[test]
 fn a_field_condition_binds_before_the_query_wide_filters() {
-    // The select list comes before the WHERE clause, so its values bind
-    // first or every placeholder after it takes the wrong one.
     let metric = query(json!({
         "database": "insight",
         "table": "ci_metric_observations",
@@ -708,8 +698,6 @@ fn a_person_column_selects_the_name_identity_knows() {
 
 #[test]
 fn the_latest_name_wins_before_anything_joins_to_it() {
-    // A person carries a row per name they have ever had. Joining those
-    // rows directly multiplies every fact by that history.
     let compiled = merged_by_author("email")
         .compile(&people())
         .unwrap_or_else(|error| panic!("compiles: {error}"));
@@ -760,7 +748,6 @@ fn a_query_that_names_no_person_joins_nothing() {
 
 #[test]
 fn a_person_id_is_compared_as_text() {
-    // The same column is a UUID in one table and a String in the next.
     let compiled = query(json!({
         "table": "silver.class_git_pull_requests",
         "fields": [
@@ -924,9 +911,6 @@ fn an_identifier_outside_the_charset_is_refused() {
 
 #[test]
 fn ordering_by_a_selected_value_beats_the_grouping_order() {
-    // "Which author changed the most lines" is unanswerable without
-    // this: ordering by the grouped column returns whoever sorts first
-    // alphabetically, and the reply presents it as the largest.
     let metric = query(json!({
         "table": "events",
         "fields": [
@@ -948,7 +932,6 @@ fn ordering_by_a_selected_value_beats_the_grouping_order() {
         "{}",
         compiled.sql
     );
-    // One ORDER BY, not the grouping's as well.
     assert_eq!(
         compiled.sql.matches("ORDER BY").count(),
         1,
@@ -997,8 +980,6 @@ fn ordering_by_a_column_the_query_does_not_select_is_refused() {
 
 #[test]
 fn counting_rows_needs_no_column() {
-    // "How many rows are in this table" is the first thing anyone asks,
-    // and it reads no value.
     let metric = query(json!({
         "table": "bronze_github.commits",
         "fields": [{ "agg": "count", "type": "int", "as_name": "rows" }],
@@ -1039,7 +1020,6 @@ fn counting_one_column_still_names_it() {
 
 #[test]
 fn an_aggregate_that_is_not_count_still_needs_a_source() {
-    // sum() of nothing is not a question.
     let metric = query(json!({
         "table": "events",
         "fields": [{ "agg": "sum", "type": "int", "as_name": "total" }],
@@ -1055,8 +1035,6 @@ fn an_aggregate_that_is_not_count_still_needs_a_source() {
 
 #[test]
 fn a_table_written_with_its_database_is_read_as_both() {
-    // The map and the lookup tool both address a table as
-    // `database.table`, so the model writes it that way.
     let metric = query(json!({
         "table": "bronze_github.commits",
         "fields": [{ "column": "sha", "type": "string", "as_name": "sha" }],
@@ -1098,8 +1076,6 @@ fn a_database_field_wins_over_a_qualified_table() {
 
 #[test]
 fn a_table_with_two_dots_is_still_refused() {
-    // Splitting only rescues the one shape the model writes; anything
-    // else stays whole and fails the identifier check.
     let metric = query(json!({
         "table": "a.b.c",
         "fields": [{ "column": "x", "type": "string", "as_name": "x" }],
@@ -1229,9 +1205,6 @@ fn a_count_is_typed_as_a_whole_number_whatever_its_field_declares() {
     }
 }
 
-/// A reader is told which columns hold numbers by `column_kinds`; the runner
-/// decides which quoted cells to parse by `column_types`. The two must say the
-/// same thing, or a column advertised as a number arrives as text.
 #[test]
 fn column_types_number_exactly_the_columns_column_kinds_calls_numbers() {
     let metric = query(json!({
@@ -1642,8 +1615,6 @@ fn paged(value: serde_json::Value) -> CompiledQuery {
         .unwrap_or_else(|error| panic!("compiles paged: {error}"))
 }
 
-/// The reader paging the result cuts it; a cut inside would hide rows from
-/// every page after the first.
 #[test]
 fn a_paged_read_of_a_metric_with_no_limit_of_its_own_is_neither_ordered_nor_cut() {
     let compiled = paged(json!({
@@ -1659,10 +1630,6 @@ fn a_paged_read_of_a_metric_with_no_limit_of_its_own_is_neither_ordered_nor_cut(
     assert!(!compiled.sql.contains(" LIMIT "), "{}", compiled.sql);
 }
 
-/// A limit the author wrote is part of what the metric means - the top
-/// fifty, not the first fifty of whatever order the page asked for - so it
-/// stays, and the order behind it is made total so every page cuts the same
-/// fifty.
 #[test]
 fn a_paged_read_keeps_an_authored_limit_behind_a_total_order() {
     let compiled = paged(json!({
@@ -1783,8 +1750,6 @@ fn column_kinds_follow_what_each_column_holds() {
     );
 }
 
-/// Two records that agree in every selected column are still two records,
-/// and a reader paging by position has to be able to tell them apart.
 #[test]
 fn a_paged_plain_read_over_a_dataset_carries_the_records_id_beside_the_columns() {
     let declaration: crate::domain::kinds::dataset::declaration::Declaration =
@@ -1832,8 +1797,6 @@ fn a_paged_plain_read_over_a_dataset_carries_the_records_id_beside_the_columns()
     assert!(paged_grouped.hidden().is_empty());
 }
 
-/// The cut inside the metric has to fall between the same two records every
-/// time, or a walk of it would see a different fifty on every page.
 #[test]
 fn an_authored_limit_over_a_dataset_cuts_behind_the_records_id() {
     let declaration: crate::domain::kinds::dataset::declaration::Declaration =
@@ -1866,8 +1829,6 @@ fn an_authored_limit_over_a_dataset_cuts_behind_the_records_id() {
     );
 }
 
-/// The twin number is written by whoever pages the result, outside this
-/// query; an inner order naming it would name a column that is not there.
 #[test]
 fn an_authored_limit_over_a_table_orders_by_its_columns_and_never_by_the_twin_number() {
     let compiled = paged(json!({
@@ -1892,9 +1853,6 @@ fn an_authored_limit_over_a_table_orders_by_its_columns_and_never_by_the_twin_nu
     );
 }
 
-/// Over a dataset a plain read's kind follows the declaration, so the runner
-/// must parse its quoted cells by the declaration too, whatever `type` the
-/// metric wrote beside the field.
 #[test]
 fn over_a_dataset_column_types_follow_the_declaration_as_column_kinds_do() {
     let declaration: crate::domain::kinds::dataset::declaration::Declaration =

@@ -1,20 +1,3 @@
-//! Audit event emitter (PRD `nfr-auth-audit`, DESIGN §3.2 "Audit Emitter").
-//!
-//! Every auth-relevant action lands on the platform audit topic
-//! (`insight.audit.events`, Redpanda) with the platform envelope (backend
-//! DESIGN §3.8: JSON, versioned, `tenant_id` + `timestamp` +
-//! `correlation_id` on every message; field set mirrors the Audit Service's
-//! ClickHouse `insight_audit.events` schema). The Audit Service consumes and
-//! stores; this side only publishes.
-//!
-//! Publishing is strictly non-blocking for the auth paths: `emit` drops the
-//! event into a bounded channel and returns; a background task owns the
-//! rdkafka producer. A full channel or a broker outage drops events (counted
-//! by `auth_audit_dropped_total`) — auth availability is never coupled to
-//! Redpanda availability. With no brokers configured the emitter is disabled
-//! (dev stacks without Redpanda), and events still appear in the structured
-//! log via the existing `target: "audit"` lines at the call sites.
-
 use opentelemetry::metrics::Counter;
 use rdkafka::ClientConfig;
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
@@ -23,41 +6,24 @@ use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-/// The audit envelope version tag.
 const SCHEMA: &str = "insight.audit.event.v1";
-/// Producer-side delivery timeout per event.
 const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-/// Bounded queue between auth paths and the producer task.
 const QUEUE_DEPTH: usize = 1024;
 
-/// One auth audit event, as produced by the call sites. The emitter wraps it
-/// in the platform envelope (event id, timestamp, service, category, schema).
 #[derive(Debug)]
 pub struct AuditEvent {
-    /// `login`, `session_refresh`, `logout`, `session_revoke`,
-    /// `back_channel_logout`, `idp_refresh_invalid_grant`,
-    /// `service_token_issued`, …
     pub action: &'static str,
-    /// `success` | `failure`.
     pub outcome: &'static str,
-    /// The signed tenant (empty when unresolved, e.g. a failed login).
     pub tenant_id: String,
-    /// Internal person id (empty for service principals / failed logins).
     pub actor_person_id: String,
     pub actor_ip: String,
     pub actor_user_agent: String,
-    /// Request correlation id (gateway `X-Correlation-Id`); empty → the
-    /// envelope's `event_id` doubles as the correlation id.
     pub correlation_id: String,
-    /// `session`, `service_token`, …
     pub resource_type: &'static str,
-    /// Stable id of the acted-on resource (session_id, service name, …).
     pub resource_id: String,
-    /// Free-form context (reason codes, counts) — serialized into `details`.
     pub details: serde_json::Value,
 }
 
-/// The wire envelope (JSON) — field names mirror the Audit Service schema.
 #[derive(Debug, Serialize)]
 struct Envelope {
     schema: &'static str,
@@ -77,11 +43,6 @@ struct Envelope {
     details: String,
 }
 
-/// Best-effort: create the audit topic with `retention.ms` set, so its on-disk
-/// log is bounded while no consumer drains it. If the topic already exists this
-/// is a no-op (`TopicAlreadyExists` is expected and ignored) — we intentionally
-/// do NOT alter an existing topic's config. Any admin/transport error is logged
-/// and swallowed; auth never depends on this.
 async fn ensure_topic_retention(brokers: &str, topic: &str, retention_ms: u64) {
     let admin: AdminClient<DefaultClientContext> = match ClientConfig::new()
         .set("bootstrap.servers", brokers)
@@ -122,7 +83,6 @@ async fn ensure_topic_retention(brokers: &str, topic: &str, retention_ms: u64) {
     }
 }
 
-/// Build the platform envelope for one event (pure; unit-tested).
 fn envelope(event: &AuditEvent, event_id: String, timestamp: String) -> Envelope {
     let correlation_id = if event.correlation_id.is_empty() {
         event_id.clone()
@@ -148,7 +108,6 @@ fn envelope(event: &AuditEvent, event_id: String, timestamp: String) -> Envelope
     }
 }
 
-/// Cheap-to-clone handle; the producer lives in the background task.
 #[derive(Clone)]
 pub struct AuditEmitter {
     tx: Option<mpsc::Sender<AuditEvent>>,
@@ -156,12 +115,6 @@ pub struct AuditEmitter {
 }
 
 impl AuditEmitter {
-    /// Build the emitter. Empty `brokers` = disabled (a no-op handle).
-    ///
-    /// # Errors
-    /// Fails when the Kafka producer cannot be constructed from the config
-    /// (malformed broker list) — a misconfigured audit sink should fail the
-    /// gear at boot, not silently drop every event.
     pub fn new(brokers: &str, topic: &str, retention_ms: u64) -> anyhow::Result<Self> {
         let meter = opentelemetry::global::meter("authenticator.audit");
         let dropped = meter
@@ -182,20 +135,10 @@ impl AuditEmitter {
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", brokers)
             .set("message.timeout.ms", "5000")
-            // Audit is compliance data: require the leader ack, retry inside
-            // the client, keep ordering per key.
             .set("acks", "1")
             .create()
             .map_err(|e| anyhow::anyhow!("build audit producer for '{brokers}': {e}"))?;
 
-        // Bound the topic's on-disk growth. There is NO consumer yet (the Audit
-        // Service that drains → ClickHouse is spec'd but unbuilt), so events
-        // would otherwise pile up at the cluster-default retention. We create
-        // the topic with a short retention (default 1 day) — accepted data loss
-        // until the consumer exists. Best-effort + spawned: never blocks or
-        // fails auth boot, and if the topic already exists (or admin is denied)
-        // it's a harmless no-op (we do NOT alter an existing topic's config,
-        // to avoid clobbering infra-managed settings).
         if retention_ms > 0 {
             let brokers_owned = brokers.to_owned();
             let topic_owned = topic.to_owned();
@@ -218,14 +161,11 @@ impl AuditEmitter {
                 let payload = match serde_json::to_vec(&env) {
                     Ok(p) => p,
                     Err(e) => {
-                        // Count + log like every other drop path, so a
-                        // malformed event still moves auth_audit_dropped_total.
                         dropped_in_task.add(1, &[]);
                         tracing::warn!(target: "audit", error = %e, action = env.action, "audit event serialization failed (dropped)");
                         continue;
                     }
                 };
-                // Key by tenant: per-tenant ordering, balanced partitions.
                 let record = FutureRecord::to(&topic)
                     .key(&env.tenant_id)
                     .payload(&payload);
@@ -242,7 +182,6 @@ impl AuditEmitter {
         })
     }
 
-    /// A disabled emitter (tests / tooling).
     #[cfg(test)]
     #[must_use]
     pub fn disabled() -> Self {
@@ -253,7 +192,6 @@ impl AuditEmitter {
         }
     }
 
-    /// Queue one event; never blocks and never fails the caller.
     pub fn emit(&self, event: AuditEvent) {
         let Some(tx) = &self.tx else { return };
         if let Err(e) = tx.try_send(event) {
@@ -313,9 +251,7 @@ mod tests {
         assert_eq!(json["schema"], SCHEMA);
         assert_eq!(json["service"], "authenticator");
         assert_eq!(json["category"], "auth");
-        // No explicit correlation id → the event id doubles as one.
         assert_eq!(json["correlation_id"], "evt-1");
-        // details is a JSON *string* (the ClickHouse column is String).
         assert!(json["details"].is_string());
     }
 

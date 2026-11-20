@@ -1,8 +1,3 @@
-//! Identity client.
-//!
-//! Calls the Identity service to resolve which persons the caller may see.
-//! Used by the person-visibility gate on the metric-result surfaces.
-
 use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
@@ -15,18 +10,13 @@ pub(crate) use people::RosterPerson;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Request body of the identity service's `POST /v1/visible-persons`
-/// (canonical person UUIDs since the identity cutover).
 #[derive(Debug, Serialize)]
 struct VisiblePersonsRequest<'a> {
     person_ids: &'a [Uuid],
 }
 
-/// Response body of `POST /v1/visible-persons`.
 #[derive(Debug, Deserialize)]
 struct VisiblePersonsResponse {
-    // INVARIANT: no serde default — a 200 omitting this field is a contract
-    // mismatch, and an empty set here would deny every caller.
     visible: Vec<Uuid>,
 }
 
@@ -56,8 +46,6 @@ pub(crate) struct IdentityProfileRelationship {
     pub(crate) attributes: BTreeMap<String, String>,
 }
 
-/// The seeded `admin` role id — a stable migration constant of the identity
-/// service, mirrored here so a role check needs no extra round trip.
 const ADMIN_ROLE_ID: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
 
 #[derive(Debug, serde::Deserialize)]
@@ -70,7 +58,6 @@ struct MeRole {
     role_id: Uuid,
 }
 
-/// Identity API client.
 #[derive(Clone)]
 pub struct IdentityClient {
     base_url: String,
@@ -78,12 +65,6 @@ pub struct IdentityClient {
 }
 
 impl IdentityClient {
-    /// Create a new client. `base_url` is the identity service root,
-    /// e.g. `http://insight-identity-resolution:8082`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the HTTP client cannot be built.
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
@@ -127,11 +108,6 @@ impl IdentityClient {
         Ok(batch.profiles)
     }
 
-    /// Whether the caller holds the active `admin` identity role.
-    ///
-    /// The role lives in the identity service's `person_roles`, not in the
-    /// gateway JWT — the `roles` claim carries realm roles, which no identity
-    /// endpoint reads.
     pub(crate) async fn is_admin(&self, authorization: Option<&str>) -> anyhow::Result<bool> {
         let url = format!("{}/v1/me", self.base_url);
 
@@ -141,8 +117,6 @@ impl IdentityClient {
         Ok(me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID))
     }
 
-    /// Forward the caller's authorization, if the gateway supplied one, and
-    /// fail loudly on anything but success.
     async fn send(
         req: reqwest::RequestBuilder,
         authorization: Option<&str>,
@@ -161,7 +135,6 @@ impl IdentityClient {
         Ok(resp)
     }
 
-    /// Check if the identity service is configured (URL is non-empty).
     #[must_use]
     pub fn is_configured(&self) -> bool {
         !self.base_url.is_empty()
@@ -179,7 +152,6 @@ mod tests {
     use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
     use axum::routing::post;
 
-    /// What the loopback identity observed: forwarded Authorization + request body.
     type Seen = Arc<Mutex<Option<(Option<String>, serde_json::Value)>>>;
 
     async fn spawn_visible_persons(status: StatusCode, body: serde_json::Value) -> (String, Seen) {

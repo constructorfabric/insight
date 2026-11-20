@@ -24,8 +24,6 @@ GEARS_SERVICES = {
     "previews",
 }
 
-# Minimum count of platform-ConfigMap-sourced INSIGHT_LOG_LEVEL env entries per
-# ingestion template; airbyte-sync carries one in each of its two step scripts.
 INGESTION_TEMPLATES = {
     "insight/templates/ingestion/reconcile-cron.yaml": 1,
     "insight/templates/ingestion/dbt-run.yaml": 1,
@@ -40,8 +38,6 @@ INGESTION_ENABLED = [
     "ingestion.toolboxImage=ghcr.io/example/insight-toolbox:0.0.0-test",
 ]
 
-# `render` templates the release as "contract-test", so the platform ConfigMap
-# the env entries must reference is contract-test-platform.
 PLATFORM_KEY_REF = re.compile(
     r"- name: INSIGHT_LOG_LEVEL\s*\n"
     r"\s*valueFrom:\s*\n"

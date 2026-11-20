@@ -17,10 +17,6 @@ pub(super) const MAX_PAGE_LIMIT: usize = 250;
 pub(super) const MAX_PERIOD_DAYS: i64 = 400;
 pub(super) const MAX_FILTERS: usize = 10;
 pub(super) const MAX_DISPLAY_DIMENSIONS: usize = 10;
-/// People one selection may read at once. An org rollup card is the caller
-/// that needs more than one, and a roster is the size of a company, not of a
-/// tenant's whole history — a request past this is a client bug, not a bigger
-/// team.
 pub(super) const MAX_ENTITY_PERSONS: usize = 1_000;
 pub(super) const MAX_FILTER_VALUES: usize = 100;
 pub(super) const MAX_FILTER_VALUE_BYTES: usize = 512;
@@ -64,9 +60,6 @@ impl MetricDrilldownEntity {
         }
     }
 
-    /// Every person this selection reads, one or many — what the query binds
-    /// and what the visibility gate checks. Empty for tenant evidence, which
-    /// keys on the tenant itself.
     pub(crate) fn person_ids(&self) -> &[String] {
         match self {
             Self::Person { id } => std::slice::from_ref(id),
@@ -159,8 +152,6 @@ pub struct MetricDrilldownColumn {
     pub sortable: bool,
 }
 
-/// Names for the people a roster read resolved, keyed by person id. Empty for
-/// every selection that does not present the `person` column.
 pub type PersonNames = BTreeMap<String, String>;
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -189,8 +180,6 @@ pub struct MetricDrilldownResponse {
 }
 
 impl MetricDrilldownResponse {
-    /// The page a not-ready relation answers: the selection and the columns it
-    /// would present, no rows, and the marker saying why.
     pub(crate) fn not_ready(
         selection: MetricDrilldownSelection,
         columns: Vec<MetricDrilldownColumn>,
@@ -253,19 +242,12 @@ mod tests {
     }
 }
 
-/// A drilldown request that passed validation, or the reason the warehouse
-/// cannot answer it from data yet.
-///
-/// INVARIANT: readiness is read AFTER the request's own shape, so a malformed
-/// request is still refused on a fresh install rather than answered empty.
 #[derive(Debug)]
 pub enum ValidatedDrilldown {
     Ready(Box<ValidatedMetricDrilldown>),
     NotReady(Box<NotReadyDrilldown>),
 }
 
-/// What a not-ready answer still presents: what was asked, the columns it
-/// would have carried, and why it carries no records.
 #[derive(Debug)]
 pub struct NotReadyDrilldown {
     pub plan: EvidencePlan,
@@ -278,16 +260,11 @@ pub struct NotReadyDrilldown {
 pub struct ValidatedMetricDrilldown {
     pub selection: MetricDrilldownSelection,
     pub tenant_id: uuid::Uuid,
-    /// Same runtime policy switch as metric-results (#1967): the evidence read
-    /// leads with `tenant_id = ?` when set, degrades to match-all otherwise.
     pub enforce_tenant_scope: bool,
     pub from: NaiveDate,
     pub to: NaiveDate,
     pub limit: usize,
     pub cursor: Option<CursorKey>,
-    /// People whose name the search matches. The reader searches the `Who`
-    /// column by name; the query holds an id, so the handler reads the names
-    /// it already resolved back into ids the predicate can compare.
     pub search_person_ids: Vec<String>,
     pub plan: EvidencePlan,
     pub snapshot_id: String,
@@ -306,8 +283,6 @@ pub struct EvidencePlan {
 pub struct EvidenceInput {
     pub role: MetricInputRole,
     pub measure_key: String,
-    /// Must match the rule the metric being explained applied, or the drilldown
-    /// shows a different ratio than the tile it was opened from.
     pub alias_collapse: AliasCollapse,
     pub presentation: EvidencePresentation,
 }
@@ -315,15 +290,9 @@ pub struct EvidenceInput {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvidenceQueryRow {
     pub role: String,
-    /// The person the identity map resolves this row to, empty unless the
-    /// selection reads a roster and the column is presented.
     pub person_id: String,
-    /// Ordering key of the row, in the two parts the cursor replays: whether
-    /// the sorted cell is blank, and the cell itself as text.
     pub sort_flag: u8,
     pub sort_value: String,
-    /// Source identity the row was recorded under; closes the ordering key when
-    /// two of a person's identities tie on every other column.
     pub entity_id: String,
     pub metric_date: String,
     pub observed_at: String,

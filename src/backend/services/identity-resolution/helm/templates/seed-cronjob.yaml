@@ -1,26 +1,4 @@
 {{- if .Values.seed.enabled }}
-# Scheduled persons-seed (#1690): rebuilds the identity org projection
-# (`persons` / `org_chart`) from ClickHouse
-# `identity.identity_inputs` so ingested manager/org changes reach the Team
-# view — the projection is materialized and only a seed run refreshes it.
-# The run publishes the refreshed log into ClickHouse
-# `identity.identity_persons` as its own final step, so no separate sync job
-# exists. The ingestion pipeline also runs a seed after every connector sync;
-# this schedule is the backstop for what event-driven publishing cannot carry
-# (a pod that died before its spawned publish ran). It runs with the same
-# tolerance flags as the pipeline step — a busy lock or an input-guard
-# refusal is a WARN and a journal row, not a red CronJob: refusals are read
-# over GET /v1/persons-seed?status=failed, and a backstop that is red on
-# healthy stands trains everyone to ignore it.
-#
-# Same image/config/secret wiring as the deployment; the `seed` subcommand
-# runs one seed and exits (exit codes: 0 ok / 1 failed / 2 lock busy /
-# 3 input guard). Runs serialize on a per-tenant MariaDB advisory lock, so
-# `concurrencyPolicy: Forbid` is belt-and-braces for cron-vs-cron only —
-# manual Jobs and other Insight instances are serialized by the lock itself.
-#
-# Manual run:
-#   kubectl create job --from=cronjob/{{ include "insight-identity-resolution.fullname" . }}-seed seed-manual-$USER
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -35,16 +13,10 @@ spec:
   failedJobsHistoryLimit: {{ .Values.seed.failedJobsHistoryLimit }}
   jobTemplate:
     spec:
-      # A couple of retries for transient connect blips; the advisory lock +
-      # the operations journal make a repeated run safe. The deadline caps a
-      # wedged pod well past the in-binary 10-minute seed timeout.
       backoffLimit: 2
       activeDeadlineSeconds: 900
       template:
         metadata:
-          # NOT the shared selectorLabels: the Service selects on
-          # name+instance alone, and a seed pod carrying them would enter the
-          # Service's endpoints (it listens on nothing).
           labels:
             app.kubernetes.io/name: identity-resolution-seed
             app.kubernetes.io/instance: {{ .Release.Name }}
@@ -79,15 +51,9 @@ spec:
                 - name: data
                   mountPath: /app/data
               envFrom:
-                # Umbrella observability contract (OTEL_* / APP__opentelemetry__*):
-                # the seed job runs outside the server bootstrap and installs its
-                # own meter provider (#2891), so it needs the same export config
-                # the deployment gets. Optional so standalone installs schedule.
                 - configMapRef:
                     name: {{ .Release.Name }}-platform
                     optional: true
-                # Same Secret as the deployment: database_url, clickhouse_*,
-                # tenant_default_id — everything the seed needs.
                 - secretRef:
                     name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
               {{- with .Values.seed.tenantDefaultId }}

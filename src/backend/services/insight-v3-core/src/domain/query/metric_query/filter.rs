@@ -1,5 +1,3 @@
-//! A condition a metric keeps rows by, and the value bound into it.
-
 use serde::Deserialize;
 
 use super::MetricQueryError;
@@ -8,8 +6,6 @@ use super::over::Over;
 use crate::domain::kinds::dataset::declaration::FieldType as DeclaredType;
 use crate::domain::kinds::dataset::read::Form;
 
-/// How a bound value is written into the condition, so a moment reads back
-/// as the same instant the record's own value was parsed into.
 fn placeholder(declared: DeclaredType) -> &'static str {
     match declared {
         DeclaredType::Datetime => "parseDateTime64BestEffortOrNull(?, 3, 'UTC')",
@@ -19,7 +15,6 @@ fn placeholder(declared: DeclaredType) -> &'static str {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Filter {
-    /// The declared field of the dataset this compares.
     #[serde(default, rename = "field")]
     pub(super) declared: Option<String>,
     #[serde(default)]
@@ -32,13 +27,10 @@ pub(super) struct Filter {
 }
 
 impl Filter {
-    /// The declared field this compares, when it names one.
     pub(super) fn reads(&self) -> Option<&str> {
         self.declared.as_deref()
     }
 
-    /// Where this condition addresses a record itself rather than naming a
-    /// declared field.
     pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
         if self.json.is_some() {
             into.push((format!("{at}.json"), "json"));
@@ -53,12 +45,6 @@ impl Filter {
             .ok_or_else(|| MetricQueryError::FieldSource("a filter".to_owned()))
     }
 
-    /// The whole condition: what this filter reads, the comparison, and the
-    /// value bound against it.
-    ///
-    /// Over a dataset the declaration decides the type, because that is what
-    /// the record was read as; the metric's own `type` describes the legacy
-    /// relation only.
     pub(super) fn predicate(
         &self,
         over: Option<Over<'_>>,
@@ -67,9 +53,6 @@ impl Filter {
         let operator = self.op.sql();
 
         if let Some(over) = over {
-            // Raw: a substitute is what a reader is shown, never what a
-            // condition is judged against, or filtering on the substitute
-            // would match every record that carries no value at all.
             let read = over.read_as(self.declared.as_deref(), "a filter", qualifier, Form::Raw)?;
             let declared = over.type_of(self.declared.as_deref(), "a filter")?;
             let named = self.declared.as_deref().unwrap_or("a filter");
@@ -87,15 +70,12 @@ impl Filter {
         Ok((format!("{read} {operator} ?"), self.bind(source)?))
     }
 
-    /// The value as the declared type takes it.
     fn declared_bind(
         &self,
         declared: DeclaredType,
         named: &str,
     ) -> Result<FilterBind, MetricQueryError> {
         match declared {
-            // A moment is bound as the text it was written in and parsed by
-            // the warehouse, the same way the record's own value is.
             DeclaredType::String | DeclaredType::Datetime => {
                 self.value.as_str().map(|v| FilterBind::Str(v.to_owned()))
             }
@@ -140,7 +120,6 @@ impl FilterOp {
     }
 }
 
-/// A filter value, bound as the type the dataset declares the field to be.
 #[derive(Debug, Clone)]
 pub(crate) enum FilterBind {
     Str(String),
@@ -165,14 +144,11 @@ impl FilterBind {
             Self::Str(value) => query.bind(value),
             Self::Int(value) => query.bind(value),
             Self::Float(value) => query.bind(value),
-            // `Bool` is the warehouse's own one-byte number.
             Self::Bool(value) => query.bind(u8::from(*value)),
         }
     }
 }
 
-/// Compares against the string form the compiler's tests assert, without
-/// stringifying the value the query is actually bound with.
 #[cfg(test)]
 impl PartialEq<String> for FilterBind {
     fn eq(&self, other: &String) -> bool {

@@ -1,8 +1,3 @@
-//! Taking a record into a dataset.
-//!
-//! A record lands whole and unread: what the fields of it mean is the
-//! declaration's business, and it says so at read time, not now.
-
 use serde_json::Value;
 use thiserror::Error;
 
@@ -11,7 +6,6 @@ use super::definition::DefinitionId;
 use super::kinds::dataset::state::DatasetState;
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables};
 
-/// Where records sent to a dataset go.
 #[derive(Debug)]
 pub(crate) struct DatasetIngest<'a> {
     datasets: &'a dyn Datasets,
@@ -23,12 +17,6 @@ impl<'a> DatasetIngest<'a> {
         Self { datasets, tables }
     }
 
-    /// Stores one record in the dataset's table.
-    ///
-    /// The dataset is read without holding its row: a write per record cannot
-    /// wait on a lock a removal might be holding. A removal that wins the race
-    /// leaves no table, and the record is then refused rather than accepted —
-    /// a record that reached no table was not stored.
     pub(crate) async fn receive(
         &self,
         name: &DefinitionId,

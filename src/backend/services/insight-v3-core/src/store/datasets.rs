@@ -1,5 +1,3 @@
-//! The dataset rows as `MariaDB` holds them.
-
 #[cfg(test)]
 pub(crate) mod memory;
 
@@ -19,28 +17,18 @@ use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 use crate::store::like_escaped;
 
 const SELECT_ROW: &str = "SELECT name, body, state, physical_table, operation, operation_token, lease_until, updated_at FROM datasets WHERE name = ?";
-/// The same read, holding the row: a second writer of this dataset waits
-/// rather than acting on a state that is about to change.
 const SELECT_ROW_HELD: &str = "SELECT name, body, state, physical_table, operation, operation_token, lease_until, updated_at FROM datasets WHERE name = ? FOR UPDATE";
 const SELECT_NAMES: &str = "SELECT name FROM datasets ORDER BY name";
-/// The catalogue's read: only what a reader may open, searched over the name
-/// and the declaration, because "which dataset holds this field" is the
-/// question a catalogue is asked.
 const PAGE_ROWS: &str = "SELECT name, body, state, physical_table, operation, operation_token, lease_until, updated_at FROM datasets WHERE state = ? AND (name LIKE ? ESCAPE '\\\\' OR body LIKE ? ESCAPE '\\\\') ORDER BY name LIMIT ? OFFSET ?";
 const COUNT_MATCHES: &str = "SELECT COUNT(*) AS total FROM datasets WHERE state = ? AND (name LIKE ? ESCAPE '\\\\' OR body LIKE ? ESCAPE '\\\\')";
-/// One clock for every lease, so two servers cannot disagree about whether
-/// one has lapsed.
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 const CLAIM_NAME: &str = "INSERT INTO datasets (name, body, state, operation, operation_token, lease_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))";
 const TAKE_OPERATION: &str = "UPDATE datasets SET body = ?, state = ?, operation = ?, operation_token = ?, lease_until = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
-/// A removal keeps the declaration it found: it publishes nothing.
 const TAKE_REMOVAL: &str = "UPDATE datasets SET state = ?, operation = ?, operation_token = ?, lease_until = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const RECORD_TABLE: &str =
     "UPDATE datasets SET physical_table = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const MARK_READY: &str = "UPDATE datasets SET state = ?, operation = NULL, operation_token = NULL, lease_until = NULL, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const DELETE_ROW: &str = "DELETE FROM datasets WHERE name = ?";
-/// A replacement changes the declaration and nothing else: the table the
-/// records are in stays where it is, and no operation is taken.
 const REPLACE_BODY: &str =
     "UPDATE datasets SET body = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ? AND state = ?";
 
@@ -131,7 +119,6 @@ impl Datasets for MariaDatasets {
     async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         match self.take(name, Operation::Remove, None).await? {
             Taken::Attempt(attempt) => Ok(attempt),
-            // Only a create is answered with a dataset that stands.
             Taken::Stands => Err(Refused::Gone.into()),
         }
     }
@@ -279,7 +266,6 @@ impl MariaDatasets {
     }
 }
 
-/// The row, held for the rest of the transaction.
 async fn held_row(
     transaction: &sea_orm::DatabaseTransaction,
     name: &DefinitionId,
@@ -295,8 +281,6 @@ async fn held_row(
     .transpose()
 }
 
-/// A name another attempt inserted first is the same refusal as a held
-/// operation: of two attempts at one new dataset, exactly one inserts.
 fn taken_or(error: sea_orm::DbErr) -> DatasetStoreError {
     match error.sql_err() {
         Some(sea_orm::SqlErr::UniqueConstraintViolation(_)) => {

@@ -1,8 +1,5 @@
 use thiserror::Error;
 
-/// The datasets database is `create-databases.sh`'s to make; a migration
-/// only refuses to proceed against one that is missing or whose engine
-/// contradicts the configured topology.
 pub(crate) async fn migrate(
     client: &insight_clickhouse::Client,
     datasets_database: &str,
@@ -28,8 +25,6 @@ mod tests {
         )
     }
 
-    /// One answer from `system.databases` is all the migration consumes: the
-    /// mock holds no handler for a `CREATE`, so one would fail the call.
     #[tokio::test]
     async fn the_migration_creates_nothing_and_passes_a_database_of_the_right_engine() {
         let mock = Mock::new();

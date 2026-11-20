@@ -1,9 +1,3 @@
-//! Canonical on-disk form of a service's `OpenAPI` document, and the drift
-//! check that pins the committed copy under `docs/components/backend/` to it.
-//!
-//! Regenerate a committed document with
-//! `(cd src/backend && cargo run -p <service> -- openapi) > docs/components/backend/<service>/openapi.json`.
-
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -90,8 +84,6 @@ fn committed_document_repo_path(service: &str) -> PathBuf {
 }
 
 fn committed_document_path(manifest_dir: &str, repo_path: &Path) -> PathBuf {
-    // INVARIANT: service crates live at src/backend/services/<service>, four
-    // levels below the repository root.
     Path::new(manifest_dir).join("../../../..").join(repo_path)
 }
 

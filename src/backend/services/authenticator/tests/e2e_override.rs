@@ -1,25 +1,3 @@
-//! End-to-end `__override` (view-as, #1941) against a running authenticator +
-//! Keycloak + Redis + identity stub.
-//!
-//! `#[ignore]` by default (needs the stack up; `run-e2e.sh` drives it):
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 AUTH_BASE_DISABLED=http://localhost:8085 \
-//!   cargo test -p authenticator --test e2e_override -- --ignored --nocapture
-//! ```
-//!
-//! Covers: a login carrying `__override=<email>` mints the session for that
-//! person (JWT `sub`, `/auth/me` user/email) with the real principal recorded
-//! (`impersonator_email`); an unknown target is 403; and against an instance
-//! with `override_enabled` at its default (`false`) the parameter is inert.
-//!
-//! Each test owns a disjoint {impersonator + targets} set of users
-//! (kc-realm-overlay.py provisions the ones that log in): view-as sessions
-//! are indexed under BOTH persons, so sharing either side would let one
-//! test's revoke-all kill a sibling's session under cargo's default parallel
-//! execution. Targets that never log in need no realm user — the identity
-//! stub resolves them from the email alone.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -51,9 +29,6 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     None
 }
 
-/// Run the login loop as `user`, optionally with `__override=<email>`
-/// on `/auth/login`. Returns the callback response (302 + cookie on success,
-/// the error status otherwise).
 async fn login_flow(
     http: &common::Client,
     auth_base: &str,
@@ -89,7 +64,6 @@ async fn me(http: &common::Client, auth_base: &str, token: &str) -> serde_json::
     resp.json().await.unwrap()
 }
 
-/// The JWT `sub` behind a session cookie, via the `/internal/authz` exchange.
 async fn jwt_sub(http: &common::Client, auth_base: &str, token: &str) -> String {
     let resp = http
         .get(format!("{auth_base}/internal/authz"))
@@ -110,12 +84,9 @@ async fn jwt_sub(http: &common::Client, auth_base: &str, token: &str) -> String 
 async fn override_mints_the_session_for_the_target_person() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let user = "viewer-mints@example.com";
-    // The baseline below logs in AS the target, so it needs a realm user too.
     let target = "target-mints@example.com";
     let http = client();
 
-    // Baseline: a normal login AS the target — its person id is the reference
-    // the override must reproduce (the identity stub is deterministic).
     let cb = login_flow(&http, &auth_base, target, None).await;
     assert_eq!(cb.status(), 302);
     let token = cookie_from(&cb).expect("baseline callback must set the cookie");
@@ -126,7 +97,6 @@ async fn override_mints_the_session_for_the_target_person() {
         "a normal login must not carry impersonator_email"
     );
 
-    // The override login: authenticate as `user`, view as `target`.
     let cb = login_flow(&http, &auth_base, user, Some(target)).await;
     assert_eq!(cb.status(), 302, "override callback must succeed");
     let token = cookie_from(&cb).expect("override callback must set the cookie");
@@ -140,12 +110,8 @@ async fn override_mints_the_session_for_the_target_person() {
         "/auth/me must name the real principal behind the view-as session"
     );
 
-    // The minted JWT acts as the target everywhere downstream.
     assert_eq!(jwt_sub(&http, &auth_base, &token).await, target_person_id);
 
-    // The view-as session is reachable through the REAL principal: it is
-    // indexed under both persons, so the impersonator's own "log out
-    // everywhere" must kill it.
     let cb = login_flow(&http, &auth_base, user, None).await;
     assert_eq!(cb.status(), 302);
     let own_token = cookie_from(&cb).expect("normal login must set the cookie");
@@ -171,7 +137,6 @@ async fn override_mints_the_session_for_the_target_person() {
     );
 }
 
-/// The session-bound CSRF token (state-changing `/auth/*` requires it).
 async fn csrf_token(http: &common::Client, auth_base: &str, token: &str) -> String {
     let resp = http
         .get(format!("{auth_base}/auth/csrf"))
@@ -186,13 +151,6 @@ async fn csrf_token(http: &common::Client, auth_base: &str, token: &str) -> Stri
         .to_owned()
 }
 
-/// Login with one override, log out, log in with ANOTHER override: no state
-/// from the first view-as session may leak into the second. Every layer keys
-/// on values that change across logins — the cookie token, the `session_id`,
-/// and the linked `{asm}:jwt:{session_id}` are all minted fresh, and the nginx
-/// exchange cache (not in this stack) is keyed by the cookie value, so a new
-/// cookie can never hit the old entry. This test pins the authenticator side:
-/// the old credential is fully dead and the new session is the new target.
 #[tokio::test]
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
@@ -200,7 +158,6 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
     let user = "viewer-relogin@example.com";
     let http = client();
 
-    // 1. Login viewing as the first target.
     let cb = login_flow(
         &http,
         &auth_base,
@@ -217,7 +174,6 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
     );
     let sub_a = jwt_sub(&http, &auth_base, &token_a).await;
 
-    // 2. Logout.
     let csrf = csrf_token(&http, &auth_base, &token_a).await;
     let out = http
         .post(format!("{auth_base}/auth/logout"))
@@ -228,9 +184,6 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
         .unwrap();
     assert_eq!(out.status(), 200, "logout must succeed");
 
-    // The old credential is dead everywhere the authenticator answers: the
-    // token mapping, the session record, and the linked JWT are revoked in
-    // one pipeline — the exchange (what nginx calls on a cache miss) is 401.
     let stale_me = http
         .get(format!("{auth_base}/auth/me"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_a}"))
@@ -254,7 +207,6 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
         "the exchange must refuse the revoked credential (nothing for nginx to re-cache)"
     );
 
-    // 3. Login viewing as the second target — a fresh credential and identity.
     let cb = login_flow(
         &http,
         &auth_base,
@@ -287,10 +239,6 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
     );
 }
 
-/// Switch overrides WITHOUT logout (what a browser actually does): run the
-/// login flow while still presenting the previous session's cookie. The
-/// session-fixation guard revokes the presented session before minting the
-/// new one, so the old credential dies and the new session is the new target.
 #[tokio::test]
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_switch_without_logout_revokes_the_presented_session() {
@@ -302,8 +250,6 @@ async fn override_switch_without_logout_revokes_the_presented_session() {
     assert_eq!(cb.status(), 302);
     let token_b = cookie_from(&cb).expect("first override callback must set the cookie");
 
-    // Browser-style switch to the second target: the first session's cookie
-    // rides along.
     let login = http
         .get(format!(
             "{auth_base}/auth/login?__override=target-switch-b%40example.com"
@@ -354,9 +300,6 @@ async fn override_with_unknown_target_is_denied() {
     let user = "viewer-unknown@example.com";
     let http = client();
 
-    // The identity stub 404s emails prefixed `unknown-` (test seam). The
-    // denial is an auth_error bounce back into the SPA (#2032), never a
-    // fallback to the caller's own identity.
     let cb = login_flow(&http, &auth_base, user, Some("unknown-nobody@example.com")).await;
     assert_eq!(
         cb.status(),
@@ -373,7 +316,6 @@ async fn override_with_unknown_target_is_denied() {
 #[tokio::test]
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_is_inert_when_disabled() {
-    // The second instance runs with `override_enabled` at its default (false).
     let auth_base = env("AUTH_BASE_DISABLED", "http://localhost:8085");
     let user = "viewer-disabled@example.com";
     let http = client();

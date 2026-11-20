@@ -1,22 +1,11 @@
 {{/*
-Release-scoped hook Job: the only writer of the analytics schema and of
-builtin metric-definition rows. Servers validate and never migrate
-(`assert_schema_compatible`).
-
-A per-pod initContainer runs once per replica and races on non-transactional
-MariaDB DDL; one Job per release removes the race, and the advisory lock
-inside the binary remains the cross-process guard.
-
 Weight 10: after the weight-5 `mariadb-init-svcdbs` Job that provisions the
 database, before any application resource. Must stay `pre-*`: on `post-*`
 the new pods' compatibility gate fails against the unmigrated schema and
 `--wait` blocks on CrashLoopBackOff before the hook ever runs.
 
 Config is written inline because a pre-install hook runs before the
-release's ConfigMap exists. Every leaf value arrives as an APP__ env var via
-`envFrom` from the Secret named by `existingSecret`, which must exist BEFORE
-`helm install` — a pre-install hook cannot see Secrets the release itself
-would apply; the gitops path composes it beforehand.
+release's ConfigMap exists.
 */}}
 apiVersion: batch/v1
 kind: Job
@@ -26,22 +15,13 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "10"
     {{- /* Deliberately NOT hook-succeeded: that deletes the Job and its pod
-           the moment it completes, discarding the migration log. The
-           initContainer this replaces kept its log for the pod's lifetime. */}}
+           the moment it completes, discarding the migration log. */}}
     helm.sh/hook-delete-policy: before-hook-creation
   labels:
     {{- include "insight-analytics.labels" . | nindent 4 }}
     app.kubernetes.io/component: migrate
 spec:
-  {{- /* Matches the clickhouse-migrate-job convention. Re-running is safe:
-         applied migrations are skipped via the ledger, and every migration is
-         required to converge on a re-run (crash-recovery regression tests
-         cover this). Bounded at 2 so a genuinely broken migration fails the
-         release quickly instead of being retried indefinitely. */}}
   backoffLimit: 2
-  {{- /* No ttlSecondsAfterFinished: a failed migration must keep its log
-         until an operator reads it; `before-hook-creation` cleans the Job up
-         on the next release either way. */}}
   template:
     metadata:
       labels:

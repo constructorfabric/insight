@@ -1,17 +1,3 @@
-//! The tables a dataset's records live in.
-//!
-//! Every one of them is in the datasets database and nowhere else, so nothing
-//! this service creates or drops can reach a table the warehouse owns. The
-//! database itself is `create-databases.sh`'s to make; a create first refuses
-//! one whose engine contradicts the configured topology.
-//!
-//! Nothing here reads its own write, so nothing here takes the shared
-//! client's read-after-write pair. A record is stored and never read back by
-//! the request that sent it, and a sequential quorum would refuse the next
-//! SDK client's insert into the same table while this one is unconfirmed. The
-//! preview looks at what arrived, from whichever replica answers: a read
-//! pinned to the quorum would throw on a lagging replica instead.
-
 use std::fmt;
 use std::time::Duration;
 
@@ -22,8 +8,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-/// The shape every dataset's table has. A table of any other shape in the
-/// datasets database belongs to something else and is never touched.
 const COLUMNS: [(&str, &str); 4] = [
     ("id", "UUID"),
     ("table_name", "String"),
@@ -31,21 +15,13 @@ const COLUMNS: [(&str, &str); 4] = [
     ("received_at", "DateTime64(3, 'UTC')"),
 ];
 const SORT_KEY: [&str; 3] = ["table_name", "received_at", "id"];
-/// The same key as `system.tables` reads it back, which is how a table is
-/// recognised as one of ours. A test pins the two together.
 const INGEST_SORTING_KEY: &str = "table_name, received_at, id";
-/// One page of records. The id breaks an equal ordering value so that two
-/// reads of the same page agree on what is in it.
 const READ_PAGE: &str = "SELECT id, received_at, raw_data FROM ?
 ORDER BY {order}, received_at DESC, id DESC
 LIMIT ? OFFSET ?";
 const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
-/// Creating or dropping a table waits for the replicas, so it gets a wider
-/// bound than a read: the warehouse's own wait, and then some, so that it is
-/// normally the warehouse that reports a statement as unfinished. A statement
-/// cut off here may still land, which is the caller's to allow for.
 const DDL_TIMEOUT: Duration =
     insight_clickhouse::DDL_TASK_TIMEOUT.saturating_add(Duration::from_secs(5));
 const READ_TIMEOUT_SECS: u64 = 10;
@@ -53,14 +29,10 @@ const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
 const INSERT_END_TIMEOUT_SECS: u64 = 30;
 const INSERT_TOTAL_TIMEOUT_SECS: u64 = 35;
 
-/// What a table of that name in the datasets database is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Shape {
-    /// Nothing holds the name.
     Absent,
-    /// A table this service could have made: the ingest shape.
     Ingest,
-    /// A table of some other shape. Never created over, never dropped.
     Foreign,
 }
 
@@ -98,11 +70,6 @@ impl DatasetTables {
         self
     }
 
-    /// Puts one record into a dataset's table, whole and unread.
-    ///
-    /// The table is never created here: a record can only land in a dataset
-    /// somebody declared, and a table that is gone means the dataset went with
-    /// it while this record was in flight.
     pub(crate) async fn insert(
         &self,
         table: &str,
@@ -134,11 +101,6 @@ impl DatasetTables {
         Ok(())
     }
 
-    /// One page of a dataset's records.
-    ///
-    /// Each record is given back as it was sent: this is a reader looking at
-    /// what arrived, so a payload is never reshaped on the way out.
-    ///
     /// SAFETY: `order` is an expression, not a value, so it is written into
     /// the statement rather than bound. A caller only names a declared field;
     /// the expression itself is built by
@@ -165,8 +127,6 @@ impl DatasetTables {
         Ok(found.into_iter().map(PreviewRow::into_record).collect())
     }
 
-    /// How many records the table holds, as they arrived: a re-sent record
-    /// counts again here, since this is the count of what arrived.
     pub(crate) async fn count(&self, table: &str) -> Result<u64, DatasetTableError> {
         let rows = self
             .client
@@ -180,7 +140,6 @@ impl DatasetTables {
         Ok(found.first().map_or(0, |row| row.total))
     }
 
-    /// What, if anything, holds this name in the datasets database.
     pub(crate) async fn shape_of(&self, table: &str) -> Result<Shape, DatasetTableError> {
         let shapes = self
             .client
@@ -203,12 +162,6 @@ impl DatasetTables {
         }
     }
 
-    /// Makes the table this attempt's records go into.
-    ///
-    /// Ownership is decided by shape alone: the declaration that will name
-    /// this table is written only once the create finishes, so there is
-    /// nothing else to ask. A table of the ingest shape already there is this
-    /// attempt repeating itself.
     pub(crate) async fn provision(&self, table: &str) -> Result<(), DatasetTableError> {
         let database = &self.client.config().database;
         tokio::time::timeout(
@@ -231,8 +184,6 @@ impl DatasetTables {
         Ok(())
     }
 
-    /// The ingest shape, in the one database this service creates tables in.
-    /// Naming any other is refused by the client the spec is rendered through.
     fn ingest_spec(&self, table: &str) -> Ddl {
         Ddl::create_table(
             TableSpec::merge_tree(&self.client.config().database, table, &COLUMNS, &SORT_KEY)
@@ -240,11 +191,6 @@ impl DatasetTables {
         )
     }
 
-    /// Drops a table this service made.
-    ///
-    /// The caller has already decided the table is ours: either a stored
-    /// declaration names it, or this attempt made it moments ago and lost the
-    /// dataset before anything could point at it.
     pub(crate) async fn drop_table(&self, table: &str) -> Result<(), DatasetTableError> {
         let drop = Ddl::drop_table(&self.client.config().database, table);
         tokio::time::timeout(self.ddl_timeout, self.client.execute_ddl(&drop))
@@ -275,12 +221,8 @@ pub(crate) enum DatasetTableError {
     Timeout,
     #[error("the datasets database did not answer")]
     ClickHouse(clickhouse::error::Error),
-    /// A create aimed outside the datasets database. The shared client logs
-    /// the pair at the point it refuses the spec.
     #[error("the dataset's table was aimed at a database this service does not own")]
     NotOurDatabase,
-    /// The datasets database is missing or its engine contradicts the
-    /// configured topology; the message carries the remedy.
     #[error("the datasets database is not ready: {0}")]
     DatabaseTopology(String),
 }
@@ -290,15 +232,10 @@ struct ShapeRow {
     sorting_key: String,
 }
 
-/// One record as a dataset's table holds it: whole, and stamped with when it
-/// arrived.
-/// One stored record as a reader is shown it.
 #[derive(Debug, Serialize)]
 pub(crate) struct Record {
     pub(crate) id: Uuid,
     pub(crate) received_at: DateTime<Utc>,
-    /// The payload as it arrived. A record this service could not read back
-    /// as JSON is given as the text it holds, rather than left out.
     pub(crate) raw_data: serde_json::Value,
 }
 
@@ -317,17 +254,13 @@ struct CountRow {
     total: u64,
 }
 
-/// What a reader asked for: how many records, from where, in what order.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Page<'a> {
     pub(crate) limit: u64,
     pub(crate) offset: u64,
-    /// The ordering expression, with its direction.
     pub(crate) order: &'a str,
 }
 
-/// A record as the preview reads it back: the columns the preview selects,
-/// in the order it selects them.
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
 struct PreviewRow {
     #[serde(with = "clickhouse::serde::uuid")]

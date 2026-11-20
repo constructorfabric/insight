@@ -1,6 +1,3 @@
-//! Seeded-leak checks (insight#2488 AC-4): write a token and a person-bearing
-//! query through the logging path — the value must never reach a line.
-
 use insight_log_context::test_support::capture_output;
 
 use crate::domain::ai::dto::ApiToken;

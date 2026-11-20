@@ -187,8 +187,6 @@ fn the_records_a_window_left_out_are_counted_over_the_same_relation_as_the_rows(
     assert!(counted.sql.contains("countIf(isNull("), "{}", counted.sql);
 }
 
-/// Which field holds a person is the declaration's to say, so a metric only
-/// selects it and the join follows.
 #[test]
 fn a_declared_person_is_resolved_to_the_name_a_reader_knows() {
     let declared: Declaration = serde_json::from_value(json!({
@@ -222,8 +220,6 @@ fn a_declared_person_is_resolved_to_the_name_a_reader_knows() {
     assert!(sql.contains("display_name"), "{sql}");
 }
 
-/// A substitute is what a reader is shown, never what a lookup is keyed on:
-/// two records with no author would otherwise resolve to one person.
 #[test]
 fn a_person_is_looked_up_by_the_record_s_own_value() {
     let declared: Declaration = serde_json::from_value(json!({
@@ -262,9 +258,6 @@ fn a_person_is_looked_up_by_the_record_s_own_value() {
     );
 }
 
-/// A metric that aggregates nothing answers one row per record. The bucket
-/// tells the reader which window each row fell in; grouping by it would make
-/// the query aggregating and leave the selected columns under nothing.
 #[test]
 fn a_windowed_run_that_aggregates_nothing_reports_the_bucket_without_grouping_by_it() {
     let listing = metric(json!({
@@ -308,8 +301,6 @@ fn a_windowed_run_that_aggregates_groups_by_the_bucket() {
     assert!(sql.contains("GROUP BY `bucket`"), "{sql}");
 }
 
-/// A substitute is what a reader is shown. A condition judged against it
-/// would match every record that carries no value at all.
 #[test]
 fn a_filter_is_judged_against_the_record_s_own_value() {
     let declared: Declaration = serde_json::from_value(json!({
@@ -348,7 +339,6 @@ fn a_filter_is_judged_against_the_record_s_own_value() {
     );
 }
 
-/// A rate over people is a count of some of the records, not all of them.
 #[test]
 fn a_condition_on_a_person_field_keeps_the_rows_it_names() {
     let declared: Declaration = serde_json::from_value(json!({
@@ -380,8 +370,6 @@ fn a_condition_on_a_person_field_keeps_the_rows_it_names() {
     assert!(sql.contains("countIf("), "{sql}");
 }
 
-/// A run that does not bucket produces no bucket to order by, and rows a
-/// `LIMIT` cuts still have to come back in a settled order.
 #[test]
 fn ordering_by_the_bucket_falls_back_when_the_run_does_not_bucket() {
     let trend = metric(json!({

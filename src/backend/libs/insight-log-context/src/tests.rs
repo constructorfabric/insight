@@ -7,7 +7,6 @@ use crate::{
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
-// One process-wide identity: every test in this binary sees these values.
 fn layer() -> LogContextLayer {
     let attributes =
         std::collections::BTreeMap::from([("service.version".to_owned(), "9.9.9".to_owned())]);

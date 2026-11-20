@@ -11,17 +11,13 @@ use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
-/// `TIMEOUT_EXCEEDED`: the warehouse stopped waiting on a statement that is
-/// still queued, so whether it lands is unknown to the caller.
 const TIMEOUT_EXCEEDED: u8 = 159;
 
-/// What `system.tables` answers about a name nothing holds.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct NoTable {
     sorting_key: String,
 }
 
-/// The table a recorded create names, without its database or its quotes.
 fn created_table(ddl: &str) -> String {
     ddl.split("IF NOT EXISTS ")
         .nth(1)
@@ -73,8 +69,6 @@ impl Fixture {
         }
     }
 
-    /// The datasets database stands as a plain one and answers that nothing
-    /// holds the name.
     fn nothing_holds_the_name(&self) {
         self.mock
             .add(handlers::provide(vec![String::from("Atomic")]));
@@ -230,8 +224,6 @@ async fn replacing_the_declaration_of_a_dataset_that_stands_touches_no_table() -
     Ok(())
 }
 
-/// A store that hands out an operation and then reports the attempt stale,
-/// which is what an attempt whose lease lapsed mid-flight meets.
 #[derive(Debug)]
 struct LosesTheDataset(MemoryDatasets);
 
@@ -286,8 +278,6 @@ impl Datasets for LosesTheDataset {
     }
 }
 
-/// A store that took the operation and then stopped answering, which is what
-/// a connection lost on the way back from a commit looks like.
 #[derive(Debug)]
 struct StopsAnswering(MemoryDatasets);
 
@@ -342,10 +332,6 @@ impl Datasets for StopsAnswering {
     }
 }
 
-/// A store that did not answer has not said the write failed: the commit may
-/// have landed and the acknowledgement been lost, leaving a dataset that
-/// stands and names this table. A table nothing names can be swept up; one a
-/// standing dataset names cannot be brought back.
 #[tokio::test]
 async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
     let fixture = Fixture::new();
@@ -371,14 +357,6 @@ async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
     Ok(())
 }
 
-/// The warehouse may still be making a table whose create was not answered
-/// in time; a drop sent now could land first and leave it standing.
-///
-/// The warehouse itself reports the create unfinished, which the store takes
-/// for a timeout just as it takes its own bound running out. A bound racing
-/// a mock is not a timeout a test can count on: the mock answers within the
-/// millisecond the timer needs to fire. A drop would be the next request the
-/// mock sees.
 #[tokio::test]
 async fn a_create_the_warehouse_did_not_answer_in_time_is_left_where_it_is() -> R {
     let fixture = Fixture::new();
@@ -552,7 +530,6 @@ async fn a_table_that_is_no_longer_ours_is_left_where_it_is() -> R {
     Ok(())
 }
 
-/// A metric reading the fixture dataset, stored as a reader of it.
 async fn a_metric_reading_commits(fixture: &Fixture, named: &str, body: Value) -> R {
     let stored = DefinitionId::parse(named)?;
     fixture
@@ -573,7 +550,6 @@ fn reading_commits() -> Value {
     })
 }
 
-/// The fixture declaration with one field's path moved, and nothing else.
 fn declaration_reading_elsewhere() -> Value {
     json!({
         "title": "Commits",

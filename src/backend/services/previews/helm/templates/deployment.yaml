@@ -17,7 +17,6 @@ spec:
       labels:
         {{- include "insight-previews.selectorLabels" . | nindent 8 }}
       annotations:
-        # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -29,13 +28,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- end }}
-      # The dedicated ServiceAccount carries the namespace-scoped experiment
-      # RBAC (see experiments-rbac.yaml); the service fails boot without a
-      # reachable Kubernetes API.
       serviceAccountName: {{ include "insight-previews.fullname" . }}
       # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
-      # kubelet auto-injects for every Service in the namespace at pod-start
-      # (see api-gateway deployment for the longer explanation).
+      # kubelet auto-injects for every Service in the namespace at pod-start.
       enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -46,8 +41,6 @@ spec:
         - name: previews
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # gears-rust host: structural config from the mounted ConfigMap; the
-          # registry token is the one Secret-backed env override.
           command: ["/app/previews"]
           args: ["-c", "/app/config/insight.yaml"]
           {{- if .Values.experiments.registryTokenSecret }}
@@ -64,7 +57,6 @@ spec:
               subPath: insight.yaml
               readOnly: true
             {{- if .Values.gateway.caCertSecret }}
-            # Discovery-issuer CA for the oidc-authn-plugin's https JWKS fetch.
             - name: authn-ca
               mountPath: /etc/insight/authn-ca
               readOnly: true

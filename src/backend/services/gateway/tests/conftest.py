@@ -1,17 +1,3 @@
-"""Session orchestrator for the gateway e2e (NGINX_BFF step-05 scenarios).
-
-Owns the compose stack lifecycle (real authenticator + Keycloak behind the
-OpenResty gateway, with stub identity + echo upstream) and exposes a small HTTP
-client plus fixtures for the fail-closed scenarios (authenticator / upstream
-down). Tests live in test_gateway.py.
-
-The IdP is a real Keycloak importing the generated roster realm
-(`insight-seed-realm`, from src/ingestion/tools/seed — generated here into
-./keycloak-import). pytest runs on the host; the OIDC redirect chain uses
-in-network hostnames, so the client rewrites them to the published localhost
-ports (see GatewayClient).
-"""
-
 from __future__ import annotations
 
 import http.cookiejar
@@ -37,20 +23,14 @@ GW = "http://localhost:18080"
 KEYCLOAK = "http://localhost:18084"
 AUTHENTICATOR = "http://localhost:18083"
 
-# In-network hostnames the authenticator and Keycloak emit in redirects and
-# form actions -> published ports.
 REWRITES = {"http://gateway:8080": GW, "http://keycloak:8085": KEYCLOAK}
 
 KC_REALM = "insight"
 KC_DISCOVERY = f"{KEYCLOAK}/realms/{KC_REALM}/.well-known/openid-configuration"
-# The realm's dev-lead persona; the generator bakes one dev password for all users.
 E2E_USER = "dev@company.nonpresent"
 E2E_PASSWORD = "insight-dev"
-# The generator requires a tenant; the identity-stub resolves any external id,
-# so the value only has to be named.
 TENANT_ID = "00000000-df51-5b42-9538-d2b56b7ee953"
 
-# Anchored on login-actions/authenticate, not "the first <form>".
 _LOGIN_FORM = re.compile(r'<form[^>]+action="([^"]*login-actions/authenticate[^"]*)"', re.IGNORECASE)
 
 
@@ -64,9 +44,6 @@ class _SendSecureOverHttp(http.cookiejar.DefaultCookiePolicy):
         return True
 
 
-# The authenticator's authz_cache_max_age_seconds, via the compose
-# `${AUTHZ_CACHE_MAX_AGE}`. It must cover warm -> kill -> confirm-down -> request
-# in TestAuthenticatorDown, or the cached hit misses and 503s.
 AUTHZ_CACHE_MAX_AGE = int(os.environ.setdefault("AUTHZ_CACHE_MAX_AGE", "10"))
 
 
@@ -84,9 +61,6 @@ def _compose_up_args() -> list[str]:
 
 
 class GatewayClient:
-    """Minimal HTTP client: no auto-redirects, case-insensitive headers, and an
-    OIDC login helper that drives Keycloak's HTML login form, rewriting
-    in-network redirect hosts to localhost."""
 
     def request(self, url, headers=None, method="GET", data=None, jar=None):
         body = None
@@ -121,13 +95,6 @@ class GatewayClient:
         return url
 
     def login(self):
-        """Drive the OIDC code flow through the gateway; return the __Host-sid value.
-
-        Keycloak serves a real HTML login form, so the middle of the chain is:
-        GET the authorize URL (collecting the IdP's auth-session cookies), parse
-        the form action, POST the credentials, then deliver the code redirect to
-        the gateway callback.
-        """
         _, h, _ = self.request(f"{GW}/auth/login?return_to=/")
 
         jar = http.cookiejar.CookieJar(policy=_SendSecureOverHttp())
@@ -142,7 +109,7 @@ class GatewayClient:
         )
         assert status == 302, f"credential POST expected 302, got {status}"
 
-        status, h, _ = self.request(self._rewrite(h["location"]))  # gateway /auth/callback
+        status, h, _ = self.request(self._rewrite(h["location"]))
         assert status == 302, f"callback expected 302, got {status}"
         for part in h.get("set-cookie", "").split(";"):
             part = part.strip()
@@ -151,17 +118,12 @@ class GatewayClient:
         raise AssertionError(f"no __Host-sid in Set-Cookie: {h.get('set-cookie')!r}")
 
     def csrf_token(self, sid):
-        """Fetch the per-session CSRF token; required on state-changing /auth/*."""
         status, _, body = self.request(f"{GW}/auth/csrf", headers={"Cookie": f"__Host-sid={sid}"})
         assert status == 200, f"/auth/csrf got {status}"
         return json.loads(body)["csrf_token"]
 
 
 def _wait_http(url, want, timeout_s=90):
-    # Poll until the endpoint returns one of `want`. A transient gateway 502
-    # (e.g. the authenticator still booting after a restart) is NOT ready, so we
-    # wait for the real status (302 for /auth/login, 200 for /healthz) rather
-    # than "any response". A connection error (OSError) is also a retry.
     deadline = time.monotonic() + timeout_s
     last = None
     while time.monotonic() < deadline:
@@ -176,10 +138,6 @@ def _wait_http(url, want, timeout_s=90):
 
 
 def _generate_realm(import_dir: Path) -> None:
-    """Generate the Keycloak import realm with `insight-seed-realm`.
-
-    The redirect is passed explicitly: --authenticator-redirect REPLACES the
-    defaults, which would deregister the gateway callback."""
     seed = REPO_ROOT / "src" / "ingestion" / "tools" / "seed"
     import_dir.mkdir(exist_ok=True)
     subprocess.run(
@@ -204,7 +162,6 @@ def _generate_realm(import_dir: Path) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def stack():
-    """Build + start the compose stack for the whole session; tear down after."""
     keys = HERE / "keys"
     keys.mkdir(exist_ok=True)
 
@@ -226,16 +183,8 @@ def stack():
             capture_output=True,
         )
 
-    # ES256 gateway signing key (§9.6): EC P-256 — the authenticator's p256
-    # loader requires an EC key, and downstream verifiers validate ES256.
     _genpkey_ec("current.pem")
     (keys / "current.pem").chmod(0o644)
-    # Service-token registry key: the baked config/insight.yaml carries a dev
-    # `testclient` entry (public_key_paths: [testclient.pub.pem], resolved
-    # against public_key_dir=/keys in the e2e compose), so the authenticator
-    # needs the public half present to build the registry and boot. This e2e
-    # does not exercise service tokens; it just satisfies that dev entry. The
-    # service-token client key stays EC (ES256 RFC 7523 assertion).
     _genpkey_ec("testclient.key.pem")
     subprocess.run(
         [
@@ -256,11 +205,10 @@ def stack():
     try:
         _compose(*_compose_up_args())
         # Keycloak start + realm import runs tens of seconds; the realm
-        # discovery document answers only once its import committed. The
-        # authenticator discovers per-op, so it needs no restart after this.
+        # discovery document answers only once its import committed.
         _wait_http(KC_DISCOVERY, want={200}, timeout_s=240)
         _wait_http(f"{GW}/healthz", want={200})
-        _wait_http(f"{GW}/auth/login", want={302})  # 302 once the authenticator is reachable
+        _wait_http(f"{GW}/auth/login", want={302})
         yield
     finally:
         _compose("logs", "--no-color", check=False)
@@ -278,7 +226,6 @@ def client():
 
 @pytest.fixture(scope="session")
 def session_sid():
-    """Log in once; return the session cookie value."""
     return GatewayClient().login()
 
 
@@ -294,11 +241,9 @@ def _wait_status(url, cookie, expected, timeout_s=30):
 
 @pytest.fixture
 def authenticator_down(session_sid):
-    """Kill the authenticator right after re-warming the session, restore on teardown."""
     status, _, _ = GatewayClient().request(f"{GW}/api/analytics/warm", headers={"Cookie": f"__Host-sid={session_sid}"})
     assert status == 200, f"warm got {status}"
     _compose("kill", "authenticator")
-    # Wait until the fail-closed state is actually reached before yielding.
     _wait_status(f"{GW}/api/analytics/x", "__Host-sid=cold-poll", 503)
     yield
     _compose("start", "authenticator")
@@ -307,7 +252,6 @@ def authenticator_down(session_sid):
 
 @pytest.fixture
 def echo_down():
-    """Kill the echo upstream, restore on teardown."""
     _compose("kill", "echo")
     yield
     _compose("start", "echo")

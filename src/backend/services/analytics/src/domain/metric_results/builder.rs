@@ -25,8 +25,6 @@ use super::view::Bucket;
 
 type DimensionKey = Vec<(String, String, Option<String>)>;
 type SeriesKey = (String, bool, DimensionKey);
-/// What one bucket holds: the metric's reading, and — for a ratio — the two
-/// sides it was taken from.
 #[derive(Debug, Clone, Copy, Default)]
 struct BucketReading {
     value: Option<f64>,
@@ -70,9 +68,6 @@ pub fn build_period_view(
             )
         })
         .collect();
-    // `entity_id` IS the canonical contract on the wire and in the relations;
-    // the selection renders the ids in that form, one rule for every view
-    // builder in this module.
     let values = req
         .entity
         .entity_ids()
@@ -82,8 +77,6 @@ pub fn build_period_view(
             PeriodValueDto {
                 entity_id,
                 value: observed.and_then(|(value, _)| *value),
-                // An entity the scan never saw still reports the slot, so the
-                // wire always answers the request it was given.
                 compare_to: req
                     .compare_to
                     .and(observed.and_then(|(_, compare_to)| *compare_to)),
@@ -313,11 +306,6 @@ pub fn build_rollup_view(
     })
 }
 
-/// Densifies histogram rows into the full fixed-bin shape. The SQL reports
-/// only observed (entity, bin) pairs plus each entity's exact bounds; edge
-/// math lives here alone so empty and observed bins can never disagree.
-/// Every requested entity is listed; no events → empty `bins` (honest
-/// absence, mirroring the period view's every-entity rule).
 pub fn build_histogram_view(
     req: &ValidatedMetricResultsRequest,
     rows: Vec<HistogramQueryRow>,
@@ -349,8 +337,6 @@ pub fn build_histogram_view(
     }
 }
 
-/// An aggregate with no GROUP BY answers exactly one row; any other count is a
-/// broken query, not an empty reading.
 pub fn build_unattributed_view(
     rows: Vec<UnattributedQueryRow>,
 ) -> Result<MetricResultViewDto, CanonicalError> {
@@ -361,10 +347,6 @@ pub fn build_unattributed_view(
     Ok(MetricResultViewDto::Unattributed { value: row.value })
 }
 
-/// The pooled counterpart: one row per observed dimension tuple, binned over
-/// every selected entity's events together. Unlike the per-entity shape there
-/// is no roster to list against, so a tuple with no events simply has no row —
-/// the same absence rule rollup follows.
 pub fn build_pooled_histogram_view(
     rows: Vec<PooledHistogramQueryRow>,
     dimensions: &[String],
@@ -410,10 +392,6 @@ pub fn build_pooled_histogram_view(
     })
 }
 
-/// One partition's exact value bounds plus its observed bin counts. The SQL
-/// reports only observed (partition, bin) pairs, so the edge math that turns
-/// them into the full fixed-bin shape lives here alone — empty and observed
-/// bins can never disagree about a boundary.
 struct GroupBins {
     lo: f64,
     hi: f64,
@@ -435,8 +413,6 @@ impl GroupBins {
 
     fn densify(&self) -> Vec<HistogramBinDto> {
         let bin_total = u32::try_from(HISTOGRAM_BINS).unwrap_or(u32::MAX);
-        // Bounds satisfy hi >= lo by construction; a collapsed range (all
-        // values identical) renders as one [v, v] bin.
         if self.hi <= self.lo {
             return vec![HistogramBinDto {
                 lo: self.lo,
@@ -515,8 +491,6 @@ fn view_size(view: &MetricResultViewDto) -> usize {
     }
 }
 
-/// The comparison window's value off a breakdown row. The alias rides in
-/// `extra` like every other non-fixed column of that row shape.
 fn window_value(extra: &HashMap<String, serde_json::Value>) -> Result<Option<f64>, CanonicalError> {
     let alias = VALUE_COMPARE;
     let raw = extra.get(alias).ok_or_else(|| {
@@ -532,8 +506,6 @@ fn window_value(extra: &HashMap<String, serde_json::Value>) -> Result<Option<f64
     })
 }
 
-/// One column's presence flag off a breakdown row. `countIf(...) > 0` arrives
-/// as 0/1, which is what the wire's boolean is built from.
 fn presence_flag(
     extra: &HashMap<String, serde_json::Value>,
     alias: &str,
@@ -840,7 +812,6 @@ mod tests {
 
     #[test]
     fn period_view_keeps_median_nulls() {
-        // A median of no events is unknowable, never zero.
         let req = request(
             vec!["00000000-0000-0000-0000-00000000000a"],
             "2026-01-01",
@@ -879,7 +850,6 @@ mod tests {
             "2026-01-01",
             "2026-01-31",
         );
-        // person A observed bins 0 and 9 over range [0, 100].
         let rows = vec![
             histogram_row("00000000-0000-0000-0000-00000000000a", 0, 0.0, 100.0, 3),
             histogram_row("00000000-0000-0000-0000-00000000000a", 9, 0.0, 100.0, 1),
@@ -898,14 +868,11 @@ mod tests {
         assert_eq!(a.bins[0].count, 3);
         assert!((a.bins[0].lo - 0.0).abs() < f64::EPSILON);
         assert!((a.bins[0].hi - 10.0).abs() < f64::EPSILON);
-        // Gap bins densify to zero with derived edges.
         assert_eq!(a.bins[4].count, 0);
         assert!((a.bins[4].lo - 40.0).abs() < f64::EPSILON);
-        // Last bin closes exactly at the entity max.
         assert_eq!(a.bins[9].count, 1);
         assert!((a.bins[9].hi - 100.0).abs() < f64::EPSILON);
 
-        // Entity with no events stays listed with honest empty bins.
         let b = &values[1];
         assert_eq!(
             b.entity_id.as_deref(),
@@ -950,7 +917,6 @@ mod tests {
         assert_eq!(values.len(), 2);
 
         let api = &values[0];
-        // No entity grain: a pooled row answers for the tuple, not a person.
         assert!(api.entity_id.is_none());
         assert_eq!(api.dimensions[0].value, "acme/api");
         assert_eq!(api.bins.len(), 10);
@@ -958,8 +924,6 @@ mod tests {
         assert_eq!(api.bins[9].count, 1);
         assert!((api.bins[9].hi - 100.0).abs() < f64::EPSILON);
 
-        // A tuple whose events all share one value collapses to a single bin,
-        // exactly as the per-entity shape does.
         let web = &values[1];
         assert_eq!(web.bins.len(), 1);
         assert_eq!(web.bins[0].count, 2);

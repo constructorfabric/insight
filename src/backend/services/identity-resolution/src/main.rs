@@ -1,13 +1,3 @@
-//! Insight Identity Resolution service (epic #1602).
-//!
-//! Boots as a gears-rust host on [`toolkit::bootstrap::run_server`] — same host
-//! pattern as `services/analytics`. Auth is ENABLED (`NGINX_BFF` R1): the
-//! `oidc-authn-plugin` verifies the gateway JWT and maps its claims into the
-//! request `SecurityContext`. Implements the full ported surface: `POST
-//! /v1/profiles`, persons-seed, roles / person-roles / visibility, org subchart,
-//! and the internal service-only resolve lookup (email or source-scoped
-//! external id).
-
 mod api;
 mod config;
 mod domain;
@@ -100,8 +90,6 @@ enum Commands {
     },
 }
 
-/// Exit codes of the `seed` / `sync` subcommands (one shared scheme),
-/// mirrored in the Job monitoring docs.
 const EXIT_SEED_FAILED: i32 = 1;
 const EXIT_SEED_LOCK_BUSY: i32 = 2;
 const EXIT_SEED_GUARD: i32 = 3;
@@ -111,11 +99,6 @@ async fn main() -> Result<()> {
     let mut cli = Cli::parse();
     let command = cli.command.take().unwrap_or(Commands::Run);
 
-    // Layered config: defaults -> YAML -> env (APP__*). Loaded per command
-    // rather than up front, so the offline `openapi` emit cannot fail on a
-    // config file it never reads. Logging/OTel are initialized by the bootstrap
-    // runtime for the server path; subcommands run outside it and install their
-    // own plain subscriber.
     let load_config = || AppConfig::load_or_default(cli.config.as_ref());
 
     match command {
@@ -187,9 +170,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Print the `OpenAPI` document in canonical JSON. Offline — see
-/// [`api::openapi_document`]. No logging subscriber is installed on this path,
-/// so stdout stays pure JSON for the drift gate to consume.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
     print!("{}", insight_openapi::canonical_json(&doc)?);

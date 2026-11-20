@@ -16,7 +16,6 @@ use crate::domain::folders::{
     MAX_FOLDERS, SeenFolder,
 };
 
-/// The folders the caller sees, each counting the dashboards in it they see.
 const LIST_FOLDERS: &str = "SELECT folders.id, folders.name, folders.owner_person_id,
 (SELECT COUNT(*) FROM folder_entries counted
 JOIN dashboards ON dashboards.id = counted.dashboard
@@ -31,8 +30,6 @@ const GRANTS_TO_CALLER: &str =
 const COUNT_UNFILED: &str =
     "SELECT COUNT(*) AS total FROM dashboards WHERE {visible} AND {unfiled}";
 
-/// Folder creations and hand-overs take turns on this row, so no owner's
-/// folders pass the cap between the count and the write.
 const LOCK_FOLDERS: &str = "SELECT id FROM folders_lock WHERE id = 1 FOR UPDATE";
 
 const COUNT_FOLDERS: &str = "SELECT COUNT(*) AS total FROM folders WHERE owner_person_id = ?";
@@ -59,12 +56,6 @@ ORDER BY holding.name, holding.id";
 
 pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE id = ?";
 
-/// Places nothing unless the caller sees the dashboard as the row lands, and
-/// carries only while the placer still owns it or holds an editor grant on
-/// it, to them or to everyone, so an entry cannot rely on a grant withdrawn
-/// meanwhile. A carrying one makes the entry already there carry, as this
-/// placer's; a filing one changes nothing of it.
-///
 /// INVARIANT: the driver reports found rows, so adding an entry already
 /// there still counts one and only an unseen dashboard counts none.
 const ADD_ENTRY: &str =
@@ -82,7 +73,6 @@ carries = folder_entries.carries OR VALUES(carries)";
 const ENTRY_CARRIES: &str = "SELECT COUNT(*) AS total FROM folder_entries
 WHERE folder_id = ? AND dashboard = ? AND carries";
 
-/// Removes nothing unless the caller sees the dashboard as the row goes.
 const REMOVE_ENTRY: &str = "DELETE FROM folder_entries WHERE folder_id = ? AND dashboard = ?
 AND EXISTS (SELECT 1 FROM dashboards WHERE dashboards.id = ? AND {visible})";
 
@@ -204,7 +194,6 @@ pub(super) fn remove_entry_statement(
     statement(&REMOVE_ENTRY.replace("{visible}", &visible), values)
 }
 
-/// How many folders `owner` holds, read under [`lock_folders`].
 pub(super) async fn folders_held(
     transaction: &DatabaseTransaction,
     owner: PersonId,
@@ -218,7 +207,6 @@ pub(super) async fn folders_held(
     Ok(usize::try_from(held).unwrap_or(usize::MAX))
 }
 
-/// The strongest grant level per folder among these rows.
 fn strongest(rows: Vec<FolderGrantRow>) -> Result<BTreeMap<String, Level>, DefinitionStoreError> {
     let mut levels: BTreeMap<String, Level> = BTreeMap::new();
 

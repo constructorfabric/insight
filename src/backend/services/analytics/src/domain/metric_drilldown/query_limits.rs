@@ -20,8 +20,6 @@ pub(crate) fn with_evidence_query_limits(query: Query) -> Query {
 mod tests {
     use super::*;
 
-    // Building a query is lazy — no socket is opened, so the settings chain
-    // runs connection-free.
     #[test]
     fn limits_apply_to_a_connection_free_query() {
         let client = clickhouse::Client::default().with_url("http://localhost:8123");

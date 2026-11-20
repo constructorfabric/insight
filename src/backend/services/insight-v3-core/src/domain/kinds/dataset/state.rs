@@ -1,13 +1,5 @@
-//! Where a dataset is between being named and being usable, and who is
-//! moving it there.
-
 use std::fmt;
 
-/// A dataset as its row records it. A dataset with no row is absent.
-///
-/// Claimed and Removing both hold the name against every other writer: one so
-/// an unfinished create can be repeated, the other so nothing takes the name
-/// while its records are being dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DatasetState {
     Claimed,
@@ -15,10 +7,6 @@ pub(crate) enum DatasetState {
     Removing,
 }
 
-/// What an attempt holds a dataset for.
-///
-/// Replacing a ready declaration takes none: it touches no table, so it
-/// decides and commits in one transaction rather than leasing the dataset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Operation {
     Create,
@@ -34,8 +22,6 @@ impl DatasetState {
         }
     }
 
-    /// The state as the row spells it, or nothing for a word this service
-    /// never wrote.
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "claimed" => Some(Self::Claimed),

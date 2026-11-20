@@ -1,8 +1,3 @@
-//! Meter-provider lifecycle for the seed/sync CLI jobs, which run outside the
-//! `run_server` bootstrap that installs the global provider. A job exits before
-//! the periodic exporter's interval elapses, so the `force_flush` in
-//! [`MetricsGuard::shutdown`] is what actually delivers a run's series.
-
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig};
 use opentelemetry_sdk::Resource;
@@ -18,8 +13,6 @@ pub(crate) struct MetricsGuard {
 }
 
 impl MetricsGuard {
-    // A disabled export or an unbuildable exporter yields an empty guard —
-    // logged, never fatal, since a job must still run without metrics.
     pub(crate) fn install(cfg: &OpenTelemetryConfig) -> Self {
         if !cfg.metrics.enabled {
             tracing::info!("OpenTelemetry metrics disabled; seed instruments are no-ops");
@@ -41,8 +34,6 @@ impl MetricsGuard {
         }
     }
 
-    // Best-effort: a failed flush is logged, never propagated — losing a metric
-    // must not fail a job.
     pub(crate) fn shutdown(mut self) {
         let Some(provider) = self.provider.take() else {
             return;

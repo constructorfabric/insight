@@ -45,7 +45,6 @@ impl Stored {
             .keys()
             .filter(|(held, _)| held == dashboard)
             .map(|(_, grantee)| reach(grantee));
-        // INVARIANT: matches `folder_carrying` - a carrying folder shows the dashboard to its owner and its grantees.
         let carried = self
             .entries
             .iter()
@@ -87,8 +86,6 @@ impl Stored {
         grants
     }
 
-    /// Who owns it now, and whether `by` may change its grants, as the
-    /// store's locked read answers it; none when it is not stored.
     fn sharing_standing(&self, shared: Shared<'_>, by: PersonId) -> Option<(Owner, bool)> {
         let owner = match shared {
             Shared::Dashboard(id) => {
@@ -322,7 +319,6 @@ impl Grants for MemoryDefinitions {
             return Ok(Handover::OwnerChanged);
         }
 
-        // INVARIANT: all or nothing, as the real transaction is.
         let mut applied = stored.clone();
         let key = dashboard.as_str().to_owned();
         applied.owners.insert(key.clone(), to);

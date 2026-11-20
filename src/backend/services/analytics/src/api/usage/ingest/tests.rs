@@ -103,8 +103,6 @@ fn every_field_the_caller_controls_is_bounded() {
 
 #[test]
 fn a_hoisted_field_is_bounded_before_the_batch_multiplies_it() {
-    // `meta` is one object cloned into every record, so an unclipped field
-    // there costs MAX_RECORDS times its own size.
     let hoisted = TelemetryRecord {
         context_app_name: Some("x".repeat(4096)),
         ..TelemetryRecord::default()
@@ -270,7 +268,6 @@ fn a_batch_whose_flush_stamp_was_hoisted_into_meta_keeps_its_own_times() {
 fn a_batch_keeps_every_record_the_sdks_duplicate_rides_with() {
     let tenant = Uuid::now_v7();
     let person = Uuid::now_v7();
-    // Neither page view carries its own name: the SDK hoists the one they share.
     let req = UsageIngestRequest {
         meta: TelemetryRecord {
             name: Some("page_view".to_owned()),

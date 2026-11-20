@@ -1,5 +1,3 @@
-//! What the model is told before it is asked anything.
-
 use super::Catalogue;
 use crate::domain::definition::Listed;
 
@@ -50,7 +48,6 @@ pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
     prompt
 }
 
-/// The label as a heading: the kinds name themselves in lower case.
 fn capitalized(word: &str) -> String {
     let mut letters = word.chars();
 

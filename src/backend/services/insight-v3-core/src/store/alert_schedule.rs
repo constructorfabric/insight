@@ -1,11 +1,3 @@
-//! The check schedule as `BullMQ` holds it in Redis: one repeating job per
-//! enabled rule, and the worker that runs them.
-//!
-//! `BullMQ` owns what a job queue owns — locks, stalled-job recovery, one
-//! iteration at a time per scheduler — so the rules here are only about
-//! naming: a scheduler is keyed by the rule, and its job carries the
-//! revision the store will accept a check for.
-
 #[cfg(test)]
 pub(crate) mod memory;
 
@@ -27,23 +19,14 @@ use crate::domain::alerts::evaluation::{Evaluated, EvaluationJob, Evaluator};
 use crate::domain::alerts::rule::Recorded;
 use crate::domain::alerts::schedule::{AlertSchedule, ScheduleError, Scheduled};
 
-/// The queue the checks go through. One per installation; rules are told
-/// apart by their scheduler key.
 const QUEUE: &str = "insight-v3-alerts-evaluate";
 const JOB: &str = "evaluate";
-/// The queue owed notifications go through, one job per notification,
-/// keyed by it so a second enqueue is the same job.
 const DELIVERY_QUEUE: &str = "insight-v3-alerts-deliver";
 const DELIVERY_JOB: &str = "deliver";
 const SCHEDULER_PREFIX: &str = "rule:";
-/// How many schedulers one listing reads. Bounded by the rule limit, which
-/// an installation sets far below this.
 const LISTING_BOUND: isize = 10_000;
-/// How long a shutdown waits for running checks.
 const CLOSE_TIMEOUT_MS: u64 = 10_000;
 const STALLED_INTERVAL_MS: u64 = 30_000;
-/// How many finished checks the queue keeps for inspection, per outcome;
-/// older ones are removed as new ones finish.
 const FINISHED_CHECKS_KEPT: usize = 1000;
 
 fn scheduler_id(rule_id: Uuid) -> String {
@@ -60,7 +43,6 @@ fn unreachable(error: impl std::error::Error + Send + Sync + 'static) -> Schedul
     ScheduleError(Box::new(error))
 }
 
-/// The queue side: what rule writes reach.
 pub(crate) struct RedisSchedule {
     queue: Queue,
 }
@@ -145,21 +127,17 @@ impl fmt::Debug for RedisSchedule {
     }
 }
 
-/// What a running check needs, given to the worker once.
 pub(crate) trait Checks: Send + Sync + 'static {
     fn evaluator(&self) -> Evaluator<'_>;
 
-    /// Where a notification the check owes is queued to be sent.
     fn deliveries(&self) -> &dyn Deliveries;
 }
 
-/// What a running send needs, given to the worker once.
 pub(crate) trait Sends: Send + Sync + 'static {
     fn deliverer(&self) -> Deliverer<'_>;
 }
 
-/// The queue side of delivery: what a recorded notification reaches. A
-/// finished job is removed at once, whichever way it ended: the outcome is
+/// A finished job is removed at once, whichever way it ended: the outcome is
 /// on the notification, and a job left behind would swallow the next
 /// enqueue of the same id when reconciling queues an owed one again.
 pub(crate) struct RedisDeliveries {
@@ -222,7 +200,6 @@ impl fmt::Debug for RedisDeliveries {
     }
 }
 
-/// The worker side of delivery: takes sends off the queue and runs them.
 pub(crate) struct DeliveryWorker {
     worker: Worker,
 }
@@ -272,9 +249,6 @@ impl fmt::Debug for DeliveryWorker {
     }
 }
 
-/// One send, as the queue hands it over. An unconfirmed send that has
-/// attempts left fails the job so `BullMQ` retries it after its backoff;
-/// everything else is final and the job completes.
 async fn send(
     sends: &dyn Sends,
     job: &Job,
@@ -312,8 +286,6 @@ async fn send(
     }
 }
 
-/// The worker side: takes checks off the queue and runs them until told to
-/// stop.
 pub(crate) struct AlertWorker {
     worker: Worker,
 }
@@ -346,7 +318,6 @@ impl AlertWorker {
         Ok(Self { worker })
     }
 
-    /// Stops taking checks and waits, briefly, for the running ones.
     pub(crate) async fn stop(&self) {
         if let Err(error) = self.worker.close(CLOSE_TIMEOUT_MS).await {
             tracing::warn!(%error, "the alert worker did not close cleanly");
@@ -363,9 +334,6 @@ impl fmt::Debug for AlertWorker {
     }
 }
 
-/// One check, as the queue hands it over. Only a store that did not answer
-/// fails the job; the iteration is then dropped and the next one runs at its
-/// time. Everything else is a finding recorded on the rule.
 async fn run(checks: &dyn Checks, job: &Job) -> Result<serde_json::Value, bullmq::Error> {
     let parsed: EvaluationJob = serde_json::from_value(job.data().clone())?;
     let started = std::time::Instant::now();

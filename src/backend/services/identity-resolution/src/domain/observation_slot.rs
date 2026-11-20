@@ -1,11 +1,3 @@
-//! Distinct `created_at` per observation within one write.
-//!
-//! `uq_person_observation` ends in `created_at` and carries no account
-//! discriminator, so two accounts of one source landing on one person at the
-//! same instant collide and `INSERT IGNORE` drops one binding. Both writers —
-//! the seed (timestamps from `_synced_at`) and the operator corrections
-//! (timestamps from the operation's clock) — claim slots through here.
-
 use std::collections::HashSet;
 
 use chrono::{TimeDelta, Timelike};
@@ -22,8 +14,6 @@ pub fn truncate_to_micros(at: DateTime) -> DateTime {
     at - TimeDelta::nanoseconds(i64::from(at.nanosecond() % 1_000))
 }
 
-/// The natural-key columns a writer controls; the tenant is bound once per
-/// operation by the caller.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ObservationKey {
     person_id: Uuid,
@@ -33,9 +23,6 @@ struct ObservationKey {
     created_at: DateTime,
 }
 
-/// Hands out an unused `created_at` per natural key, nudging forward by whole
-/// microseconds — the smallest step `DATETIME(6)` stores, so chronology is
-/// preserved. One allocator per write operation.
 #[derive(Debug, Default)]
 pub struct SlotAllocator {
     taken: HashSet<ObservationKey>,
@@ -47,7 +34,6 @@ impl SlotAllocator {
         Self::default()
     }
 
-    /// Claim `preferred`, or the next free microsecond for this key.
     pub fn claim(
         &mut self,
         person_id: Uuid,

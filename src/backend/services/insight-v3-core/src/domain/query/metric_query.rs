@@ -1,5 +1,3 @@
-//! A metric definition: the JSON a reader stores, and what it compiles into.
-
 mod clock;
 mod compiler;
 mod engine;
@@ -32,44 +30,26 @@ use filter::Filter;
 
 use crate::domain::query::time_window::WindowError;
 
-/// The alias the fact table is read under, so a column of the metric's own
-/// table is never mistaken for one a join brought in.
 const FACT_ALIAS: &str = "__f";
 
-/// The column a paged read of a plain metric over a dataset carries beside
-/// the metric's own: the record's id, which tells two records apart that
-/// the selected columns cannot. Never shown; a reader paging strips it.
 pub(crate) const RECORD_COLUMN: &str = "__drilldown_record";
 
-/// The column a paged read of a plain metric over a warehouse table numbers
-/// its twins under: rows the selected columns cannot tell apart, counted
-/// off so a page cut between two of them keeps the rest. Never shown.
 pub(crate) const TWIN_COLUMN: &str = "__drilldown_twin";
 
-/// One place a metric names a field of its dataset.
 #[derive(Debug)]
 pub(crate) struct Reference<'a> {
-    /// Where in the submitted body this reference sits.
     pub(crate) at: String,
     pub(crate) field: &'a str,
     pub(crate) used: Used<'a>,
 }
 
-/// What a metric does with the field it names, which is what decides whether
-/// the declared type admits it.
 #[derive(Debug)]
 pub(crate) enum Used<'a> {
-    /// Selected, with the aggregate applied to it if there is one.
     Selected(Option<Aggregate>),
-    /// Compared against a value.
     Compared(&'a serde_json::Value),
-    /// Read as the window's clock.
     Clock,
 }
 
-/// What a result column holds, as far as a reader ordering or narrowing by
-/// it needs to know. Coarser than the field's own type on purpose: a page
-/// is compared and shown, never computed with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ColumnKind {
@@ -78,19 +58,14 @@ pub(crate) enum ColumnKind {
     Date,
 }
 
-/// The aggregates that need a number under them, told from those that do not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Aggregate {
-    /// Sum or average, which only a number admits.
     Arithmetic,
-    /// Count, minimum or maximum, which any type admits.
     Ordering,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MetricQuery {
-    /// The dataset this metric reads. The relation below it is refused, and
-    /// is read back only to say so.
     #[serde(default)]
     dataset: Option<String>,
     #[serde(default)]
@@ -112,25 +87,15 @@ pub(crate) struct MetricQuery {
     limit: Option<u32>,
 }
 
-/// What this query addresses, and whether the clock it declares is sound.
 impl MetricQuery {
-    /// The dataset this metric reads, when it names one.
     pub(crate) fn dataset(&self) -> Option<&str> {
         self.dataset.as_deref()
     }
 
-    /// Whether this metric addresses a relation of its own, which a metric
-    /// over a dataset may not.
     pub(crate) fn addresses_a_relation(&self) -> bool {
         !self.table.is_empty() || self.database.is_some()
     }
 
-    /// Every place this metric reaches into a record itself instead of naming
-    /// a field the dataset declares.
-    ///
-    /// Where a value sits, and whether it holds a person, are the
-    /// declaration's to answer; a metric that answers them itself reads
-    /// something the dataset never promised.
     pub(crate) fn physical_references(&self) -> Vec<(String, &'static str)> {
         let mut reached = Vec::new();
 
@@ -154,11 +119,6 @@ impl MetricQuery {
         reached
     }
 
-    /// Every declared field this metric names: the source of each selected
-    /// field, of each filter, and of the clock.
-    ///
-    /// Told apart from the names the metric produces, which are its own
-    /// columns and answer to nothing in the declaration.
     pub(crate) fn field_references(&self) -> Vec<Reference<'_>> {
         let mut named = Vec::new();
 
@@ -202,8 +162,6 @@ impl MetricQuery {
         named
     }
 
-    /// The columns this metric produces, which is what its grouping and its
-    /// ordering may name.
     pub(crate) fn output_names(&self) -> Vec<&str> {
         self.fields
             .iter()
@@ -211,8 +169,6 @@ impl MetricQuery {
             .collect()
     }
 
-    /// Where the grouping and the ordering name a column, with the place in
-    /// the body each came from.
     pub(crate) fn output_references(&self) -> Vec<(String, &str)> {
         let mut named: Vec<(String, &str)> = self
             .group_by
@@ -228,11 +184,9 @@ impl MetricQuery {
         named
     }
 
-    /// The clock the metric names itself, if it names one.
     pub(crate) fn own_clock(&self) -> Option<&str> {
         self.time.as_ref().and_then(TimeField::reads)
     }
-    /// The database, whether it came in its own field or qualified the table.
     pub(crate) fn database(&self) -> Option<&str> {
         self.split().0
     }
@@ -241,21 +195,12 @@ impl MetricQuery {
         self.split().1
     }
 
-    /// The column or json path a metric over a table windows by.
     pub(crate) fn table_clock(&self) -> Option<&str> {
         let time = self.time.as_ref()?;
 
         time.column.as_deref().or(time.json.as_deref())
     }
 
-    /// A table written `database.table` is read as both.
-    ///
-    /// The map the model is shown, and the lookup tool it calls, both address
-    /// a table as `database.table` - so it writes the qualified name in the
-    /// table field, and refusing that only spends a round trip teaching it a
-    /// distinction the wire format makes and nothing else does. Split only on
-    /// a single dot with an identifier either side; anything else stays whole
-    /// and is refused by the identifier check as before.
     fn split(&self) -> (Option<&str>, &str) {
         if self.database.is_some() {
             return (self.database.as_deref(), &self.table);
@@ -269,13 +214,10 @@ impl MetricQuery {
         }
     }
 
-    /// The columns this metric groups its rows by.
     pub(crate) fn groups(&self) -> &[String] {
         &self.group_by
     }
 
-    /// The order this metric asks for, when it asks for one: the column and
-    /// whether it runs downward.
     pub(crate) fn own_order(&self) -> Option<(&str, bool)> {
         self.order_by.as_ref().map(|order| {
             (
@@ -285,9 +227,6 @@ impl MetricQuery {
         })
     }
 
-    /// What each result column holds, in result order, for a reader that
-    /// orders or narrows by it. Over a dataset the declaration says what a
-    /// plain field is; over a table the metric's own `type` does.
     pub(crate) fn column_kinds(
         &self,
         declaration: Option<&Declaration>,
@@ -325,10 +264,6 @@ impl MetricQuery {
         kinds
     }
 
-    /// The columns a result carries, in order — each field's `as_name`. What
-    /// a widget must name to draw anything.
-    /// `clocked` says whether a window over this metric has a date to bucket
-    /// by, which for a metric over a dataset only the declaration knows.
     pub(crate) fn column_names(&self, clocked: bool) -> Vec<String> {
         let mut names = Vec::with_capacity(self.fields.len() + usize::from(clocked));
         if clocked {
@@ -346,10 +281,6 @@ impl MetricQuery {
             .transpose()?)
     }
 
-    /// Whether the window this metric declares holds up on its own.
-    ///
-    /// A metric over a dataset names a declared field as its clock, and
-    /// whether that field is a date is the declaration's to answer, not this.
     pub(crate) fn check_window(&self) -> Result<(), MetricQueryError> {
         if self.dataset.is_none() {
             self.has_clock()?;
@@ -359,8 +290,6 @@ impl MetricQuery {
         Ok(())
     }
 
-    /// Whether this metric names a timestamp to window and bucket by, and a
-    /// refusal when it names one it cannot read.
     pub(crate) fn has_clock(&self) -> Result<bool, MetricQueryError> {
         Ok(self
             .time
@@ -371,7 +300,6 @@ impl MetricQuery {
     }
 }
 
-/// The one read that resolves a relative window before the metric runs.
 #[derive(Debug)]
 pub(crate) struct UndatedQuery {
     sql: String,
@@ -383,14 +311,9 @@ pub(crate) struct CompiledQuery {
     sql: String,
     binds: Vec<FilterBind>,
     column_types: HashMap<String, FieldType>,
-    /// The columns whose numbers are percentages, so a reader can say so.
     percents: Vec<String>,
     exacts: Vec<String>,
-    /// Columns the query carries for its own reasons, which no reader is
-    /// shown.
     hidden: Vec<String>,
-    /// Whether twins - rows the columns cannot tell apart - have to be
-    /// numbered by whoever pages this, because nothing in the row can.
     numbered: bool,
 }
 

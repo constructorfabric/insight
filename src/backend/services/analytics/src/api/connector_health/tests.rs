@@ -1,11 +1,3 @@
-//! The refusals this surface raises.
-//!
-//! Asserted against the `Problem` JSON rather than through a router, so they
-//! stay free of the production `AppState` (which needs MariaDB, ClickHouse and
-//! an identity client). What matters here is that a refused caller learns which
-//! surface refused them, and that a read failure never leaks the warehouse's
-//! own words onto the wire.
-
 use toolkit_canonical_errors::{CanonicalError, Problem};
 
 use super::*;
@@ -100,8 +92,6 @@ fn naming_both_halves_narrows_to_one_installation() -> Result<(), Box<dyn std::e
 #[test]
 fn half_an_identity_is_refused_rather_than_quietly_widened()
 -> Result<(), Box<dyn std::error::Error>> {
-    // Widening back to the connector would answer a question about one
-    // installation with rows from all of them, and the answer would look right.
     for (tenant, source, missing) in [
         (Some("acme"), None, "source_id"),
         (None, Some("claude-team-main"), "tenant_id"),

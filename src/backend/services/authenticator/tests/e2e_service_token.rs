@@ -1,20 +1,3 @@
-//! End-to-end service-token loop against a running authenticator (nginx+auth
-//! step 06). `#[ignore]` by default — needs the stack up (Redis + authenticator
-//! with the dev `testclient` registry). `run-e2e.sh` brings it up and runs it.
-//!
-//! It drives the whole flow through the SDK `ServiceTokenClient`:
-//!   1. obtain a tenant-scoped service token and verify it against the JWKS
-//!      (`sub = sid = service:testclient`, `roles` includes `service`,
-//!      `tenant_id = tenant-a`);
-//!   2. a replayed assertion is rejected (single-use `jti`);
-//!   3. an assertion signed with a key the registry does not hold is rejected;
-//!   4. a request that names no tenant is rejected (tenant isolation).
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 TOKEN_ENDPOINT=http://localhost:8093/internal/token \
-//!   cargo test -p authenticator --test e2e_service_token -- --ignored --nocapture
-//! ```
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -35,9 +18,6 @@ fn token_endpoint() -> String {
     env("TOKEN_ENDPOINT", "http://localhost:8093/internal/token")
 }
 
-/// Path to the generated dev private key matching the `testclient` registry
-/// entry. run-e2e.sh generates the keypair and exports `SVC_KEY` (no key
-/// material is committed).
 fn testclient_key_path() -> String {
     std::env::var("SVC_KEY").expect("SVC_KEY must point at the generated testclient private key")
 }
@@ -58,13 +38,11 @@ struct Jwk {
 struct Claims {
     sub: String,
     tenant_id: String,
-    /// Space-delimited on the wire (OAuth `scope` shape).
     roles: String,
     sid: String,
     aud: String,
 }
 
-/// Fetch + verify a gateway JWT against the authenticator's published JWKS.
 async fn verify_against_jwks(jwt: &str) -> Claims {
     let http = common::client();
     let jwks: Jwks = http
@@ -98,7 +76,6 @@ async fn service_token_full_loop() {
         ServiceTokenClient::from_key_file("testclient", testclient_key_path(), &endpoint).unwrap();
     let tenant = "tenant-a";
 
-    // 1. Obtain a (tenant-scoped) service token and verify it against the JWKS.
     let bearer = client
         .bearer(tenant)
         .await
@@ -107,8 +84,6 @@ async fn service_token_full_loop() {
         .strip_prefix("Bearer ")
         .expect("bearer() returns a Bearer value");
     let claims = verify_against_jwks(jwt).await;
-    // `sub` is the stable per-service UUID (v5 over "service:<name>"); `sid`
-    // carries the service:<name> correlation handle.
     let expected_sub =
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"service:testclient").to_string();
     assert_eq!(claims.sub, expected_sub, "sub is the per-service UUIDv5");
@@ -124,7 +99,6 @@ async fn service_token_full_loop() {
         "the requested tenant is carried in the token"
     );
 
-    // 2. Replay: the same assertion must be accepted once, then rejected.
     let assertion = client.make_assertion().unwrap();
     client
         .post(&assertion, tenant)
@@ -135,8 +109,6 @@ async fn service_token_full_loop() {
         "a replayed assertion must be rejected"
     );
 
-    // 3. Wrong key: an assertion signed by a key the registry does not hold is
-    //    rejected, even though it claims iss/sub = testclient.
     let (wrong_priv, _) = generate_keypair();
     let impostor = ServiceTokenClient::from_key_pem("testclient", &wrong_priv, &endpoint).unwrap();
     let forged = impostor.make_assertion().unwrap();
@@ -145,14 +117,12 @@ async fn service_token_full_loop() {
         "an assertion signed with an unregistered key must be rejected"
     );
 
-    // 4. Tenant isolation: a request that names no tenant is refused (400).
     assert!(
         client.fetch("").await.is_err(),
         "a service token must name a tenant; an unscoped request is rejected"
     );
 }
 
-/// A fresh P-256 keypair: (PKCS#8 private PEM, SPKI public PEM).
 fn generate_keypair() -> (String, String) {
     use p256::SecretKey;
     use p256::elliptic_curve::Generate as _;

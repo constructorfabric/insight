@@ -1,11 +1,3 @@
-# Gateway e2e stack (dev/CI ONLY) -- NGINX_BFF.md §D.
-#
-# The full edge: the real authenticator + a realm-importing Keycloak behind the
-# OpenResty gateway, with stub identity + echo upstream. Everything runs on one
-# compose network so DNS names resolve for both nginx upstreams and the Lua
-# cosocket (resolver 127.0.0.11), and the OIDC redirect flow works without URL
-# rewriting inside the network. Driven by run-e2e.sh; the host-side pytest
-# rewrites the in-network hostnames to the published ports (conftest.py).
 name: insight-gw-e2e
 
 services:
@@ -13,7 +5,6 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
-      # Over the network — see the base services in docker-compose.yml.
       test: ["CMD-SHELL", "redis-cli -h $$HOSTNAME ping | grep -q PONG"]
       interval: 2s
       timeout: 2s
@@ -25,17 +16,12 @@ services:
       - ../../authenticator/tests/identity-stub.py:/identity-stub.py:ro
     command: ["python", "/identity-stub.py", "0.0.0.0:8092"]
 
-  # Real IdP: same image the compose stack pins (docker-compose.yml), importing
-  # the generated roster realm (conftest.py runs insight-seed-realm into
-  # ./keycloak-import before `up`).
   keycloak:
     image: quay.io/keycloak/keycloak:26.7
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      # In-network origin, so discovery, token exchange, and the id_token `iss`
-      # agree; the host-side pytest rewrites it to the published port.
       KC_HOSTNAME: "http://keycloak:8085"
       KC_HTTP_ENABLED: "true"
       KC_HTTP_PORT: "8085"
@@ -43,8 +29,6 @@ services:
     volumes:
       - ./keycloak-import:/opt/keycloak/data/import:ro
     ports:
-      # Published so the host-side pytest can drive the OIDC redirect chain and
-      # the Keycloak login form.
       - "${KEYCLOAK_E2E_PORT:-18084}:8085"
 
   authenticator:
@@ -58,7 +42,6 @@ services:
       keycloak: {condition: service_started}
       identity-stub: {condition: service_started}
     ports:
-      # Published so pytest can assert JWKS is served directly by the authenticator.
       - "${AUTHENTICATOR_E2E_PORT:-18083}:8083"
     environment:
       APP__gears__authenticator__config__redis_url: "redis://redis:6379"
@@ -68,17 +51,9 @@ services:
       APP__gears__authenticator__config__redirect_uri: "http://gateway:8080/auth/callback"
       APP__gears__authenticator__config__idp__issuer_url: "http://keycloak:8085/realms/insight"
       APP__gears__authenticator__config__idp__client_id: "insight-authenticator"
-      # The generated realm's confidential-client secret (insight-seed-realm
-      # default; kc-realm docs call it the dev secret).
       APP__gears__authenticator__config__idp__client_secret: "insight-authenticator-dev-secret"
-      # Required since the login-bootstrap person resolve: the identity-stub
-      # answers any source_type, so the value only has to be non-empty. The
-      # external id is the default `sub` claim (the realm user's roster uuid).
       APP__gears__authenticator__config__idp__source_type: "keycloak"
-      # Sourced from conftest.py's AUTHZ_CACHE_MAX_AGE (exported into the env).
       APP__gears__authenticator__config__authz_cache_max_age_seconds: "${AUTHZ_CACHE_MAX_AGE:-10}"
-      # Resolve the baked dev `testclient` registry entry's public_key_paths
-      # against the mounted keys dir (conftest generates testclient.pub.pem).
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/keys"
     volumes:
       - ./keys:/keys:ro
@@ -101,7 +76,6 @@ services:
       GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
       GATEWAY_FRONT_URL: "http://echo:9090"
     volumes:
-      # The container compiles this into nginx.conf at startup (routes -> echo).
       - ./routes.e2e.yaml:/etc/gateway/routes.yaml:ro
     ports:
       - "${GW_E2E_PORT:-18080}:8080"

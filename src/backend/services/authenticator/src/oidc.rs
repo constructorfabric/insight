@@ -1,15 +1,3 @@
-//! OIDC relying-party client, built on the `openidconnect` crate.
-//!
-//! `openidconnect` owns the standards-heavy, security-critical work: discovery,
-//! authorization-code + PKCE, code exchange, and id_token validation
-//! (signature via JWKS, `iss`, `aud`, `nonce`, `exp`, algorithm allowlist). We
-//! keep only two thin bits it doesn't surface through the `Core*` typed API:
-//! the configurable tenant claim (`idp.tenant_claim`; interim — moves to the
-//! Identity membership API, constructorfabric/insight#1687) and the OIDC `sid`
-//! (back-channel logout index), both read from the **already-validated**
-//! id_token payload; plus the RP-initiated `end_session_endpoint`, which is
-//! not part of core discovery.
-
 use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -22,77 +10,38 @@ use openidconnect::{
 use crate::config::{HostIdpConfig, IdpConfig, ResolveBy};
 use crate::identity::IdpIdentity;
 
-/// What `authorize` hands back for the handler to stash in the login state.
 pub struct AuthorizeStart {
-    /// The IdP `/authorize` URL to 302 the browser to.
     pub url: String,
-    /// CSRF `state` (the login-state key).
     pub state: String,
-    /// Nonce to bind the eventual id_token.
     pub nonce: String,
-    /// PKCE verifier to replay at code exchange.
     pub pkce_verifier: String,
 }
 
-/// The outcome of a successful callback exchange + validation.
 pub struct AuthenticatedIdp {
-    /// The internal-facing identity distilled from the id_token.
     pub identity: IdpIdentity,
-    /// The IdP issuer (validated) — keys the back-channel logout index.
     pub issuer: String,
-    /// OIDC `sid` for the back-channel logout index (when present).
     pub idp_sid: Option<String>,
-    /// Raw id_token for `id_token_hint` on RP-initiated logout.
     pub id_token: String,
-    /// Rotating IdP refresh token (when granted).
     pub refresh_token: Option<String>,
-    /// IdP access-token lifetime in seconds (drives the refresh schedule).
     pub expires_in: Option<u64>,
 }
 
-/// One background-refresh attempt's outcome (G5 transient-vs-definitive).
 #[derive(Debug)]
 pub enum RefreshOutcome {
-    /// The grant succeeded; store the rotated token + new expiry back.
     Refreshed {
-        /// The rotated refresh token; `None` = the IdP kept the old one valid.
         new_refresh_token: Option<String>,
-        /// New access-token lifetime (drives the next schedule entry).
         expires_in: Option<u64>,
     },
-    /// Definitive refusal (revoked / expired / user disabled): kill the session.
     InvalidGrant(String),
-    /// Transport / 5xx / 429: back off and retry, never revoke.
     Transient(String),
 }
 
-/// Build the HTTP client every [`OidcClient`] shares (one connection pool
-/// regardless of how many issuers the deployment serves).
-///
-/// # Errors
-/// Fails when `extra_ca_cert_path` is unreadable/empty or the `reqwest`
-/// client cannot be constructed.
 pub fn build_http(idp: &IdpConfig) -> anyhow::Result<reqwest::Client> {
-    // Do not follow redirects: the RP must never chase the IdP's 3xx itself
-    // (SSRF-safety guidance from the openidconnect docs). A total timeout is
-    // mandatory (reqwest has none by default): the background refresher runs
-    // each grant under a 30 s per-session lock, so a hung IdP connection
-    // (half-open TCP, no RST) must fail well before that — otherwise the
-    // request outlives its lock, a second worker re-runs the grant with the
-    // same one-time-use refresh token, and the IdP burns it → false logout.
-    // It also caps semaphore-permit hold time so hung calls can't wedge the
-    // whole refresher (G5).
+    // Do not follow redirects: SSRF-safety guidance from the openidconnect docs.
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10))
         .connect_timeout(std::time::Duration::from_secs(5));
-    // Trust an extra internal/corporate CA for the IdP connection, on
-    // top of whichever trust store this build's TLS backend resolves by
-    // default. Explicit `.add_root_certificate()` works regardless of
-    // whether Cargo's feature unification landed on native-tls (OS trust
-    // store) or rustls (bundled webpki-roots) for this binary — unlike
-    // an OS-level trust-store file/env-var (e.g. SSL_CERT_FILE), which
-    // only applies if native-tls won and cannot be relied on here.
     if !idp.extra_ca_cert_path.is_empty() {
         let pem = std::fs::read(&idp.extra_ca_cert_path)
             .with_context(|| format!("read extra_ca_cert_path {:?}", idp.extra_ca_cert_path))?;
@@ -105,9 +54,7 @@ pub fn build_http(idp: &IdpConfig) -> anyhow::Result<reqwest::Client> {
                 idp.extra_ca_cert_path
             )
         })?;
-        // A whitespace/comment-only file parses to zero certs without
-        // erroring, silently leaving only the default trust store —
-        // reject it so a misconfigured mount fails loudly at startup.
+        // A whitespace/comment-only file parses to zero certs without erroring.
         anyhow::ensure!(
             !certs.is_empty(),
             "extra_ca_cert_path {:?} contained no certificates",
@@ -120,10 +67,6 @@ pub fn build_http(idp: &IdpConfig) -> anyhow::Result<reqwest::Client> {
     builder.build().context("build OIDC HTTP client")
 }
 
-/// The OIDC client for ONE issuer — holds that issuer's client registration;
-/// builds the `openidconnect` client per op (discovery is a cold-path
-/// login/callback concern). Which instance serves a request is decided by
-/// [`crate::issuers::IssuerSelector`].
 #[derive(Clone)]
 pub struct OidcClient {
     issuer_url: String,
@@ -138,19 +81,11 @@ pub struct OidcClient {
 }
 
 impl OidcClient {
-    /// The single-issuer (degenerate map) client, from the flat `idp.*` fields.
     #[must_use]
     pub fn flat(idp: &IdpConfig, redirect_uri: &str, http: reqwest::Client) -> Self {
         Self {
             // Do NOT normalize a trailing slash: OIDC issuer comparison is a
-            // byte-exact string match against the `issuer` field the IdP's
-            // own discovery document returns (RFC 8414 / OIDC Discovery
-            // §4.3) — no trailing-slash equivalence is defined. Some
-            // spec-compliant IdPs report an issuer WITH a trailing slash;
-            // stripping it here makes every login fail with `unexpected
-            // issuer URI` even though the configured value and the IdP's
-            // real issuer are the same URL. Operators must set `issuer_url`
-            // to exactly what the IdP's discovery document reports.
+            // byte-exact match against the discovery `issuer` (OIDC Discovery §4.3).
             issuer_url: idp.issuer_url.clone(),
             client_id: idp.client_id.clone(),
             client_secret: idp.client_secret.clone(),
@@ -163,9 +98,6 @@ impl OidcClient {
         }
     }
 
-    /// One `idp.hosts` entry's client: the entry supplies the issuer + client
-    /// registration (and optional redirect/tenant overrides); every other
-    /// knob comes from the shared `idp.*` fields.
     #[must_use]
     pub fn for_host(
         idp: &IdpConfig,
@@ -187,7 +119,6 @@ impl OidcClient {
         }
     }
 
-    /// Fetch the provider discovery metadata.
     async fn metadata(&self) -> anyhow::Result<CoreProviderMetadata> {
         let issuer = IssuerUrl::new(self.issuer_url.clone()).context("invalid issuer_url")?;
         CoreProviderMetadata::discover_async(issuer, &self.http)
@@ -195,16 +126,10 @@ impl OidcClient {
             .context("OIDC discovery")
     }
 
-    /// Confidential-client secret, if configured (public clients omit it).
     fn secret(&self) -> Option<ClientSecret> {
         (!self.client_secret.is_empty()).then(|| ClientSecret::new(self.client_secret.clone()))
     }
 
-    /// Begin login: build the `/authorize` URL with PKCE (S256), a random state
-    /// and nonce.
-    ///
-    /// # Errors
-    /// Fails on discovery / URL-construction errors.
     pub async fn authorize(&self, scopes: &[String]) -> anyhow::Result<AuthorizeStart> {
         // Built inline (not via a helper) so the endpoint type-state markers
         // from `from_provider_metadata` + `set_redirect_uri` are preserved.
@@ -223,7 +148,7 @@ impl OidcClient {
             openidconnect::CsrfToken::new_random,
             Nonce::new_random,
         );
-        // `openid` is added by the flow; add the rest from config.
+        // `openid` is added by the flow.
         for scope in scopes.iter().filter(|s| s.as_str() != "openid") {
             builder = builder.add_scope(Scope::new(scope.clone()));
         }
@@ -237,12 +162,6 @@ impl OidcClient {
         })
     }
 
-    /// Exchange the code (with the PKCE verifier), validate the id_token, and
-    /// distill the principal.
-    ///
-    /// # Errors
-    /// Fails on transport errors, a token-endpoint error, or id_token
-    /// validation failure (signature / iss / aud / nonce / exp).
     pub async fn exchange_code_pkce(
         &self,
         code: &str,
@@ -263,8 +182,6 @@ impl OidcClient {
             .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier.to_owned()))
             .request_async(&self.http)
             .await
-            // Surface the IdP's OAuth error + description (ServerResponse), not a
-            // bare "code exchange", so the failure is diagnosable.
             .map_err(|e| {
                 use openidconnect::RequestTokenError::ServerResponse;
                 match &e {
@@ -287,16 +204,10 @@ impl OidcClient {
             )
             .context("id_token validation failed")?;
 
-        // Standard claims from the typed API.
         let sub = claims.subject().to_string();
         let issuer = claims.issuer().to_string();
         let email = claims.email().map(|e| e.to_string()).unwrap_or_default();
 
-        // Non-standard claims read from the already-validated payload. One and
-        // only one tenant per token (EPIC #1583): the claim name is per-IdP
-        // (`tenant_id` on Keycloak, `tid` on Entra); claim-less IdPs
-        // (Okta) fall back to the configured default tenant; empty = downstream
-        // fails closed.
         let raw = id_token.to_string();
         let mut tenant_id = payload_tenant(&raw, &self.tenant_claim);
         if tenant_id.is_empty() && !self.default_tenant_id.is_empty() {
@@ -305,8 +216,6 @@ impl OidcClient {
         }
         let idp_sid = payload_string(&raw, "sid");
 
-        // How this login finds its person is decided ONCE, by config — see
-        // `resolve_target`.
         let resolve_by =
             resolve_target(self.resolve_by, &raw, &sub, &self.external_id_claim, &email)?;
 
@@ -325,11 +234,6 @@ impl OidcClient {
         })
     }
 
-    /// Run a `refresh_token` grant for the background refresher (G5). The
-    /// outcome distinguishes a **definitive** IdP verdict (`invalid_grant`:
-    /// revoked / expired / user disabled → the caller kills the session) from
-    /// **transient** failures (network, 5xx, 429 → the caller backs off and
-    /// retries; nobody is logged out by a blip).
     pub async fn refresh_grant(&self, refresh_token: &str) -> RefreshOutcome {
         use openidconnect::RequestTokenError::ServerResponse;
         use openidconnect::core::CoreErrorResponseType;
@@ -364,31 +268,20 @@ impl OidcClient {
                         .unwrap_or_default(),
                 )
             }
-            // Every other token-endpoint error (invalid_client, 5xx-shaped
-            // bodies, 429) and all transport/parse errors are transient: fail
-            // open on transport, fail closed only on the definitive verdict.
             Err(e) => RefreshOutcome::Transient(format!("{e}")),
         }
     }
 
-    /// The IdP issuer URL this client trusts (back-channel `iss` check).
     #[must_use]
     pub fn issuer(&self) -> &str {
         &self.issuer_url
     }
 
-    /// The registered client id (back-channel `aud` check).
     #[must_use]
     pub fn client_id(&self) -> &str {
         &self.client_id
     }
 
-    /// Fetch the IdP's JWKS (via discovery) for back-channel `logout_token`
-    /// verification. Cold path — back-channel logout is rare — so no cache:
-    /// a fresh fetch also picks up IdP key rotation immediately.
-    ///
-    /// # Errors
-    /// Fails when discovery or the JWKS endpoint is unreachable / malformed.
     pub async fn idp_jwks(&self) -> anyhow::Result<jsonwebtoken::jwk::JwkSet> {
         #[derive(serde::Deserialize)]
         struct Disco {
@@ -416,9 +309,7 @@ impl OidcClient {
             .context("decode IdP JWKS")
     }
 
-    /// Build the RP-initiated logout URL. `end_session_endpoint` is not part of
-    /// core discovery, so it is fetched here directly. Returns `None` when the
-    /// IdP advertises no endpoint.
+    /// `end_session_endpoint` is not part of core discovery, so it is fetched here directly.
     #[must_use]
     pub async fn rp_logout_url(
         &self,
@@ -450,10 +341,7 @@ impl OidcClient {
     }
 }
 
-/// Read the single tenant from an (already-validated) compact JWT payload.
-/// Accepts a plain string (`tenant_id` on Keycloak, `tid` on Entra); a
-/// string array is tolerated by taking its first entry (a Keycloak multivalued
-/// mapper). Anything else yields empty (→ fail closed downstream).
+/// A string array is tolerated by taking its first entry (a Keycloak multivalued mapper).
 fn payload_tenant(jwt: &str, field: &str) -> String {
     match payload(jwt).as_ref().and_then(|v| v.get(field).cloned()) {
         Some(serde_json::Value::String(s)) => s,
@@ -465,17 +353,6 @@ fn payload_tenant(jwt: &str, field: &str) -> String {
     }
 }
 
-/// Build the [`ResolveTarget`] this login resolves through, from the mode the
-/// install declared.
-///
-/// FAIL CLOSED in both modes: a token that cannot answer the configured
-/// question is refused, never answered a different way. Trying the second mode
-/// when the first comes up empty is what `9c666a41f` removed, and the reason
-/// the mode is a declaration rather than a fallback chain.
-///
-/// A free function so both branches are testable: `exchange_code_pkce` needs a
-/// live token exchange, so anything left inline there is only exercised by an
-/// end-to-end run.
 fn resolve_target(
     mode: ResolveBy,
     raw: &str,
@@ -484,10 +361,6 @@ fn resolve_target(
     email: &str,
 ) -> anyhow::Result<crate::identity::ResolveTarget> {
     match mode {
-        // The IdP's stable external user id for `idp.source_type` — the join
-        // key identity-resolution's `persons` seeded under `value_type='id'`
-        // (e.g. Entra's `oid`; NOT `sub`, which is pairwise-unique per client
-        // for directory-backed IdPs).
         ResolveBy::ExternalId => {
             let external_id =
                 extract_external_id(raw, external_id_claim, sub).with_context(|| {
@@ -498,18 +371,9 @@ fn resolve_target(
                 })?;
             Ok(crate::identity::ResolveTarget::ExternalId(external_id))
         }
-        // The standard `email` claim, matched against the roster. An install
-        // picks this when its IdP has no directory connector, so nothing ever
-        // seeds an id binding for the provider.
         ResolveBy::Email => {
             let email = email.trim();
             if email.is_empty() {
-                // The install declared that logins resolve by address and the
-                // token brought none — a misconfigured claim mapping, not a user
-                // error, and it would otherwise surface only as an unexplained
-                // refusal for every single person. The address itself is not
-                // logged here: absence is the fact worth recording, and `sub`
-                // already names the account.
                 tracing::warn!(
                     sub = %sub,
                     "id_token carries no `email` claim but idp.resolve_by is email — \
@@ -520,13 +384,7 @@ fn resolve_target(
                      cannot resolve person for login"
                 );
             }
-            // In this mode the address IS the credential, so an IdP that tells
-            // us it has not verified it must not be taken at its word. Only an
-            // explicit `false` refuses: many providers omit the claim entirely,
-            // and treating absence as unverified would deny every login on the
-            // installs this mode exists for. An install whose IdP lets a user
-            // or a partner admin edit their own address without verification
-            // therefore needs that verification at the IdP, not here.
+            // Only an explicit `false` refuses: many providers omit `email_verified`.
             if payload_bool(raw, "email_verified") == Some(false) {
                 tracing::warn!(
                     sub = %sub,
@@ -545,12 +403,6 @@ fn resolve_target(
     }
 }
 
-/// Resolve the IdP's stable external user id for `external_id_claim`
-/// (`idp.external_id_claim`, default `"sub"`) from an already-validated
-/// id_token. `sub` is passed in already-extracted (the typed claim, always
-/// present per OIDC) so the common `external_id_claim == "sub"` case needs no
-/// extra JSON parse. Returns `None` — fail closed, no fallback — when a
-/// NON-default claim is configured but absent or empty in the payload.
 fn extract_external_id(raw_id_token: &str, external_id_claim: &str, sub: &str) -> Option<String> {
     if external_id_claim == "sub" {
         return Some(sub.to_owned());
@@ -558,10 +410,6 @@ fn extract_external_id(raw_id_token: &str, external_id_claim: &str, sub: &str) -
     payload_string(raw_id_token, external_id_claim).filter(|v| !v.is_empty())
 }
 
-/// Read a string claim from a compact JWT payload WITHOUT verification — for
-/// claims either already validated by `openidconnect` or, like the
-/// back-channel `iss` peek, used only to SELECT the verifier that then
-/// validates the token in full.
 pub(crate) fn payload_string(jwt: &str, field: &str) -> Option<String> {
     payload(jwt)?
         .get(field)?
@@ -569,14 +417,10 @@ pub(crate) fn payload_string(jwt: &str, field: &str) -> Option<String> {
         .map(std::borrow::ToOwned::to_owned)
 }
 
-/// A boolean claim off the already-validated payload. `None` when the claim is
-/// absent or not a boolean — the caller decides what absence means.
 fn payload_bool(jwt: &str, field: &str) -> Option<bool> {
     payload(jwt)?.get(field)?.as_bool()
 }
 
-/// Decode the payload segment of a compact JWT to JSON (no verification — the
-/// caller has already validated the token via `openidconnect`).
 fn payload(jwt: &str) -> Option<serde_json::Value> {
     let segment = jwt.split('.').nth(1)?;
     let bytes = B64.decode(segment).ok()?;
@@ -588,8 +432,6 @@ fn payload(jwt: &str) -> Option<serde_json::Value> {
 mod tests {
     use super::*;
 
-    /// Compact-JWT shell around a claims object (header/signature are dummies —
-    /// `payload` only reads the middle segment).
     fn jwt_with(claims: &serde_json::Value) -> String {
         let body = B64.encode(serde_json::to_vec(claims).unwrap());
         format!("e30.{body}.sig")
@@ -597,13 +439,11 @@ mod tests {
 
     #[test]
     fn tenant_claim_string_and_array_shapes() {
-        // Canonical shape: a plain string (`tenant_id` ours, `tid` Entra).
         let jwt = jwt_with(&serde_json::json!({"tenant_id": "t1"}));
         assert_eq!(payload_tenant(&jwt, "tenant_id"), "t1");
         let jwt = jwt_with(&serde_json::json!({"tid": "dir-guid"}));
         assert_eq!(payload_tenant(&jwt, "tid"), "dir-guid");
 
-        // Tolerated: an array (Keycloak multivalued mapper) — first entry wins.
         let jwt = jwt_with(&serde_json::json!({"tenant_id": ["t1", "t2"]}));
         assert_eq!(payload_tenant(&jwt, "tenant_id"), "t1");
     }
@@ -613,7 +453,6 @@ mod tests {
         let jwt = jwt_with(&serde_json::json!({"sub": "u1"}));
         assert!(payload_tenant(&jwt, "tenant_id").is_empty());
 
-        // Wrong shape (number / mixed array) never panics, yields empty.
         let jwt = jwt_with(&serde_json::json!({"tenant_id": 42}));
         assert!(payload_tenant(&jwt, "tenant_id").is_empty());
         let jwt = jwt_with(&serde_json::json!({"tenant_id": ["t1", 2]}));
@@ -622,8 +461,6 @@ mod tests {
 
     #[test]
     fn external_id_uses_configured_claim_when_present() {
-        // Entra-shaped: `oid` configured and present — resolved from `oid`,
-        // NOT from `sub` (they legitimately differ for directory-backed IdPs).
         let jwt = jwt_with(&serde_json::json!({"sub": "pairwise-sub", "oid": "entra-oid-123"}));
         assert_eq!(
             extract_external_id(&jwt, "oid", "pairwise-sub").as_deref(),
@@ -645,8 +482,6 @@ mod tests {
 
     #[test]
     fn external_id_defaults_to_sub() {
-        // idp.external_id_claim defaults to "sub" — no extra claim needed
-        // for IdPs where `sub` IS the stable directory id.
         let jwt = jwt_with(&serde_json::json!({"sub": "idp|dev-lead"}));
         assert_eq!(
             extract_external_id(&jwt, "sub", "idp|dev-lead").as_deref(),
@@ -663,8 +498,6 @@ mod tests {
             crate::identity::ResolveTarget::ExternalId(ref v) if v == "dir-id"
         ));
 
-        // The address is present in the token and must NOT be reached for:
-        // there is no fallback from one mode to the other.
         let without_oid = jwt_with(&serde_json::json!({"sub": "pairwise"}));
         assert!(
             resolve_target(
@@ -688,8 +521,6 @@ mod tests {
             crate::identity::ResolveTarget::RosterEmail(ref v) if v == "ivan@vz.com"
         ));
 
-        // `sub` is right there and is never substituted — an install that
-        // declared the address mode gets a refusal, not a different answer.
         for absent in ["", "   "] {
             assert!(
                 resolve_target(ResolveBy::Email, &jwt, "kc-uuid", "sub", absent).is_err(),
@@ -700,8 +531,6 @@ mod tests {
 
     #[test]
     fn an_unverified_address_is_refused_only_when_the_idp_says_so() {
-        // In this mode the address IS the credential, so an explicit denial
-        // from the IdP is decisive.
         let unverified = jwt_with(
             &serde_json::json!({"sub": "s", "email": "ivan@vz.com", "email_verified": false}),
         );
@@ -710,9 +539,6 @@ mod tests {
             "email_verified=false must refuse",
         );
 
-        // Absence is not denial: plenty of providers omit the claim, and
-        // refusing on absence would deny every login on exactly the installs
-        // this mode exists for.
         for tolerated in [
             serde_json::json!({"sub": "s", "email": "ivan@vz.com", "email_verified": true}),
             serde_json::json!({"sub": "s", "email": "ivan@vz.com"}),
@@ -727,13 +553,6 @@ mod tests {
 
     #[test]
     fn override_email_target_never_reads_external_id_claim() {
-        // The admin `__override` synthetic identity is built directly as
-        // `ResolveTarget::Email` in `api::handlers::resolve_override` — it
-        // never goes through `extract_external_id` / id_token claims at all,
-        // so a normal login's external-id resolution can't leak into it and
-        // vice versa. This test locks that the two variants stay distinct
-        // and that matching on `ResolveTarget` (not string emptiness) is what
-        // selects the lookup mode.
         let login = crate::identity::IdpIdentity {
             sub: "idp|dev-lead".to_owned(),
             email: "dev@company.nonpresent".to_owned(),

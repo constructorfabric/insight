@@ -1,7 +1,3 @@
-//! Typed builders for the per-experiment object trio. Pure functions over
-//! values, mirroring `deploy/preview/templates/*` — the manual chart stays the
-//! shape reference, and `render_contract` tests in this crate guard the drift.
-
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -21,11 +17,8 @@ use super::httproute::{
     RouteFilter, RouteMatch, UrlRewrite,
 };
 
-/// The one image previews may run. Hardcoded on purpose: the API accepts a tag
-/// only, so there is no arbitrary-image surface.
 pub const IMAGE_REPOSITORY: &str = "ghcr.io/constructorfabric/insight-frontend";
 
-/// Label selecting every object of every experiment; the value is the slug.
 pub const EXPERIMENT_LABEL: &str = "insight.dev/preview-experiment";
 
 pub const CREATOR_ANNOTATION: &str = "insight.dev/preview-creator";
@@ -33,27 +26,18 @@ pub const CREATED_AT_ANNOTATION: &str = "insight.dev/preview-created-at";
 pub const EXPIRES_AT_ANNOTATION: &str = "insight.dev/preview-expires-at";
 pub const TAG_ANNOTATION: &str = "insight.dev/preview-image-tag";
 
-/// The FE image serves on the non-root port; probes and the Service target it
-/// by name (chart parity, PR #2400).
 const CONTAINER_PORT: i32 = 8080;
 const SERVICE_PORT: i32 = 80;
 
-/// The shared Gateway an experiment's route attaches to, plus the host and
-/// path prefix it serves under. From config; defaults mirror the chart.
 #[derive(Debug, Clone)]
 pub struct RouteTarget {
     pub gateway_name: String,
     pub gateway_namespace: String,
-    /// Target listener on the Gateway (e.g. `https`). Empty = all listeners.
     pub gateway_section_name: String,
-    /// The single preview host. One host serves every experiment.
     pub host: String,
-    /// Prefix experiments live under; `/exp/<name>` is prefix-stripped to `/`.
     pub base_path: String,
 }
 
-/// Metadata stamped as annotations — Kubernetes is the only store, so the
-/// creator, tag and lifetime live on the objects themselves.
 #[derive(Debug, Clone)]
 pub struct ExperimentStamp {
     pub creator: String,
@@ -103,7 +87,6 @@ fn object_meta(name: &ExperimentName, tag: &ImageTag, stamp: &ExperimentStamp) -
     }
 }
 
-/// The path prefix this experiment is served under, e.g. `/exp/<name>`.
 fn route_path(base_path: &str, name: &ExperimentName) -> String {
     format!("{}/{}", base_path.trim_end_matches('/'), name.as_str())
 }
@@ -135,10 +118,6 @@ fn fixed_resources() -> ResourceRequirements {
     }
 }
 
-/// The fixed pod shape: 1 replica, the hardcoded FE image at the validated
-/// tag, `/healthz` probes on port 8080, pinned resources — and deliberately no
-/// `env`/`command` (login is the gateway+authenticator's job; no injection
-/// surface).
 #[must_use]
 pub fn deployment(name: &ExperimentName, tag: &ImageTag, stamp: &ExperimentStamp) -> Deployment {
     let container = Container {
@@ -205,9 +184,6 @@ pub fn service(name: &ExperimentName, tag: &ImageTag, stamp: &ExperimentStamp) -
     }
 }
 
-/// Read an experiment record back from its Deployment — the annotations are
-/// the metadata store, readiness is the status. `None` for an object without
-/// the experiment label (not ours).
 #[must_use]
 pub fn experiment_from_deployment(
     deployment: &Deployment,
@@ -247,9 +223,6 @@ pub fn experiment_from_deployment(
     })
 }
 
-/// How many experiments count against the live cap: expired ones are already
-/// condemned (the TTL sweep removes them on its next pass), so they must not
-/// block a new create in the meantime.
 #[must_use]
 pub fn live_experiment_count(deployments: &[Deployment], now: DateTime<Utc>) -> usize {
     deployments
@@ -259,10 +232,6 @@ pub fn live_experiment_count(deployments: &[Deployment], now: DateTime<Utc>) -> 
         .count()
 }
 
-/// One route per experiment, attaching itself to the shared Gateway via
-/// `parentRefs`: creating it ADDS the `/exp/<name>` path and deleting it
-/// REMOVES it — no central config is rewritten. `URLRewrite
-/// ReplacePrefixMatch /` strips the prefix before the FE pod.
 #[must_use]
 pub fn http_route(
     name: &ExperimentName,

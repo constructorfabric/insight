@@ -1,11 +1,3 @@
-//! Subchart response DTOs + flat→tree assembly (#348 / #344).
-//!
-//! The repo returns a flat row set; here we index children by parent
-//! and recurse from every root (a root arrives with `parent_person_id == None`,
-//! both for the single-root anchor and each forest top). Null attribute fields
-//! are emitted as JSON `null` so consumers distinguish "no observation" from
-//! "missing key".
-
 use std::collections::HashMap;
 
 use serde::Serialize;
@@ -46,10 +38,6 @@ pub struct SubchartForestResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for SubchartForestResponse {}
 
-/// Assemble flat rows into a forest of trees. Rows with `parent_person_id ==
-/// None` are the roots; everything else is indexed by parent and attached
-/// recursively. O(N): `org_chart` is a tree (single current parent per child),
-/// so each row is consumed exactly once.
 #[must_use]
 pub fn assemble_forest(flat: Vec<SubchartFlatNode>) -> Vec<SubchartNode> {
     let mut roots: Vec<SubchartFlatNode> = Vec::new();
@@ -65,10 +53,6 @@ pub fn assemble_forest(flat: Vec<SubchartFlatNode>) -> Vec<SubchartNode> {
         .map(|r| build_tree(r, &mut by_parent))
         .collect();
 
-    // Anything still in `by_parent` was never reached from a root — orphaned or
-    // cyclic `org_chart` data. It is dropped from the response (a bounded tree,
-    // never an error), but surfaced in telemetry so the data-integrity problem is
-    // visible instead of a silently-shrunk tree.
     if !by_parent.is_empty() {
         let dropped: usize = by_parent.values().map(Vec::len).sum();
         tracing::warn!(
@@ -116,7 +100,6 @@ mod tests {
     #[test]
     fn builds_single_tree_from_flat_rows() -> anyhow::Result<()> {
         use anyhow::Context;
-        // root(1) → [2, 3]; 2 → [4]
         let flat = vec![
             node(1, None),
             node(2, Some(1)),
@@ -159,16 +142,12 @@ mod tests {
 
     #[test]
     fn orphaned_rows_unreachable_from_a_root_are_dropped() {
-        // Row 2's parent (1) is absent and there is no NULL-parent root, so 2 is
-        // unreachable — dropped (and warn-logged), never an infinite loop.
         let forest = assemble_forest(vec![node(2, Some(1))]);
         assert!(forest.is_empty());
     }
 
     #[test]
     fn two_node_cycle_without_root_is_dropped_not_looped() {
-        // 1→2 and 2→1, no NULL-parent root. Neither is reachable from a root;
-        // both are dropped. The point of the test is that this terminates.
         let forest = assemble_forest(vec![node(1, Some(2)), node(2, Some(1))]);
         assert!(forest.is_empty());
     }

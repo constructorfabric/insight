@@ -108,8 +108,6 @@ async fn export_report_inner(
 
     let query_started = std::time::Instant::now();
     match tokio::time::timeout_at(deadline, execution).await {
-        // A relation nothing has built yet downloads as the file it will be:
-        // the headers the plan declares, and no records.
         Ok(Ok(_)) => {}
         Ok(Err(error)) => {
             return Err(map_execution_failure(error, writer, deadline).await);

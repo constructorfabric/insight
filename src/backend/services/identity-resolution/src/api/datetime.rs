@@ -1,6 +1,3 @@
-//! The date-time wire shape of this API: parsing request DTOs, formatting
-//! responses.
-//!
 //! The API accepts OpenAPI `format: date-time` (RFC-3339 with `Z` or a
 //! numeric offset). `sea_orm::prelude::DateTime` is `chrono::NaiveDateTime`,
 //! whose serde parser rejects `Z`/offset forms, so a normal client value like
@@ -19,8 +16,6 @@ pub(crate) fn fmt_ts(dt: NaiveDateTime) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
-/// Parse the accepted date-time forms to naive-UTC. Returns `None` if the string
-/// matches none of them.
 #[must_use]
 pub(crate) fn parse_flexible(raw: &str) -> Option<NaiveDateTime> {
     if let Ok(dt) = ChronoDateTime::parse_from_rfc3339(raw) {
@@ -37,14 +32,6 @@ pub(crate) fn parse_flexible(raw: &str) -> Option<NaiveDateTime> {
         .and_then(|d| d.and_hms_opt(0, 0, 0))
 }
 
-/// serde `deserialize_with` for an optional timestamp: accepts the RFC-3339 /
-/// zone-less / date-only forms and normalises to naive-UTC. Absent / empty →
-/// `None`; an unrecognised string is a deserialization error (surfaces as 400).
-///
-/// # Errors
-///
-/// Returns a deserialization error if the value is present but not a recognised
-/// date-time.
 pub(crate) fn deserialize_opt<'de, D>(deserializer: D) -> Result<Option<NaiveDateTime>, D::Error>
 where
     D: Deserializer<'de>,
@@ -79,7 +66,6 @@ mod tests {
             Some(utc10),
             "zone-less"
         );
-        // +03:00 → 07:00 UTC
         assert_eq!(
             parse_flexible("2026-07-23T10:00:00+03:00"),
             Some(ymd_hms(2026, 7, 23, 7, 0, 0)?),

@@ -1,6 +1,3 @@
-//! What a signed-in person without the administrator role reaches, and what
-//! an editor may do.
-
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -9,8 +6,6 @@ use crate::domain::definition::{DefinitionId, DefinitionKind};
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
-/// A board drawing one widget over one metric, made by `owner`; answers the
-/// board and the widget.
 async fn drawn_board(harness: &Harness, owner: &str) -> (String, String) {
     let metric = harness
         .made(
@@ -43,7 +38,6 @@ async fn drawn_board(harness: &Harness, owner: &str) -> (String, String) {
     (board, widget)
 }
 
-/// Every route only an administrator reaches, as a member asks it.
 fn administrators_only(board: &str, widget: &str) -> Vec<(&'static str, String, Option<Value>)> {
     let definition = json!({ "name": "Mine", "body": { "title": "Mine", "widgets": [] } });
 

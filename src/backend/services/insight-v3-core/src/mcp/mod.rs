@@ -1,8 +1,3 @@
-//! The MCP server: the custom surfaces, for a client that speaks MCP.
-//!
-//! It listens on a port of its own because the gear's REST router authenticates
-//! against its own audience, which an MCP access token does not carry.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -27,11 +22,6 @@ mod tests;
 
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
-/// The hosts this server answers to.
-///
-/// The guard exists to stop a browser on the operator's machine reaching a
-/// private server by name, so the advertised origin has to be among them or
-/// no deployed client is answered at all.
 fn allowed_hosts(config: &McpConfig) -> Vec<String> {
     let mut hosts = vec!["localhost".to_owned()];
     if let Some(advertised) = Url::parse(&config.public_url)

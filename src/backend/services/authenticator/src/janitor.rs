@@ -1,13 +1,3 @@
-//! Index janitor (PRD 5.5.8, DESIGN §4.3).
-//!
-//! Per-key Redis TTLs remove session records and token mappings; the
-//! login-state live index and refresh-schedule orphans linger until trimmed.
-//! Per-user session indexes are trimmed inline by writers and TTL-bounded,
-//! so the pass issues no keyspace SCAN. One leader (Redis lock, DD-BFF-09 —
-//! same election as the refresher) runs a pass every
-//! `janitor_interval_seconds` (default 30 s) and emits removed/backlog
-//! metrics; a rising backlog means no pod is running passes.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -17,11 +7,8 @@ use tokio_util::sync::CancellationToken;
 use crate::api::AppState;
 
 const LEADER_KEY: &str = "{asm}:leader:janitor";
-/// A refresh-schedule entry still due after this long has no live owner (the
-/// refresher reschedules live sessions every attempt).
 const ORPHAN_GRACE_SECONDS: u64 = 600;
 
-/// Spawn the janitor loop; returns immediately.
 pub fn spawn(state: Arc<AppState>, cancel: CancellationToken) {
     tokio::spawn(run(state, cancel));
 }

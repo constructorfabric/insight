@@ -1,20 +1,11 @@
-//! Whether a declaration can be stored, and everything wrong with it if not.
-//!
-//! Every problem is reported at once, each against the field of the submitted
-//! body it belongs to, so that a declaration with several mistakes is corrected
-//! in one pass rather than one refusal at a time.
-
 use std::collections::HashSet;
 
 use super::declaration::{BUCKET_COLUMN, Declaration, FieldType, MAX_PATH_SEGMENTS};
 use crate::domain::definition::DefinitionId;
 use crate::domain::violation::{Reason, Violation};
 
-/// Catalogue paths a dataset may not take, because a static segment of the
-/// portal already answers on them.
 const RESERVED_NAMES: [&str; 4] = ["metrics", "widgets", "dashboards", "datasets"];
 
-/// Checks a declaration, reporting every problem rather than the first.
 pub(crate) fn validate(name: &str, declaration: &Declaration) -> Vec<Violation> {
     let mut violations = Vec::new();
 

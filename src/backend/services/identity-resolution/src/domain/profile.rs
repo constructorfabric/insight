@@ -1,6 +1,3 @@
-//! Profile domain: the `POST /v1/profiles` request/response DTOs and the
-//! assembly of a person's observations into the response.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -101,8 +98,6 @@ pub struct ResolveProfileRequest {
 pub struct ProfileResponse {
     pub person_id: Uuid,
     pub insight_tenant_id: Uuid,
-    // `email` and `display_name` are always present in JSON (null when
-    // absent), unlike the attributes below.
     pub email: Option<String>,
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,8 +116,6 @@ pub struct ProfileResponse {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub employee_id: Option<String>,
-    // Org tree. `supervisor_*` and the legacy `parent_*` triple are both filled
-    // from the single `org_chart` parent edge.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supervisor_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,19 +175,13 @@ pub struct ProfileIdEntry {
     pub value: String,
 }
 
-/// The parent (a.k.a. supervisor) edge resolved into the fields written onto
-/// the response. Both the `supervisor_*` and legacy `parent_*` fields come from
-/// this single projection. `None` leaves
-/// every parent field null.
 pub struct ParentProjection {
     pub person_id: Uuid,
     pub email: Option<String>,
     pub display_name: Option<String>,
-    /// Parent's source-native id on the edge's source instance (→ `parent_id`).
     pub source_native_id: Option<String>,
 }
 
-// Marker traits the toolkit `OperationBuilder` requires (alongside `ToSchema`).
 impl toolkit::api::api_dto::RequestApiDto for ResolveProfileRequest {}
 impl toolkit::api::api_dto::RequestApiDto for BatchProfilesRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for ProfileResponse {}
@@ -271,9 +258,6 @@ fn safe_attributes(observations: Vec<persons::Model>) -> BTreeMap<String, String
     attributes
 }
 
-/// Collapse a person's observations to the current value per attribute — the
-/// latest by `created_at` (ADR-0003) — and map
-/// to the response DTO. `value_effective` is the DB's coalesced display value.
 #[must_use]
 pub fn assemble_profile(
     person_id: Uuid,
@@ -287,8 +271,6 @@ pub fn assemble_profile(
     let latest = latest_values(observations);
     let get = |value_type: &str| latest.get(value_type).cloned();
 
-    // Display-name fallback: derive first/last from display_name only when
-    // neither is observed.
     let display_name = get("display_name");
     let mut first_name = get("first_name");
     let mut last_name = get("last_name");
@@ -301,7 +283,6 @@ pub fn assemble_profile(
         last_name = non_blank(last);
     }
 
-    // Map repo rows to API entries — the DB layer stays free of API DTOs.
     let ids = source_ids
         .into_iter()
         .map(|s| ProfileIdEntry {
@@ -311,7 +292,6 @@ pub fn assemble_profile(
         })
         .collect();
 
-    // Both `supervisor_*` and legacy `parent_*` are filled from the one edge.
     let (supervisor_email, supervisor_name, parent_email, parent_id, parent_person_id) =
         match parent {
             Some(p) => (
@@ -355,8 +335,6 @@ fn sort_by_label(nodes: &mut [PersonResponse]) {
     });
 }
 
-// INVARIANT: this precedence is `LABEL_CTES` in `infra::db::person_listing`.
-// A person listed under one name and ordered under another pages unpredictably.
 fn label_key(person: &PersonResponse) -> (bool, String) {
     let composed = [person.first_name.trim(), person.last_name.trim()]
         .into_iter()
@@ -377,10 +355,6 @@ fn label_key(person: &PersonResponse) -> (bool, String) {
     (label.is_empty(), label.to_lowercase())
 }
 
-/// Assemble a subordinate `PersonResponse` from its observations, parent edge,
-/// and already-hydrated child subtree. Attribute fields default to the empty
-/// string (not omitted), and the
-/// display-name split fallback applies here too.
 #[must_use]
 pub fn assemble_person(
     person_id: Uuid,
@@ -431,17 +405,11 @@ pub fn assemble_person(
     }
 }
 
-/// Collapse observations to the current `value_effective` per `value_type` —
-/// latest by `(created_at, id)`, blank values dropped. Shared by profile
-/// assembly and parent-edge projection.
 #[must_use]
 pub fn latest_values(observations: Vec<persons::Model>) -> HashMap<String, String> {
     let mut latest: HashMap<String, persons::Model> = HashMap::new();
     for obs in observations {
         match latest.get(&obs.value_type) {
-            // Tie-break on `id` (`created_at DESC, id DESC`), so
-            // the result is deterministic even when `created_at` values are equal
-            // (common under batch backfill) and independent of DB row order.
             Some(prev) if (prev.created_at, prev.id) >= (obs.created_at, obs.id) => {}
             _ => {
                 latest.insert(obs.value_type.clone(), obs);
@@ -451,18 +419,12 @@ pub fn latest_values(observations: Vec<persons::Model>) -> HashMap<String, Strin
     latest
         .into_iter()
         .filter_map(|(k, m)| {
-            // Keep the raw value; trim is only the emptiness test, so
-            // leading/trailing whitespace in source data survives.
             let value = m.value_effective?;
             (!value.trim().is_empty()).then_some((k, value))
         })
         .collect()
 }
 
-/// Best-effort split of a display name into `(first, last)` when dedicated
-/// observations are missing.
-/// `"Last, First"` (comma) → `(after, before)`; `"First Rest"` (space) →
-/// `(before, rest)`; single token → `(token, "")`; blank → `("", "")`.
 fn split_display_name(display_name: &str) -> (String, String) {
     let trimmed = display_name.trim();
     if trimmed.is_empty() {
@@ -477,7 +439,6 @@ fn split_display_name(display_name: &str) -> (String, String) {
     (trimmed.to_owned(), String::new())
 }
 
-/// `None` when the string is blank, else `Some(s)`.
 fn non_blank(s: String) -> Option<String> {
     if s.trim().is_empty() { None } else { Some(s) }
 }
@@ -588,7 +549,6 @@ mod tests {
         Ok(())
     }
 
-    /// Minimal observation carrying only the fields `assemble_profile` reads.
     fn obs(value_type: &str, value_effective: &str, created_at: DateTime) -> persons::Model {
         persons::Model {
             id: 0,
@@ -619,7 +579,7 @@ mod tests {
             tenant_id,
             vec![
                 obs("email", "old@example.com", older),
-                obs("email", "new@example.com", newer), // newer wins
+                obs("email", "new@example.com", newer),
                 obs("display_name", "Ann Smith", newer),
             ],
             vec![],
@@ -640,10 +600,7 @@ mod tests {
         let profile = assemble_profile(
             Uuid::from_u128(1),
             Uuid::from_u128(2),
-            vec![
-                obs("email", "a@b.com", t),
-                obs("department", "   ", t), // blank → None
-            ],
+            vec![obs("email", "a@b.com", t), obs("department", "   ", t)],
             vec![],
             None,
             Vec::new(),
@@ -696,7 +653,6 @@ mod tests {
         let mut high = obs("email", "high-id@example.com", t);
         high.id = 20;
 
-        // Highest id wins on equal created_at — regardless of input row order.
         let a = assemble_profile(
             Uuid::from_u128(1),
             Uuid::from_u128(2),
@@ -783,7 +739,6 @@ mod tests {
             Vec::new(),
         );
 
-        // supervisor_* and legacy parent_* mirror the single edge.
         assert_eq!(
             profile.supervisor_email.as_deref(),
             Some("boss@example.com")
@@ -815,7 +770,6 @@ mod tests {
     fn display_name_split_fallback_only_when_first_last_absent() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
 
-        // "First Last" split when neither name is observed.
         let split = assemble_profile(
             Uuid::from_u128(1),
             Uuid::from_u128(2),
@@ -827,7 +781,6 @@ mod tests {
         assert_eq!(split.first_name.as_deref(), Some("Ann"));
         assert_eq!(split.last_name.as_deref(), Some("Smith"));
 
-        // "Last, First" comma form.
         let comma = assemble_profile(
             Uuid::from_u128(1),
             Uuid::from_u128(2),
@@ -839,7 +792,6 @@ mod tests {
         assert_eq!(comma.first_name.as_deref(), Some("Ann"));
         assert_eq!(comma.last_name.as_deref(), Some("Smith"));
 
-        // An explicit first_name suppresses the fallback entirely.
         let explicit = assemble_profile(
             Uuid::from_u128(1),
             Uuid::from_u128(2),
@@ -868,14 +820,12 @@ mod tests {
             None,
             Vec::new(),
         );
-        // Absent attributes are empty strings, not omitted.
         assert_eq!(leaf.email, "leaf@example.com");
         assert_eq!(leaf.username, "leafhandle");
         assert_eq!(leaf.department, "");
         assert_eq!(leaf.first_name, "");
         assert!(leaf.subordinates.is_empty());
 
-        // Display-name split fallback applies to person nodes too.
         let mid = assemble_person(
             Uuid::from_u128(20),
             vec![obs("display_name", "Mid Manager", t)],
@@ -1043,14 +993,13 @@ mod tests {
             Uuid::from_u128(1),
             Uuid::from_u128(2),
             vec![
-                obs("department", " Engineering ", t), // whitespace preserved
-                obs("division", "   ", t),             // blank → dropped
+                obs("department", " Engineering ", t),
+                obs("division", "   ", t),
             ],
             vec![],
             None,
             Vec::new(),
         );
-        // The value is returned verbatim (no TRIM); only blank collapses to None.
         assert_eq!(profile.department.as_deref(), Some(" Engineering "));
         assert_eq!(profile.division, None);
         Ok(())

@@ -10,19 +10,6 @@
   needs the browser-wide KC_RESTART cookie, which a completed sibling login
   deletes, and its "continue" link points at the execution that already failed
   to match. When both hold there is no way off the page.
-
-  This is NOT the page Keycloak renders when it rebuilds a login from KC_RESTART
-  and stamps `loginTimeout` on it. That path ends in
-  AuthenticationProcessor.authenticateOnly(), which calls createErrorPage() and
-  serves `error.ftl`. That page is left stock on purpose: its message already
-  explains the timeout, and the client's `baseUrl` in the realm gives it a
-  working way out. Overriding it would auto-redirect every Keycloak error,
-  masking the ones a user needs to read.
-
-  A fresh visit to the application always succeeds, so that is where this goes.
-  The `auth_error` marker in the target drives the SPA's existing
-  retry-once-then-stop guard, so a persistent failure stops on the login error
-  screen instead of looping browser -> IdP.
 -->
 <#assign returnUrl = (properties.insightReturnUrl)!"/?auth_error=kc_page_expired">
 <!DOCTYPE html>
@@ -58,9 +45,6 @@
     <p>That sign-in took too long. Taking you back to Insight&hellip;</p>
     <p><a id="continue" href="${returnUrl}">Continue</a></p>
   </main>
-  <#-- Read the target off the anchor rather than interpolating it into JS:
-       one escaping context instead of two, and `replace` keeps this page out
-       of history so Back cannot land on it again. -->
   <script>
     var link = document.getElementById("continue");
     if (link) { window.location.replace(link.href); }

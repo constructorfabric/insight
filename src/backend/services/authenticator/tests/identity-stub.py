@@ -33,12 +33,10 @@ from urllib.parse import parse_qs, urlsplit
 
 
 def person_id_for(*parts: str) -> str:
-    # Deterministic UUID from the lookup key (stable across calls within a run).
     digest = hashlib.sha256(f"identity-stub:{':'.join(parts)}".encode()).digest()
     return str(uuid.UUID(bytes=digest[:16]))
 
 
-# person_id -> seconds its next active-roles call sleeps; consumed by that call.
 _roles_stalls: dict[str, float] = {}
 _stall_lock = threading.Lock()
 
@@ -58,8 +56,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         split = urlsplit(self.path)
         if split.path != self.ROLES_STALL_PATH:
-            # 501, not 404: a 404 is how the lookups say "no such person", and
-            # the authenticator reads it that way (see provision's INVARIANT).
             self.send_response(501)
             self.end_headers()
             return
@@ -104,23 +100,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 return
-            # The rig configures `idp.external_id_claim: email`, so a login's
-            # external id IS the email — keyed identically to the `__override`
-            # email lookup, both paths resolve the same user to the SAME
-            # person (a real identity-resolution service converges the same
-            # way: one `persons` person_id, two value_type observations). A
-            # non-email external id still gets a deterministic path-specific id.
             key = ("email", external_id) if "@" in external_id else ("id", source_type, external_id)
             value_type, value = "id", external_id
         elif split.path == self.BY_ROSTER_EMAIL_PATH:
-            # The login bootstrap of an install running `idp.resolve_by: email`.
-            # Keyed on the address like the override path, so a rig that logs in
-            # through either resolves the same person — the real service does
-            # too, from the same `value_type='email'` observations. What it does
-            # NOT model is the confinement (tenant, roster source, live account):
-            # those are the database's answer and belong to identity's own live
-            # tests, not to a stub whose job is to keep the authenticator's e2e
-            # honest about which route it called.
             email = (query.get("email") or [""])[0]
             if not email:
                 self.send_response(400)
@@ -141,8 +123,6 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # Test seam for the unknown-person paths (e.g. a bad `__override`
-        # target): values prefixed `unknown-` do not resolve.
         if value.startswith("unknown-"):
             self.send_response(404)
             self.end_headers()
@@ -162,12 +142,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *_args):  # silence access logging
+    def log_message(self, *_args):
         pass
 
 
 if __name__ == "__main__":
     host, _, port = (sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1:8092").partition(":")
-    # Threading: an armed stall holds one connection open, and the rest of the
-    # rig must keep being served while it does.
     ThreadingHTTPServer((host, int(port)), Handler).serve_forever()

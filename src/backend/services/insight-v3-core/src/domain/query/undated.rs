@@ -1,5 +1,3 @@
-//! How much of what a metric reads carries no clock at all.
-
 use serde::Deserialize;
 
 /// `ClickHouse`'s `JSON` format writes 64-bit integers as strings, so the
@@ -30,7 +28,6 @@ struct UndatedAnswer {
     data: Vec<UndatedRow>,
 }
 
-/// How many of a metric's rows carry no clock.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct UndatedCount {
     count: u64,

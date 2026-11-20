@@ -1,10 +1,3 @@
-//! The two binding readers must not disagree. One names the accounts it wants,
-//! the other takes the tenant; the review surface switched to the second one
-//! purely for cost, so what pins that switch is that the answers match.
-//!
-//! INVARIANT: never `#[ignore]` these — the identity CI job runs `cargo test`
-//! without `--include-ignored`, so an ignored case silently stops running.
-
 use uuid::Uuid;
 
 use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
@@ -24,10 +17,6 @@ async fn naming_every_account_and_taking_the_tenant_answer_the_same() -> TestRes
     let anna = f.person("anna@binding-reads.test").await?;
     let boris = f.person("boris@binding-reads.test").await?;
     let operator = f.person("operator@binding-reads.test").await?;
-    // One of each shape the review surface distinguishes: automatic, rebound
-    // later, operator-authored, minted at a sign-in. Each observation of a given
-    // person gets its own age — the journal's uniqueness key ends in
-    // `created_at`, so two of theirs at the same instant collide.
     let plain = f.bound_at("acct-plain", anna, FIXTURE_REASON, 95).await?;
     let rebound = f.bound_at("acct-rebound", anna, FIXTURE_REASON, 90).await?;
     f.bound_at("acct-rebound", boris, FIXTURE_REASON, 30)
@@ -38,10 +27,6 @@ async fn naming_every_account_and_taking_the_tenant_answer_the_same() -> TestRes
     let minted = f
         .bound_at("acct-minted", boris, LOGIN_BOOTSTRAP_REASON, 45)
         .await?;
-    // Not asked about, and the point of the test: the tenant read ranks this
-    // account's rows too. If extra partitions could perturb the ranking inside
-    // the asked ones, this is what would show it — a tenant holding only the
-    // asked accounts proves nothing about dropping the filter.
     let unasked = f.bound_at("acct-unasked", anna, FIXTURE_REASON, 20).await?;
     let asked = [plain, rebound, decided, minted];
 
@@ -69,9 +54,6 @@ async fn naming_every_account_and_taking_the_tenant_answer_the_same() -> TestRes
 #[tokio::test]
 async fn asking_about_more_accounts_than_one_statement_carries_answers_for_all_of_them()
 -> TestResult {
-    // The by-name reader batches, and a batched read is where a caller silently
-    // gets a prefix: a merge moving a person's accounts, or a listing page, would
-    // leave the rest of them looking unbound.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -101,10 +83,6 @@ async fn asking_about_more_accounts_than_one_statement_carries_answers_for_all_o
 
 #[tokio::test]
 async fn a_read_that_ends_exactly_on_the_ceiling_is_not_truncated() -> TestResult {
-    // The ceiling is detected by a row PAST it, not by counting up to it. A
-    // tenant holding exactly as many bindings as the ceiling has a complete
-    // answer, and the caller refuses to serve a truncated one — so calling this
-    // truncated would refuse a whole answer.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -132,8 +110,6 @@ async fn a_read_that_ends_exactly_on_the_ceiling_is_not_truncated() -> TestResul
 
 #[tokio::test]
 async fn the_tenant_read_carries_what_the_review_surface_reads() -> TestResult {
-    // person, author and reason are what the queue classifies on: lose any of
-    // them and a settled account reappears as undecided, or the other way round.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -171,9 +147,6 @@ async fn the_tenant_read_carries_what_the_review_surface_reads() -> TestResult {
 
 #[tokio::test]
 async fn the_binding_in_force_is_the_latest_observed_not_the_last_written() -> TestResult {
-    // A journal row may be backdated — the seed writes what a source reported,
-    // not when it ran — so "the row with the highest id" is not the answer. A
-    // reader that took it would hand an account back to a person it left.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -201,10 +174,6 @@ async fn the_binding_in_force_is_the_latest_observed_not_the_last_written() -> T
 
 #[tokio::test]
 async fn both_readers_stop_at_the_tenant() -> TestResult {
-    // The account key carries no tenant, so a neighbour's binding under the same
-    // source and account id would silently answer for ours. Both readers are
-    // checked: the by-name one is what every correction verb consults before it
-    // writes, so a dropped tenant filter there decides who may be rebound.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };

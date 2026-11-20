@@ -1,16 +1,3 @@
-//! Saved-query CRUD + run handlers — `/v1/queries*` (#1965).
-//!
-//! CRUD is plain metadata over the `saved_queries` service-DB table, mirroring
-//! the metric CRUD in [`super::handlers`]. Every request is tenant-scoped from
-//! the session `SecurityContext`. The `sql` is validated by the single-SELECT
-//! gate on create, update, and run, and a read of an admin-only database is
-//! authorized on all three. Only `/run` reaches ClickHouse — it executes the
-//! stored SQL as `presentation_ro` and returns untyped JSON rows.
-//!
-//! Phase-A scope: `/run` binds named parameters server-side — `{tenant}` always
-//! (from context), `{period}` when supplied (#1966). The injected tenant-row
-//! filter (#1967) is a separate sub-issue.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -33,8 +20,6 @@ use crate::domain::saved_query::{
 };
 use crate::infra::db::entities::saved_queries;
 use crate::infra::not_ready;
-
-// ── CRUD ────────────────────────────────────────────────────
 
 pub async fn list_saved_queries(
     Extension(state): Extension<Arc<AppState>>,
@@ -107,7 +92,6 @@ pub async fn update_saved_query(
     if let Some(name) = req.name {
         model.name = Set(name);
     }
-    // Explicit null clears description; absent field leaves it unchanged.
     if let Some(desc) = req.description {
         model.description = Set(desc);
     }
@@ -144,8 +128,6 @@ pub async fn delete_saved_query(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Run ─────────────────────────────────────────────────────
-
 pub async fn run_saved_query(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -155,15 +137,9 @@ pub async fn run_saved_query(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let saved = find_saved_query(&state, ctx.subject_tenant_id(), id).await?;
 
-    // INVARIANT: stored SQL is re-gated per run — a saved query has no owner, so
-    // neither the rules nor the caller are the ones it was stored under.
     validate_single_select(&saved.sql).map_err(|e| invalid_sql_for(id, e))?;
     authorize_read(&state, &headers, &saved.sql).await?;
 
-    // Named parameters (#1966): `{tenant}` is always bound from context; the
-    // optional `period` binds `{period}`. Both go through ClickHouse's
-    // server-side parameter interface, so a value can never alter the SQL. The
-    // injected tenant-row *filter* (#1967) is a separate concern.
     let period = body.and_then(|Json(b)| b.period);
     let run = execute_read(
         &state,
@@ -185,17 +161,11 @@ pub async fn run_saved_query(
     }))
 }
 
-/// What a run answered: the records, or that a relation it names has not been
-/// built yet. A saved query over a warehouse nothing has filled is the same
-/// "nothing yet" every other read answers, not a server fault.
 enum QueryRun {
     Rows(Vec<serde_json::Value>),
     NotReady(NotReadyReason),
 }
 
-/// Execute a single read statement against ClickHouse and parse the
-/// `JSONEachRow` stream into untyped rows — the same read path the metric query
-/// uses. Binds the `tenant`/`period` named parameters server-side (#1966).
 async fn execute_read(
     state: &AppState,
     id: Uuid,
@@ -231,8 +201,6 @@ async fn execute_read(
         })
 }
 
-/// What a run that produced no rows answers: a relation nothing has built yet
-/// is an empty result with the marker, everything else is the error it is.
 fn run_outcome(id: Uuid, sql: &str, message: &str) -> Result<QueryRun, CanonicalError> {
     if MissingRelation::from_message(message).is_some() {
         not_ready::warn_throttled(message, "saved-query:run");
@@ -243,12 +211,6 @@ fn run_outcome(id: Uuid, sql: &str, message: &str) -> Result<QueryRun, Canonical
     Err(classify_run_error(id, message))
 }
 
-/// Map a ClickHouse run error to a canonical error. A query that references a
-/// named parameter left unbound (e.g. `{period}` with no `period` supplied) is
-/// caller error (`UNKNOWN_QUERY_PARAMETER`, code 456) — surface it as a 400 so
-/// the console can prompt for the missing value rather than a bare 500. The
-/// unbound parameter's name is reported when ClickHouse names it, so a query
-/// using `{region}` is not mislabeled as a missing `period`.
 fn classify_run_error(id: Uuid, message: &str) -> CanonicalError {
     if message.contains("UNKNOWN_QUERY_PARAMETER") || message.contains("Code: 456") {
         let param = missing_param_name(message);
@@ -276,9 +238,6 @@ fn missing_param_name(message: &str) -> Option<&str> {
     Some(&message[start..start + len])
 }
 
-/// Parse a `JSONEachRow` byte stream (one JSON object per line) into untyped
-/// rows. Empty input yields no rows; blank lines are skipped; a malformed line
-/// is an error. Pure so the row-shaping is unit-testable without ClickHouse.
 fn parse_json_each_row(raw: &[u8]) -> Result<Vec<serde_json::Value>, serde_json::Error> {
     if raw.is_empty() {
         return Ok(Vec::new());
@@ -288,8 +247,6 @@ fn parse_json_each_row(raw: &[u8]) -> Result<Vec<serde_json::Value>, serde_json:
         .map(serde_json::from_slice)
         .collect()
 }
-
-// ── Helpers ─────────────────────────────────────────────────
 
 async fn find_saved_query(
     state: &AppState,
@@ -379,9 +336,6 @@ mod tests {
         serde_json::to_value(Problem::from(err))
     }
 
-    /// A ClickHouse unbound-parameter error (code 456) is caller error → 400, not
-    /// a bare 500 (#1966). Both the numeric code and the symbolic name the server
-    /// includes are matched.
     #[test]
     fn missing_named_param_is_a_400() -> R {
         for msg in [
@@ -395,9 +349,6 @@ mod tests {
         Ok(())
     }
 
-    /// The 400 names the parameter ClickHouse reports as unbound, so a query
-    /// using `{region}` is not mislabeled as a missing `period`; when the message
-    /// does not name it, the violation falls back to a generic `params` field.
     #[test]
     fn missing_param_400_reports_the_named_parameter() -> R {
         for (msg, field) in [
@@ -420,7 +371,6 @@ mod tests {
         Ok(())
     }
 
-    /// The name extractor returns the first backtick-quoted token, or `None`.
     #[test]
     fn missing_param_name_extracts_backtick_token() {
         assert_eq!(
@@ -431,8 +381,6 @@ mod tests {
         assert_eq!(missing_param_name("unterminated `oops"), None);
     }
 
-    /// Any other ClickHouse failure stays an opaque 500 — we do not leak engine
-    /// internals or misclassify a genuine server fault as caller error.
     #[test]
     fn other_ch_errors_stay_500() -> R {
         for msg in [
@@ -445,10 +393,6 @@ mod tests {
         Ok(())
     }
 
-    /// A relation nothing has built yet is an empty answer, not a 500: the
-    /// console shows "no data yet" the same way every other read does. Code 47
-    /// is NOT that — the relation is there and its columns disagree with the
-    /// deployed code.
     #[test]
     fn an_absent_relation_runs_to_an_empty_answer() -> R {
         for msg in [

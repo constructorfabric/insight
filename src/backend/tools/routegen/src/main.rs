@@ -1,10 +1,3 @@
-//! routegen CLI: compile `routes.yaml` into a complete `nginx.conf`.
-//!
-//! ```text
-//! routegen --routes routes.yaml -o nginx.conf
-//! routegen --routes routes.yaml --check nginx.conf   # CI up-to-date assertion
-//! ```
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;

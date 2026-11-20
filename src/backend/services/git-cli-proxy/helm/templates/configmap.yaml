@@ -11,9 +11,6 @@ data:
 
     logging:
       default:
-        # The install-wide knobs: global.observability.logs.{level,format} —
-        # the same values the platform CM publishes as INSIGHT_LOG_LEVEL /
-        # INSIGHT_LOG_FORMAT.
         console_level: {{ ((((.Values.global).observability).logs).level) | default "info" }}
         console_format: {{ ((((.Values.global).observability).logs).format) | default "json" }}
 
@@ -21,8 +18,6 @@ data:
       resource:
         service_name: "insight-git-cli-proxy"
         attributes:
-          # The release the pod runs; the log_ctx span and the OTel resource
-          # both read it (semconv service.version).
           service.version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
       exporter:
         kind: {{ .Values.opentelemetry.exporter.kind }}
@@ -44,8 +39,6 @@ data:
 
       git-cli-proxy:
         config:
-          # Airbyte-only consumer: no gateway-JWT pipeline. /v1 is guarded by
-          # the service's own bearer token from the config Secret.
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
           data_dir: "{{ .Values.persistence.mountPath }}"
           disk_budget_bytes: {{ include "insight-git-cli-proxy.diskBudgetBytes" . }}
@@ -54,15 +47,7 @@ data:
           heavy_ops_concurrency: {{ required "cache.heavyOpsConcurrency is required" .Values.cache.heavyOpsConcurrency | int64 }}
           serve_concurrency: {{ required "cache.serveConcurrency is required" .Values.cache.serveConcurrency | int64 }}
           ca_cert_path: {{ .Values.cache.caCertPath | quote }}
-          # Not a values knob on purpose: a file:// origin reads the pod's own
-          # filesystem, so no deployment may turn this on.
           allow_file_repos: false
-          # Exceptions to the built-in refusal of loopback, link-local,
-          # private and cluster-internal hosts. Additive only: naming one host
-          # never stops another from working, so a tenant adding a public
-          # vendor never waits on a redeploy.
           # `toJson` renders an empty list as `[]` rather than a bare key.
           allowed_repo_hosts: {{ .Values.cache.allowedRepoHosts | default list | toJson }}
-          # proxy_token is NEVER rendered here — it arrives via envFrom from
-          # the config Secret (APP__gears__git_cli_proxy__config__proxy_token).
           proxy_token: ""

@@ -1,8 +1,3 @@
-//! Route handlers (thin controllers — DTOs + assembly live in `crate::domain`).
-//!
-//! `/health` + `/healthz` + `/docs` are provided by the api-gateway host gear,
-//! so this service defines no health handler.
-
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
@@ -28,12 +23,6 @@ use crate::domain::profile::{
 use crate::domain::profile_batch::{self, BatchProfilesError};
 use crate::infra::db::{persons_repo, resolution_repo, roles_repo, subchart_repo};
 
-/// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
-/// person, then assemble the profile.
-///
-/// 0 matches → 404; >1 → 409. (The gears canonical model has no 422, so an
-/// ambiguous profile maps to `aborted`/409, the same as the roles /
-/// person-roles guards.)
 pub async fn resolve_profile(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -42,10 +31,6 @@ pub async fn resolve_profile(
     let tenant = ctx.subject_tenant_id();
     let caller = require_caller(&ctx)?;
     let candidate_ids = resolve_person_ids(&state, tenant, &req).await?;
-    // Visibility gate: a caller may only resolve profiles they can see. Filter BEFORE deciding
-    // between not-found / resolved / ambiguous, so a hidden candidate neither
-    // leaks its existence through an `AMBIGUOUS_PROFILE` id list nor causes a
-    // uniquely-visible candidate to be misreported as ambiguous.
     let person_ids = visible_person_ids(&state, tenant, caller, candidate_ids).await?;
 
     match person_ids.as_slice() {
@@ -60,8 +45,6 @@ pub async fn resolve_profile(
                         tracing::error!(error = %e, "fetch person observations failed");
                         CanonicalError::internal("profile assembly failed").create()
                     })?;
-            // Resolver returned an id but hydration found no rows →
-            // not-found. Practically unreachable.
             if observations.is_empty() {
                 return Err(ProfileError::not_found("person not found")
                     .with_resource(req.value.clone())
@@ -86,9 +69,6 @@ pub async fn resolve_profile(
             )))
         }
         ids => {
-            // >1 match: include the resolved ids in the detail so operators can
-            // fix the data: the gears canonical model has no structured
-            // payload, so they go in the text.
             let list = ids
                 .iter()
                 .map(Uuid::to_string)
@@ -132,10 +112,6 @@ fn batch_profile_read_error(error: BatchProfilesError) -> CanonicalError {
     CanonicalError::internal("profile assembly failed").create()
 }
 
-/// Narrow `candidate_ids` down to the ones `caller` can see (current state —
-/// `valid_at = None`), preserving order. Run before the not-found / resolved /
-/// ambiguous decision so a candidate the caller cannot see never surfaces —
-/// neither as a false single match nor as an id in the ambiguous-profile list.
 async fn visible_person_ids(
     state: &AppState,
     tenant: Uuid,
@@ -165,8 +141,6 @@ async fn visible_person_ids(
     Ok(visible)
 }
 
-/// Wire shape of the internal S2S lookup response:
-/// `{ value_type, value, insight_source_type, insight_source_id }`.
 #[derive(Debug, Serialize)]
 struct InternalPersonResponse {
     value_type: String,
@@ -175,32 +149,12 @@ struct InternalPersonResponse {
     insight_source_id: Uuid,
 }
 
-/// Query params for `GET /internal/persons/by-external-id`.
 #[derive(Debug, serde::Deserialize)]
 pub struct InternalByExternalIdQuery {
     source_type: String,
     external_id: String,
 }
 
-/// `GET /internal/persons/by-external-id?source_type=...&external_id=...` —
-/// SERVICE-ONLY any-tenant `person_id` resolution for the LOGIN BOOTSTRAP
-/// ONLY: scoped to the configured `IdP`'s `source_type` (e.g. `ms-entra`) +
-/// its source-native external user id (e.g. the Entra `oid` claim). NEVER
-/// resolves by email — the two address-matching routes are SEPARATE
-/// ([`internal_person_by_roster_email`] for an install configured to resolve
-/// logins by address, [`internal_person_by_email_override`] for view-as), so a
-/// login that somehow carries no external id has no path that silently falls
-/// through to either. Which route the authenticator calls is decided by its
-/// `idp.resolve_by` config, once, at the top of the login — never by what a
-/// given token happens to carry.
-///
-/// Deliberately bypasses the tenant + visibility gates the public
-/// `/v1/profiles` enforces: at login neither a tenant nor a caller identity
-/// exists yet. Still fail-closed — a valid gateway JWT is required (host
-/// authn), and a non-service principal (`subject_type != "service"`, the
-/// gears mapping of the `sub_type` claim) gets 403. Registered as a raw
-/// route so it stays out of the public OpenAPI. This is the login-bootstrap
-/// lookup: it resolves by external id, never by email.
 pub async fn internal_person_by_external_id(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -234,36 +188,13 @@ pub async fn internal_person_by_external_id(
     Ok(Json(person_response(external_id, person_id)))
 }
 
-/// Body for `POST /internal/persons/provision`.
 #[derive(Debug, serde::Deserialize)]
 pub struct InternalProvisionRequest {
     source_type: String,
     external_id: String,
-    /// The tenant the `id_token` asserted. A read can stay tenant-agnostic; a
-    /// write cannot, and at login there is no caller context to infer it from.
     tenant_id: Uuid,
 }
 
-/// `POST /internal/persons/provision` — SERVICE-ONLY login bootstrap that
-/// MINTS a person when the journal has no binding for this IdP principal yet.
-/// Same contract and gate as [`internal_person_by_external_id`], and the same
-/// response shape, so the caller can treat the two identically.
-///
-/// Why this exists: the login-bootstrap row is otherwise written only by the
-/// nightly persons-seed, which links a person by e-mail and skips an account
-/// that carries none. A member of the IdP's roster with no published address
-/// is therefore refused at login until an operator binds them by hand.
-///
-/// It mints only for an account a connector has ALREADY OBSERVED, and reuses
-/// that observation's `insight_source_id`. Both halves matter:
-///
-/// - the roster stays the authority on who exists, so this is "the IdP
-///   authenticated someone the org already lists", never "anyone who reaches
-///   the IdP becomes a person";
-/// - the persons-seed recognises an account by the whole triple, so a binding
-///   written under any other instance id would be invisible to it and the
-///   account would stay unbound forever. Matching the observed id is what
-///   makes the next batch run ADOPT this person rather than mint a second.
 pub async fn internal_provision_person(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -275,10 +206,6 @@ pub async fn internal_provision_person(
         login_bootstrap::parse_principal(&req.source_type, &req.external_id, req.tenant_id)
             .map_err(|refusal| refused(refusal, &req))?;
     let (source_type, external_id) = (principal.source_type, principal.external_id);
-    // Validated before the lookup, not just before the write: a route that
-    // answered an existing person for any asserted tenant and refused only a
-    // new one would fail intermittently under a misconfigured tenant claim,
-    // which is the shape nobody diagnoses.
     let tenant = login_bootstrap::provisioning_tenant(
         &state.config.tenant_default_id,
         principal.asserted_tenant,
@@ -314,10 +241,6 @@ pub async fn internal_provision_person(
             CanonicalError::internal("provisioning failed").create()
         })?;
 
-    // Read what is in force, never what was intended. Two interleavings end up
-    // here: a racing login wrote first, or an operator decided first —
-    // including an exclusion, which the lookup hides and which must read as
-    // "no person to enter as" rather than as a fresh mint.
     let person_id = lookup_by_external_id(&state, source_type, external_id)
         .await?
         .ok_or_else(|| {
@@ -349,8 +272,6 @@ pub async fn internal_provision_person(
     Ok(Json(person_response(external_id, person_id)))
 }
 
-/// Map a domain refusal onto the wire. Each is an answer about the principal,
-/// so none of them is a 500.
 fn refused(refusal: login_bootstrap::Refusal, req: &InternalProvisionRequest) -> CanonicalError {
     use login_bootstrap::{Refusal, TenantRefusal};
 
@@ -407,24 +328,17 @@ fn person_response(external_id: &str, person_id: Uuid) -> InternalPersonResponse
     }
 }
 
-/// Query params for `GET /internal/persons/active-roles`.
 #[derive(Debug, serde::Deserialize)]
 pub struct InternalActiveRolesQuery {
     person_id: Uuid,
 }
 
-/// Wire shape of the internal active-roles response: `{ person_id, roles }`.
 #[derive(Debug, Serialize)]
 struct InternalActiveRolesResponse {
     person_id: Uuid,
     roles: Vec<String>,
 }
 
-/// `GET /internal/persons/active-roles?person_id=...` — SERVICE-ONLY read of
-/// the ACTIVE role names a person holds in the caller's tenant; the
-/// authenticator mints them into the JWT at login and `/auth/refresh`. An
-/// empty list is a real answer, never an error. Tenant-scoped and fail-closed
-/// like `by-roster-email`; raw route, out of the generated OpenAPI.
 pub async fn internal_person_active_roles(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -461,23 +375,11 @@ pub async fn internal_person_active_roles(
     }))
 }
 
-/// Query params for `GET /internal/persons/by-email-override`.
 #[derive(Debug, serde::Deserialize)]
 pub struct InternalByEmailOverrideQuery {
     email: String,
 }
 
-/// `GET /internal/persons/by-email-override?email=...` — SERVICE-ONLY
-/// any-tenant `person_id` resolution for the authenticator's admin
-/// `__override` (view-as, #1941) feature ONLY: an operator types an email to
-/// become that person. NEVER used by the login bootstrap (see
-/// [`internal_person_by_external_id`], a separate route) — the two are
-/// distinct contracts so an empty/absent external id at login can never fall
-/// through to this one.
-///
-/// Same bypass-tenant-gates rationale and fail-closed service-only gate as
-/// `by-external-id`. INVARIANT: override-only by contract — the login path
-/// never resolves by email.
 pub async fn internal_person_by_email_override(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -512,39 +414,11 @@ pub async fn internal_person_by_email_override(
     }))
 }
 
-/// Query params for `GET /internal/persons/by-roster-email`.
 #[derive(Debug, serde::Deserialize)]
 pub struct InternalByRosterEmailQuery {
     email: String,
 }
 
-/// `GET /internal/persons/by-roster-email?email=...` — SERVICE-ONLY
-/// `person_id` resolution for the login bootstrap of an install that resolves
-/// logins by address (`idp.resolve_by = email` on the authenticator). For
-/// installs whose IdP has no directory connector of its own: nothing ever seeds
-/// a `value_type='id'` row for the provider, so
-/// [`internal_person_by_external_id`] can match nobody and every sign-in is
-/// refused.
-///
-/// A THIRD route rather than a parameter on one of the other two, because the
-/// separation between them is a security boundary and not a naming choice: each
-/// route answers exactly one question, so no absent or empty field can make a
-/// login take a resolution path other than the one the install configured.
-/// `by-email-override` in particular stays override-only — it matches an address
-/// stated by ANY source in ANY tenant, which is the right latitude for an
-/// operator typing a name into view-as and far too much for a sign-in.
-///
-/// Unlike the two any-tenant lookups this one is tenant-SCOPED. The tenant is
-/// known by the time a login reaches here: the authenticator refuses a login
-/// whose `id_token` named no tenant, and mints the service JWT with that tenant,
-/// so it arrives in the `SecurityContext` like any other caller's. An address
-/// does not carry the cross-tenant uniqueness a directory id does, so spending
-/// the tenant we already have is what keeps one customer's roster from
-/// resolving another customer's login.
-///
-/// Fails closed on every shape it cannot answer: no roster declared, no tenant
-/// on the JWT, an empty address, or an address the roster does not state for
-/// anyone who still holds a live account under it.
 pub async fn internal_person_by_roster_email(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -583,8 +457,6 @@ pub async fn internal_person_by_roster_email(
     }))
 }
 
-/// The roster states this address for nobody who still holds a live account
-/// under it — which is also how an excluded account reads from here.
 fn no_person_states(asked: &login_bootstrap::RosterEmail<'_>) -> CanonicalError {
     ProfileError::not_found(format!(
         "no person holding a live {} account states email '{}'",
@@ -594,10 +466,6 @@ fn no_person_states(asked: &login_bootstrap::RosterEmail<'_>) -> CanonicalError 
     .create()
 }
 
-/// Answering a contested address is the install's chosen behaviour; this is the
-/// line that makes it auditable rather than silent. The seed refuses to
-/// auto-link the same shape, and an operator may have split the two people
-/// deliberately.
 pub(super) fn audit_contested_roster_email(
     asked: &login_bootstrap::RosterEmail<'_>,
     resolved: &login_bootstrap::RosterEmailMatch,
@@ -616,9 +484,6 @@ pub(super) fn audit_contested_roster_email(
     );
 }
 
-/// Map a roster-email refusal to its wire shape, and log the two that mean an
-/// install is misconfigured rather than a caller mistaken — each would
-/// otherwise surface only as an unexplained refusal for every person.
 pub(super) fn refused_roster_email(refusal: login_bootstrap::RosterEmailRefusal) -> CanonicalError {
     use login_bootstrap::RosterEmailRefusal as R;
     match refusal {
@@ -659,12 +524,6 @@ pub(super) fn refused_roster_email(refusal: login_bootstrap::RosterEmailRefusal)
     }
 }
 
-/// Validate the request and resolve it to candidate `person_id`s.
-///
-/// Resolution dispatches on `value_type` ("email" across all sources, "id" scoped to one
-/// source instance, `person_id` the canonical person itself). Returns the
-/// (possibly empty or multi-element) match set — the caller maps 0 → 404,
-/// 1 → profile, >1 → 409.
 async fn resolve_person_ids(
     state: &AppState,
     tenant: Uuid,
@@ -672,8 +531,6 @@ async fn resolve_person_ids(
 ) -> Result<Vec<Uuid>, CanonicalError> {
     let value_type = req.value_type.trim();
 
-    // Validation order: value_type first, then value, then the source
-    // cross-field rules.
     if value_type.is_empty() {
         return Err(ProfileError::invalid_argument()
             .with_field_violation("value_type", "value_type is required", "REQUIRED")
@@ -735,7 +592,6 @@ async fn resolve_person_ids(
             CanonicalError::internal("profile resolution failed").create()
         })
     } else {
-        // value_type == "email"
         if req.insight_source_type.is_some() || req.insight_source_id.is_some() {
             return Err(ProfileError::invalid_argument()
                 .with_field_violation(
@@ -754,17 +610,11 @@ async fn resolve_person_ids(
     }
 }
 
-/// The `value_type='person_id'` mode: the canonical person needs no resolution
-/// step, so this only validates the key and confirms the person exists in the
-/// tenant. Visibility still applies downstream, so name resolution and metric
-/// access answer to one rule.
 async fn resolve_person_id_mode(
     state: &AppState,
     tenant: Uuid,
     req: &ResolveProfileRequest,
 ) -> Result<Vec<Uuid>, CanonicalError> {
-    // Cross-field shape matches email's: a person id is tenant-wide, and
-    // source scoping is what selects the 'id' mode instead.
     if req.insight_source_type.is_some() || req.insight_source_id.is_some() {
         return Err(ProfileError::invalid_argument()
             .with_field_violation(
@@ -788,9 +638,6 @@ async fn resolve_person_id_mode(
                 .create()
         })?;
 
-    // A person exists iff the append-only log holds an observation for it; an
-    // unknown id yields no candidate, so the caller answers 404 — the same
-    // shape an unknown email takes, and no probe for which ids exist.
     let exists = persons_repo::person_exists(&state.db, tenant, person_id)
         .await
         .map_err(|e| {
@@ -800,9 +647,6 @@ async fn resolve_person_id_mode(
     Ok(if exists { vec![person_id] } else { Vec::new() })
 }
 
-/// Resolve the person's parent (supervisor) edge from `org_chart`, filtered to
-/// the configured source instance, into the projection the assembler writes.
-/// Returns `Ok(None)` when the person has no current parent edge on that source.
 async fn resolve_parent(
     state: &AppState,
     tenant: Uuid,
@@ -836,7 +680,6 @@ async fn resolve_parent(
             })?;
 
     let latest = latest_values(parent_obs);
-    // Parent's source-native id on the same source instance as the edge.
     let source_native_id = parent_ids
         .into_iter()
         .find(|s| &s.source_type == source_type && s.source_id == edge.source_id)
@@ -850,8 +693,6 @@ async fn resolve_parent(
     }))
 }
 
-/// Hydrate the recursive subordinates subtree for a resolved profile. The root
-/// is pre-seeded into `visited` so a child edge pointing back at it can't loop.
 async fn resolve_subordinates(
     state: &AppState,
     tenant: Uuid,
@@ -865,10 +706,6 @@ async fn resolve_subordinates(
     hydrate_children(state, tenant, root_person_id, 0, &mut visited).await
 }
 
-/// Expand the direct children of `person_id` (at tree depth `depth`) into person
-/// nodes, recursing while below the configured depth cap. Children are the
-/// distinct `org_chart` child ids on the configured source, in query order.
-///
 /// Returns a boxed future: `hydrate_children` and `hydrate_person` are mutually
 /// recursive `async fn`s, which Rust cannot size without an explicit `Box::pin`.
 fn hydrate_children<'a>(
@@ -890,7 +727,6 @@ fn hydrate_children<'a>(
                 CanonicalError::internal("profile assembly failed").create()
             })?;
 
-        // Distinct child ids on the configured source, preserving query order.
         let mut seen = HashSet::new();
         let child_ids: Vec<Uuid> = edges
             .into_iter()
@@ -909,9 +745,6 @@ fn hydrate_children<'a>(
     })
 }
 
-/// Build one person node at tree depth `depth`, recursing into its own children.
-/// Returns `None` when the person is already on the current path (cycle guard)
-/// or has no observations.
 fn hydrate_person<'a>(
     state: &'a AppState,
     tenant: Uuid,
@@ -947,8 +780,6 @@ fn hydrate_person<'a>(
 mod tests {
     use super::*;
 
-    /// Lock the internal S2S response wire shape (`snake_case` keys + constant
-    /// `insight_source_type`) — the authenticator depends on it verbatim.
     #[test]
     fn internal_person_response_wire_shape() -> anyhow::Result<()> {
         let body = InternalPersonResponse {
@@ -968,7 +799,6 @@ mod tests {
         Ok(())
     }
 
-    /// The authenticator mints these values into the JWT roles claim verbatim.
     #[test]
     fn internal_active_roles_wire_shape() -> anyhow::Result<()> {
         let body = InternalActiveRolesResponse {

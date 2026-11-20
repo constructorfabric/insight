@@ -54,10 +54,6 @@ pub(crate) enum ReportExecutionError {
     Sink(#[source] ReportSinkError),
 }
 
-/// A finished report, and whether the warehouse could answer all of it.
-///
-/// A relation nothing has built yet stops the rows there: the output carries
-/// what was written before it, and `not_ready` says why there is no more.
 #[derive(Debug)]
 pub(crate) struct ReportExecution<T> {
     pub(crate) output: T,
@@ -159,7 +155,6 @@ where
     Ok(ReportExecution { output, not_ready })
 }
 
-/// One batch's metric reads, or the reason the batch has none.
 enum MetricQueryBatch {
     Values(Vec<ReportMetricValues>),
     NotReady(NotReadyReason),
@@ -204,9 +199,6 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
     while let Some(result) = results.next().await {
         let values = match result.map_err(ReportExecutionError::Query)? {
             ReportMetricRead::Values(values) => values,
-            // One metric reading a relation nothing has built makes the whole
-            // report not-ready: a table with that column silently blank would
-            // read as "measured, and empty".
             ReportMetricRead::NotReady(reason) => return Ok(MetricQueryBatch::NotReady(reason)),
         };
         let Some(slot) = ordered.get_mut(values.metric_index) else {

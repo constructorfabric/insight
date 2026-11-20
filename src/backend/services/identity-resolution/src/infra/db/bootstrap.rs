@@ -1,11 +1,3 @@
-//! First-admin bootstrap.
-//!
-//! Breaks the chicken-and-egg between the admin-gated CRUD endpoints and an
-//! empty `person_roles` table: when `bootstrap_admin_person_id` is configured,
-//! the person gets an active `admin` assignment in `tenant_default_id`.
-//! Idempotent (`INSERT … WHERE NOT EXISTS` on the active-assignment triple);
-//! runs at the end of the `migrate` subcommand.
-
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
@@ -28,13 +20,6 @@ const SQL: &str = "
     )
 ";
 
-/// Seed the first admin according to the gear config. Skip semantics: no
-/// bootstrap person configured → silent no-op; person
-/// configured but no tenant → warn and skip.
-///
-/// # Errors
-///
-/// Returns an error on an unparseable configured UUID or a database failure.
 pub async fn bootstrap_admin(db: &DatabaseConnection, config: &GearConfig) -> anyhow::Result<()> {
     if config.bootstrap_admin_person_id.is_empty() {
         return Ok(());

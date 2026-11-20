@@ -1,25 +1,16 @@
-# Build context = src/backend/ for all backend services. Without it, host
-# build artifacts leak into the image and Linux builds fail on stale Rust
-# target trees.
-
-# Rust
 **/target
 
-# IDE state
 **/.vscode
 **/.idea
 
-# VCS / Docker / repo hygiene
 **/.git
 **/.gitignore
 **/.dockerignore
 **/Dockerfile*
 
-# Caches and node_modules
 **/.cache
 **/node_modules
 
-# Service-local non-build extras
 **/helm/
 **/.env.local
 **/.env.local.example

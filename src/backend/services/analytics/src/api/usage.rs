@@ -19,8 +19,6 @@ pub use breakdowns::{
 pub use ingest::{UsageIngestRequest, ingest_usage_events};
 pub use summary::{UsageConfigResponse, UsageSummaryResponse, get_usage_config, get_usage_summary};
 
-/// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
-/// service holds INSERT and SELECT here, never CREATE.
 const TABLE: &str = "product_usage.usage_events";
 
 const PAGE_VIEW: &str = "page_view";
@@ -29,12 +27,9 @@ const SESSION_START: &str = "session_start";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
-/// Every read is bounded by the tenant and a pair of whole UTC days.
 const WINDOW: &str =
     "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
-/// A record carrying no session id stores `''`, and every such row across every
-/// person and day is that same value — one phantom visit if counted naively.
 const VISITS: &str = "uniqExactIf(session_id, session_id != '')";
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

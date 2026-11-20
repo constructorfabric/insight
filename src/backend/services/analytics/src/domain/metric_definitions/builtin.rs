@@ -75,9 +75,6 @@ impl SeedComputation {
         }
     }
 
-    /// The definition's `scale` storage column: the ratio's scale factor, or
-    /// the percentile's quantile `q` — one numeric slot, meaning keyed by
-    /// `computation_type` (the table's CHECK constraint enforces the pairing).
     pub fn scale(self) -> Option<f64> {
         match self {
             Self::Sum | Self::Median | Self::Stddev | Self::DistinctCount => None,
@@ -106,36 +103,16 @@ impl SeedComputation {
 pub struct SourceSeed {
     pub key: String,
     pub kind: SourceKind,
-    /// Managed-observation relation name; must satisfy
-    /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: String,
     pub evidence_ref: String,
-    /// When a delivered day stops changing, where the suppliers revise one.
-    /// Absent where nothing revises, or where nobody has established it — a
-    /// reader treats absence as "settles on arrival" rather than as zero
-    /// uncertainty. Where several suppliers feed one source the later boundary
-    /// wins: calling a settled day provisional costs less than the reverse.
     #[serde(default)]
     pub revision: Option<RevisionRule>,
 }
 
-/// What has to happen before a delivered day is reported settled.
-///
-/// The distinction is the date the supplier's correction is normally scoped to.
-/// A supplier that re-reads a fixed tail revises a day for a fixed time after
-/// that day. A supplier reporting a month-to-date figure revises within the
-/// month it is reporting, so its days settle together when that month closes —
-/// a duration cannot express that boundary, because how long a day stays open
-/// depends on where in its month it falls.
-///
-/// Either way this is the supplier's usual behaviour, and a correction outside
-/// it can still reach a day already reported settled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RevisionRule {
-    /// A delivered day keeps changing for this many days after itself.
     RollingDays(u16),
-    /// A delivered day settles when the calendar month it falls in closes.
     BillingMonth,
 }
 
@@ -153,21 +130,10 @@ pub struct BuiltinSource {
 pub struct MeasureSeed {
     pub key: String,
     pub evidence_granularity: EvidenceGranularity,
-    /// Overrides the source's rule where this measure settles differently.
-    ///
-    /// One supplier can report facts on two date anchors: a month-to-date total
-    /// stamped at the month it bills for is rewritten by every later reading,
-    /// while the step between two readings is closed by the ordinary next one.
-    /// A rule describes how the supplier normally revises, not what it cannot
-    /// do. Absent = the source's rule.
     #[serde(default)]
     pub revision: Option<RevisionRule>,
-    /// Declared per (source, measure): `active_day` is a per-day flag in
-    /// `ai_usage` and a distinct-count subject in `collab`.
     #[serde(default)]
     pub alias_collapse: AliasCollapse,
-    /// How this measure's evidence rows read in the drilldown. Absent where
-    /// the rows carry no human-facing details of their own.
     #[serde(default)]
     pub evidence_presentation: Option<EvidencePresentation>,
 }
@@ -178,16 +144,9 @@ pub struct MetricSeed {
     pub metric_key: String,
     pub source_key: String,
     pub label: String,
-    /// Compact label for dense surfaces (member grids, heatmap columns);
-    /// None = the full label is already compact enough.
     #[serde(default)]
     pub short_label: Option<String>,
-    /// The single topic this metric belongs to within its family, so a surface
-    /// listing a family can partition it into topics. Required for builtins —
-    /// exactly one per metric, which is the partition a source key cannot give.
     pub subject: String,
-    /// Cross-cutting labels a surface can filter or search by; many per metric,
-    /// unlike the singular `subject`.
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -200,8 +159,6 @@ pub struct MetricSeed {
     pub direction: MetricDirection,
     pub entity_type: EntityType,
     pub computation: SeedComputation,
-    /// Post-aggregation shaping (affine + clamp) applied by the compiler to
-    /// every computed value; None = identity.
     #[serde(default)]
     pub transform: Option<ValueTransform>,
     #[serde(default)]
@@ -332,8 +289,6 @@ mod tests {
         }
     }
 
-    /// Column keys the drilldown fills from the evidence row rather than from
-    /// its details map; a declaration claiming one would be overwritten.
     const STRUCTURAL_COLUMN_KEYS: &[&str] = &[
         "person",
         "date",
@@ -345,9 +300,6 @@ mod tests {
 
     #[test]
     fn every_event_measure_declares_the_columns_its_rows_carry() {
-        // An event row stands for one thing that happened, and the drilldown
-        // projects it through this declaration alone. A measure that declares
-        // nothing hands the reader a page of identical dates.
         let mut undeclared = Vec::new();
         for builtin_source in builtin_sources() {
             for measure in &builtin_source.measures {
@@ -378,10 +330,6 @@ mod tests {
             "default_pr_merged",
         ] {
             let presentation = declared_presentation("git", measure_key);
-            // Where the work went is part of the record on every path that
-            // opens the dialog: a column that appeared only for a reader who
-            // arrived through a grouped table left the same request looking
-            // like a different one.
             assert_eq!(
                 presentation
                     .detail_columns
@@ -398,7 +346,6 @@ mod tests {
                 ],
                 "{measure_key} should read the request it counted"
             );
-            // The row IS the request it counted, so a value column would be 1s.
             assert!(
                 !presentation.show_value,
                 "{measure_key} should show no value"
@@ -408,9 +355,6 @@ mod tests {
 
     #[test]
     fn a_branch_scope_split_reads_the_same_columns_as_its_total() {
-        // The split measures count the same commits and requests the totals do,
-        // so a reader who drills into "landed" sees what they saw before, minus
-        // the rows that did not land.
         for (total, split) in [
             ("commit_count", "default_commit_count"),
             ("commit_count", "non_default_commit_count"),
@@ -438,7 +382,6 @@ mod tests {
             "pr_review_to_merge_hours",
             "pr_approval_to_merge_hours",
         ] {
-            // A duration or a page count is only readable with its number.
             assert!(
                 declared_presentation("git", measure_key).show_value,
                 "{measure_key} should show its value"
@@ -448,9 +391,6 @@ mod tests {
 
     #[test]
     fn a_seat_row_names_the_month_it_bills_for() {
-        // A seat row is dated at the day its snapshot was last read, not at the
-        // month it bills for, so the month has to be a column of its own or the
-        // reader cannot tell which month the row is.
         for measure_key in [
             "extra_usage_usd",
             "extra_usage_limit_usd",
@@ -468,9 +408,6 @@ mod tests {
 
     #[test]
     fn a_seat_day_step_names_the_span_it_covers() {
-        // The step is measured from the previous reading, so above one day the
-        // figure is a span rather than one day's spend, and the month-to-date
-        // total it was taken from is what makes it legible.
         let keys = declared_presentation("ai_cost", "daily_extra_usage_usd")
             .detail_columns
             .iter()
@@ -509,7 +446,6 @@ mod tests {
                 ("repository", "Repository"),
                 ("environment", "Environment"),
                 ("outcome", "Outcome"),
-                // Prose, because `env_kind` humanizes to "Env kind".
                 ("env_kind", "Environment type"),
             ]
         );
@@ -595,11 +531,6 @@ mod tests {
         }
     }
 
-    // INVARIANT: a distribution statistic may not declare a collapse — median,
-    // percentile and standard deviation are event-grain, and merging same-day
-    // rows moves the statistic. Additive computations collapse by design, and
-    // distinct counts are unaffected: they read `uniqExact(subject_key)` and the
-    // collapse groups by `subject_key`, so the collapse is a no-op there.
     #[test]
     fn alias_collapse_is_never_declared_on_distribution_inputs() {
         let collapse_by_source: HashMap<&str, HashMap<&str, AliasCollapse>> = builtin_sources()
@@ -846,9 +777,6 @@ mod tests {
         }
     }
 
-    // Width of metric_definitions.subject and metric_definition_tags.tag. A
-    // longer authored value would pass shape checks but fail or truncate at
-    // reconcile time, so the bound is enforced here at build time.
     const METADATA_MAX_LEN: usize = 64;
 
     #[test]
@@ -972,11 +900,6 @@ mod tests {
         }
     }
 
-    // Percent and currency formats are presentation-complete: the FE's
-    // formatMetricValue/metricDisplayUnit always render "%" or a currency
-    // symbol from `format` alone and never consult `unit` for these two
-    // formats. A unit string here is therefore dead config that only invites
-    // drift (e.g. "percent" vs "%" for the same format) — keep it None.
     #[test]
     fn presentation_complete_formats_carry_no_unit() {
         for metric in builtin_metrics() {

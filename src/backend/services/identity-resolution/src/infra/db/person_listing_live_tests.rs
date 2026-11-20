@@ -1,15 +1,3 @@
-//! What the person listing answers, against a live journal.
-//!
-//! The listing narrows before it ranks — a cheap pass over raw observations
-//! picks the candidates, the window passes run only over those — and that shape
-//! is only allowed if it returns exactly what the exact filter would have
-//! returned from the whole tenant. These cases are that proof: currency,
-//! multi-term conjunction, literal wildcards, tenant isolation and the order the
-//! page comes back in.
-//!
-//! INVARIANT: never `#[ignore]` these — the identity CI job runs `cargo test`
-//! without `--include-ignored`, so an ignored case silently stops running.
-
 use uuid::Uuid;
 
 use crate::domain::resolution::EXCLUDED_PERSON;
@@ -70,9 +58,6 @@ async fn a_term_matches_regardless_of_case() -> TestResult {
     Ok(())
 }
 
-/// The HR number is stored and served on the profile, and deliberately not
-/// searched: nobody looks a colleague up by it, and every searched value type
-/// costs a pass over that slice of the journal.
 #[tokio::test]
 async fn an_employee_id_is_not_a_searchable_value() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
@@ -125,9 +110,6 @@ async fn two_terms_must_both_match_the_same_person() -> TestResult {
     Ok(())
 }
 
-/// The conjunction is per person, not per row: one term may land on the name and
-/// the next on the address. A pre-filter that required one observation to carry
-/// both terms would answer nobody.
 #[tokio::test]
 async fn terms_may_land_on_different_values_of_one_person() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
@@ -179,7 +161,6 @@ async fn an_id_named_search_answers_exactly_that_person() -> TestResult {
         named.into_iter().map(|r| r.person_id).collect::<Vec<_>>(),
         vec![wanted]
     );
-    // The id is the only way to a person the journal holds no values for.
     let by_id = list_persons(
         &f.db,
         f.tenant,
@@ -247,8 +228,6 @@ async fn the_page_is_ordered_by_the_label_the_row_shows() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    // Labels chosen so the order cannot come from the ids or the insert order:
-    // display name wins, else the composed name, else the address.
     let zoe = f.person("aaa-first-by-address@listing.test").await?;
     f.observed(zoe, "display_name", "Zoe Displayed").await?;
     let mid = f.person("mmm-by-address@listing.test").await?;
@@ -279,15 +258,9 @@ async fn the_page_is_ordered_by_the_label_the_row_shows() -> TestResult {
 
 #[tokio::test]
 async fn the_handle_labels_a_person_the_source_gave_no_name() -> TestResult {
-    // A source that hides a member's e-mail still reports one for their
-    // commits, and it is generated from the account rather than chosen by the
-    // human: `<id>+<handle>@…` names nobody. The handle does, so it labels the
-    // row and the address only breaks a tie nothing else can.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    // The address sorts LAST and the handle FIRST, so only the handle winning
-    // produces this order — an address-labelled row would come back second.
     let handled = f.person("zzz-generated@users.noreply.example").await?;
     f.observed(handled, "username", "aaa-handle").await?;
     let addressed = f.person("mmm-address-only@listing.test").await?;
@@ -373,9 +346,6 @@ async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
     Ok(())
 }
 
-/// The fallback a too-common term lands in must answer what the narrowed path
-/// answers. Only the probe's own cap decides which runs, so the two shapes are
-/// compared here directly rather than through a roster big enough to trip it.
 #[tokio::test]
 async fn the_unnarrowed_fallback_answers_exactly_what_the_probe_narrowed_to() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {

@@ -1,5 +1,3 @@
-//! The rows behind a metric, one ordered page at a time.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,10 +20,6 @@ use crate::domain::drilldown::{
 use crate::domain::query::metric_query::ColumnKind;
 use crate::domain::query::time_window::WindowRequest;
 
-/// How many pages may be read at once, and how long a caller waits for a
-/// turn before being told to come back. A page re-runs the metric, so the
-/// cap is what keeps a board full of open dialogs from starving the runs
-/// the cards themselves make.
 pub(crate) const MAX_CONCURRENT_PAGES: usize = 8;
 const ACQUIRE_TIMEOUT_SECS: u64 = 2;
 
@@ -175,7 +169,6 @@ async fn page_metric(
     read_page(&state, &name, body).await
 }
 
-/// One page of the metric's rows, as the body asks for it.
 pub(super) async fn read_page(
     state: &AppState,
     name: &DefinitionId,
@@ -195,7 +188,6 @@ pub(super) async fn read_page(
     Ok(Json(response(name.as_str(), &asked, page)).into_response())
 }
 
-/// What the caller asked for, read only once they have proved they may ask.
 fn asked(
     body: Result<Option<Json<serde_json::Value>>, JsonRejection>,
 ) -> Result<Asked, CanonicalError> {

@@ -1,12 +1,3 @@
-//! Live ClickHouse integration tests for the metric-results query path:
-//! compiled SQL executed for real, rows parsed exactly as the handler parses
-//! them (`JSONEachRow` lines into the typed query rows).
-//!
-//! `#[ignore]`d and skip silently when `INTEGRATION_TESTS_CLICKHOUSE_URL` is
-//! unset (same convention as the `probe_live_tests` in `api/metrics.rs`);
-//! optional auth via `INTEGRATION_TESTS_CLICKHOUSE_USER` /
-//! `INTEGRATION_TESTS_CLICKHOUSE_PASSWORD`.
-
 use chrono::NaiveDate;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
@@ -37,8 +28,6 @@ const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 const TENANT: Uuid = Uuid::from_u128(0x2581);
 const PERSON: Uuid = Uuid::from_u128(0xfeed);
 
-// Empty counts as unset: the CI matrix passes '' to entries without a
-// provisioned ClickHouse, and set-but-empty must skip exactly like absent.
 fn client_or_skip() -> Option<insight_clickhouse::Client> {
     let url = std::env::var(URL_VAR).unwrap_or_default();
     if url.is_empty() {
@@ -56,9 +45,6 @@ fn client_or_skip() -> Option<insight_clickhouse::Client> {
     Some(insight_clickhouse::Client::new(config))
 }
 
-/// A self-contained observation source projecting the full contract, with
-/// `metric_date` declared `Nullable(Date)` — the shape a custom metric's SQL
-/// is free to produce. Four rows, values 1..=4, one person.
 fn nullable_date_sql() -> String {
     format!(
         "SELECT \
@@ -76,10 +62,6 @@ fn nullable_date_sql() -> String {
     )
 }
 
-/// Two dimension groups that do NOT overlap in time: `org/a` only in
-/// 2026-08-15..16, `org/b` only in 2026-08-13..14. A standalone request over
-/// either window returns exactly one of them — which is what the windowed
-/// shape has to reproduce.
 fn disjoint_groups_sql() -> String {
     let row = |repo: &str, day: &str, value: &str, measure: &str| {
         format!(
@@ -137,8 +119,6 @@ fn request() -> ValidatedMetricResultsRequest {
     }
 }
 
-/// The handler's row path: bind the compiled params, fetch `JSONEachRow`,
-/// parse each line into the typed row (`api/metric_results.rs::fetch_rows`).
 async fn fetch_rows<T: DeserializeOwned>(
     ch: &insight_clickhouse::Client,
     query: &CompiledQuery,
@@ -156,9 +136,6 @@ async fn fetch_rows<T: DeserializeOwned>(
         .collect()
 }
 
-/// The four observations of `nullable_date_sql` split across two windows:
-/// 2026-08-13..14 carry 1 + 2, and 2026-08-15..16 carry 3 + 4. A windowed
-/// request must read both out of ONE scan of the union.
 #[tokio::test]
 #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::Result<()> {
@@ -173,8 +150,6 @@ async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::
         to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
     });
 
-    // The second pass adds a transform, so the batch's projection stage has to
-    // re-select every window's column and not just the primary one.
     for multiplier in [None, Some(10.0)] {
         let mut def = nullable_date_metric();
         def.transform = multiplier.map(|multiplier| ValueTransform {
@@ -221,9 +196,6 @@ async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::
     Ok(())
 }
 
-/// A ratio over the disjoint-group fixture: `org/a` lives only in the primary
-/// window and its denominator is zero there, `org/b` only in the extra window.
-/// This is the case a value column cannot express on its own.
 fn disjoint_ratio_metric() -> MetricDefinition {
     let sql = disjoint_groups_sql();
     MetricDefinition {
@@ -262,9 +234,6 @@ fn disjoint_ratio_metric() -> MetricDefinition {
     }
 }
 
-/// The contract a projected window rests on: per group and per window, the
-/// response has to say whether a standalone request over that window would
-/// have returned the group at all — independently of its value.
 #[tokio::test]
 #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Result<()> {
@@ -303,9 +272,6 @@ async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Res
         anyhow::bail!("org/b must be in the combined row set");
     };
 
-    // org/a IS in the primary window, and its ratio reads NULL there because
-    // the denominator sums to zero. A reader dropping NULL values would lose a
-    // row that a standalone request returns.
     anyhow::ensure!(
         a.present == Some(true) && a.value.is_none(),
         "org/a must be present in the primary window with a NULL value, got {:?}",
@@ -320,8 +286,6 @@ async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Res
         a_window.present
     );
 
-    // org/b is the mirror image: absent from the primary window, present in
-    // the extra one with a real value.
     let Some(ref b_window) = b.compare_to else {
         anyhow::bail!("expected a comparison window for org/b");
     };
@@ -338,8 +302,6 @@ async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Res
     Ok(())
 }
 
-/// The breakdown's window columns, through the transform projection stage that
-/// re-selects every one of them by name.
 #[tokio::test]
 #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn a_windowed_breakdown_transforms_every_window_column() -> anyhow::Result<()> {

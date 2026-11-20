@@ -21,8 +21,6 @@ use crate::engine::url::CloneUrlPolicy;
 pub struct AppState {
     pub store: Arc<RepoStore>,
     pub config: GearConfig,
-    /// Page-serve slots. Each serve runs git children whose memory scales
-    /// with the window's blob bytes; this cap is what bounds the pod's peak.
     pub serves: Arc<tokio::sync::Semaphore>,
 }
 
@@ -36,11 +34,6 @@ impl AppState {
     }
 }
 
-/// Mount the git-cli-proxy routes onto the host's router.
-///
-/// Our routes live on a fresh sub-router so the bearer middleware and state
-/// scope to `/v1` only; `/healthz` is mounted by the host's base router
-/// (`gear.rs`) and stays public for probes.
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -49,16 +42,12 @@ pub fn register_routes(
     let bearer = auth::ProxyAuth::new(state.config.proxy_token.clone());
 
     let v1 = build_operations(Router::new(), openapi)
-        // Innermost, so only handler work is on the clock — auth and logging
-        // stay outside the budget.
         .layer(axum::middleware::from_fn(bound_handler))
         .layer(axum::middleware::from_fn_with_state(
             bearer,
             auth::require_bearer,
         ))
         .layer(Extension(state))
-        // Outside the bearer layer, so a rejected request is timed too — an
-        // operator watching a token rotation needs exactly those.
         .layer(axum::middleware::from_fn(observe))
         .layer(insight_http_metrics::ServerMetricsLayer::new(
             "git-cli-proxy",
@@ -73,24 +62,10 @@ mod log_context_tests;
 #[cfg(test)]
 mod log_leak_tests;
 
-/// Every wait a handler can make is individually bounded (git budgets, the
-/// in-connection preparation wait, the read-lock wait), but a hold that is
-/// never released — a leaked guard, a wedged permit holder — turns the NEXT
-/// request's wait into forever, and the connector has no client timeout to
-/// cut it off. This ceiling converts that
-/// class into a bounded, retryable answer. It must stay above every legal
-/// inline duration; the longest is [`crate::engine::store::PREPARATION_WAIT`].
 const HANDLER_BUDGET: Duration = Duration::from_hours(1);
 
-// INVARIANT: the typed Busy answer must fire before the blanket 503 cutoff.
 const _: () = assert!(HANDLER_BUDGET.as_secs() > crate::engine::store::PREPARATION_WAIT.as_secs());
 
-/// Answer 503 when a handler outlives [`HANDLER_BUDGET`].
-///
-/// 503, not 408: the connectors' declarative handlers already RETRY 503 (and
-/// would FAIL on an unlisted status). The dropped future releases whatever
-/// the request itself held via RAII; whatever it was WAITING on stays wedged
-/// and is the defect to find in the log this leaves behind.
 async fn bound_handler(request: Request, next: Next) -> Response {
     answer_within(HANDLER_BUDGET, request, next).await
 }
@@ -107,12 +82,6 @@ async fn answer_within(budget: Duration, request: Request, next: Next) -> Respon
     error::handler_timed_out()
 }
 
-/// Record the per-endpoint request histograms for every request that reached a
-/// route, and log the request line.
-///
-/// The metric label is the matched ROUTE, not the request path: a path would
-/// make the label set unbounded. A request that matched nothing has no
-/// endpoint to attribute and is not recorded.
 async fn observe(request: Request, next: Next) -> Response {
     let endpoint = request
         .extensions()
@@ -166,13 +135,6 @@ fn openapi_info() -> OpenApiInfo {
     }
 }
 
-/// Build the document offline — no `AppState`, no listener. Backs the
-/// `git-cli-proxy openapi` subcommand and its drift gate, reusing the exact
-/// route table the live gear serves so the two cannot diverge.
-///
-/// # Errors
-///
-/// Returns an error if the registry cannot assemble the document.
 pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let openapi = OpenApiRegistryImpl::new();
     let _ = build_operations(Router::new(), &openapi);
@@ -182,12 +144,8 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
         .map_err(|e| anyhow::anyhow!("failed to build git-cli-proxy OpenAPI document: {e}"))
 }
 
-/// Declare each operation via the toolkit `OperationBuilder` (route + OpenAPI
-/// spec + auth/error metadata in one place).
-///
-/// The error set is declared explicitly rather than with `standard_errors`:
-/// this document IS the connectors' contract, and `standard_errors` would
-/// advertise a `403` the service never emits.
+// The error set is declared explicitly rather than with `standard_errors`:
+// `standard_errors` would advertise a `403` the service never emits.
 #[expect(
     clippy::too_many_lines,
     reason = "one flat block per route, as in the sibling services"
@@ -440,8 +398,6 @@ mod tests {
 
     use super::*;
 
-    /// A store per caller, never a shared directory: constructing a store
-    /// clears its `tmp/`, so two tests sharing one data dir race each other.
     fn state() -> Arc<AppState> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
@@ -505,8 +461,6 @@ mod tests {
 
     #[test]
     fn build_operations_registers_the_full_table_without_state() {
-        // Catches overlapping routes and bad builder state with no AppState,
-        // which is exactly what the offline `openapi` subcommand does.
         let openapi = OpenApiRegistryImpl::new();
         let _ = build_operations(Router::new(), &openapi);
     }
@@ -627,9 +581,6 @@ mod tests {
 
     #[tokio::test]
     async fn every_rejection_carries_the_problem_envelope() {
-        // Every failure carries the problem envelope, including the bearer
-        // layer's rejection and axum's query-string rejection, which both
-        // answer before any handler runs.
         let cases: Vec<(&str, &str, Option<&str>, bool)> = vec![
             ("no bearer", "/v1/commits?repo=x", None, true),
             ("wrong bearer", "/v1/commits?repo=x", Some("wrong"), true),
@@ -684,18 +635,12 @@ mod tests {
 
     #[tokio::test]
     async fn healthz_is_left_to_the_host() {
-        // INVARIANT: the host's base router owns GET /healthz; registering our
-        // own panics at boot with an overlapping-route error. In isolation the
-        // path falls through our bearer layer, so it answers 401 here.
         assert_eq!(
             status_of("/healthz", None, false).await,
             StatusCode::UNAUTHORIZED
         );
     }
 
-    /// The pending handler never resolves, so only the budget can produce an
-    /// answer — and it must be the 503 the connectors RETRY. A tiny budget
-    /// stands in for the real one; `bound_handler` differs only by constant.
     #[tokio::test]
     async fn a_handler_that_never_answers_is_cut_off_with_503() {
         let app = axum::Router::new()

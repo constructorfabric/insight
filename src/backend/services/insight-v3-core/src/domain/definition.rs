@@ -1,13 +1,3 @@
-//! Metric, widget and dashboard definitions.
-//!
-//! These live in `MariaDB`, not in `ClickHouse` with the data they describe.
-//! They are a few hundred rows read by id and edited in place by whoever is
-//! asking the assistant for a change — which is what a row store is for, and
-//! what a column store is not. On `ClickHouse` a change meant inserting a new
-//! version and reading with `FINAL`, nothing stopped two rows claiming one
-//! key, and a create that failed halfway left what it had already written
-//! behind with nothing to roll it back with.
-
 pub(crate) mod arriving;
 
 use std::collections::HashMap;
@@ -34,15 +24,8 @@ pub(crate) enum DefinitionKind {
 }
 
 impl DefinitionKind {
-    /// Every kind there is, for the places that must answer for all of them:
-    /// the routes, the tools, and what the assistant is told exists.
-    ///
-    /// INVARIANT: a kind missing here is a kind with no endpoint and no name
-    /// the assistant can reuse.
     pub(crate) const ALL: [Self; 3] = [Self::Metric, Self::Widget, Self::Dashboard];
 
-    /// What a group of them is called: the path segment, and the heading the
-    /// assistant reads.
     pub(crate) fn plural(self) -> &'static str {
         match self {
             Self::Metric => "metrics",
@@ -67,8 +50,6 @@ impl DefinitionKind {
         }
     }
 
-    /// The kind as the shared library holds it, or none for a dashboard,
-    /// whose catalogue depends on who is asking.
     pub(crate) fn library(self) -> Option<LibraryKind> {
         match self {
             Self::Metric => Some(LibraryKind::Metric),
@@ -78,7 +59,6 @@ impl DefinitionKind {
     }
 }
 
-/// A kind every administrator sees all of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LibraryKind {
     Metric,
@@ -98,8 +78,6 @@ impl LibraryKind {
 pub(crate) struct DefinitionId(String);
 
 impl DefinitionId {
-    /// The same rule as [`DefinitionId::parse`], for a caller that can only
-    /// be given a pattern - the chat tool schema the model answers in.
     pub(crate) const PATTERN: &'static str = "^[A-Za-z0-9_-]{1,128}$";
 
     pub(crate) fn parse(value: &str) -> Result<Self, DefinitionError> {
@@ -117,10 +95,6 @@ impl DefinitionId {
         Ok(Self(value.to_owned()))
     }
 
-    /// A fresh id for a definition being created.
-    ///
-    /// INVARIANT: a hyphenated UUID satisfies [`DefinitionId::PATTERN`], so a
-    /// generated id and an id carried over from an older name share one rule.
     pub(crate) fn generate() -> Self {
         Self(Uuid::now_v7().hyphenated().to_string())
     }
@@ -134,7 +108,6 @@ impl DefinitionId {
     }
 }
 
-/// What a reader calls a definition. Two definitions may share one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DefinitionLabel(String);
 
@@ -151,12 +124,6 @@ impl DefinitionLabel {
         Ok(Self(trimmed.to_owned()))
     }
 
-    /// An id read as a name, which is what a definition stored before names
-    /// were labels is called.
-    ///
-    /// INVARIANT: every id satisfies the label rule - at most as long, never
-    /// blank, no control characters - so this cannot make a label `parse`
-    /// would refuse.
     pub(crate) fn of_id(id: &DefinitionId) -> Self {
         Self(id.as_str().to_owned())
     }
@@ -166,11 +133,9 @@ impl DefinitionLabel {
     }
 }
 
-/// The largest page a caller may ask for, and what it gets by default.
 const DEFAULT_PAGE_LIMIT: u64 = 50;
 pub(crate) const MAX_PAGE_LIMIT: u64 = 200;
 
-/// How much of a catalogue to read.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Page {
     limit: u64,
@@ -199,23 +164,18 @@ impl Page {
     }
 }
 
-/// One definition in a catalogue: what addresses it and what it is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Listed {
     pub(crate) id: String,
     pub(crate) name: String,
 }
 
-/// One page of a catalogue, and how many definitions it is a page of.
 #[derive(Debug)]
 pub(crate) struct ListedPage {
     pub(crate) items: Vec<Listed>,
-    /// Every match, not the page — so a reader can say what is behind it.
     pub(crate) total: u64,
 }
 
-/// One metric or widget as the portal's catalogue shows it: what addresses
-/// it, what it is called, what it holds and when it last changed.
 #[derive(Debug, Clone)]
 pub(crate) struct LibraryEntry {
     pub(crate) id: String,
@@ -224,15 +184,12 @@ pub(crate) struct LibraryEntry {
     pub(crate) updated_at: DateTime<Utc>,
 }
 
-/// One page of library entries, and how many definitions it is a page of.
 #[derive(Debug)]
 pub(crate) struct LibraryPage {
     pub(crate) items: Vec<LibraryEntry>,
-    /// Every match, not the page — so a reader can say what is behind it.
     pub(crate) total: u64,
 }
 
-/// A stored definition as a reader is given it.
 #[derive(Debug, Clone)]
 pub(crate) struct StoredDefinition {
     pub(crate) name: String,
@@ -240,36 +197,29 @@ pub(crate) struct StoredDefinition {
     pub(crate) updated_at: DateTime<Utc>,
 }
 
-/// One write in a batch.
 #[derive(Debug)]
 pub(crate) enum Change {
-    /// A write that refuses to replace anything.
     Create(
         DefinitionKind,
         DefinitionId,
         DefinitionLabel,
         serde_json::Value,
     ),
-    /// A write that refuses to create anything.
     Replace(
         DefinitionKind,
         DefinitionId,
         DefinitionLabel,
         serde_json::Value,
     ),
-    /// Makes a dashboard the person's.
     Own {
         dashboard: DefinitionId,
         owner: PersonId,
     },
-    /// Puts `to`, carrying, in each owned folder holding `from` that
-    /// `placer` may arrange.
     CarryEntries {
         from: DefinitionId,
         to: DefinitionId,
         placer: Caller,
     },
-    /// Tags `to` with the names `from` carries, as tags of `scope`.
     CarryTags {
         from: DefinitionId,
         to: DefinitionId,
@@ -277,8 +227,6 @@ pub(crate) enum Change {
     },
 }
 
-/// A definition as it stands: what kind it is, what addresses it, and what it
-/// holds.
 #[derive(Debug, Clone)]
 pub(crate) struct Definition {
     pub(crate) kind: DefinitionKind,
@@ -292,10 +240,6 @@ impl Definition {
     }
 }
 
-/// Reading one definition by id, which is all a kind's own rules may do.
-///
-/// A rule that could write would write mid-check, before the batch it belongs
-/// to has been accepted.
 #[async_trait]
 pub(crate) trait Lookup: Send + Sync + fmt::Debug {
     async fn get(
@@ -305,9 +249,6 @@ pub(crate) trait Lookup: Send + Sync + fmt::Debug {
     ) -> Result<Option<serde_json::Value>, DefinitionStoreError>;
 }
 
-/// What the API and the chat need of the store, so neither has to know where
-/// definitions live — and so their tests can hold them in a map rather than
-/// answer a database's wire protocol.
 #[async_trait]
 pub(crate) trait Definitions: Lookup {
     async fn read(
@@ -316,11 +257,6 @@ pub(crate) trait Definitions: Lookup {
         id: &DefinitionId,
     ) -> Result<Option<StoredDefinition>, DefinitionStoreError>;
 
-    /// Stores a new definition; an id already held is
-    /// [`DefinitionStoreError::IdTaken`].
-    ///
-    /// For the tests alone: a dashboard stored this way has no owner, and
-    /// the service creates every definition through [`Definitions::apply`].
     #[cfg(test)]
     async fn create(
         &self,
@@ -330,7 +266,6 @@ pub(crate) trait Definitions: Lookup {
         body: &serde_json::Value,
     ) -> Result<(), DefinitionStoreError>;
 
-    /// Replaces what an id holds, reporting whether there was one.
     async fn replace(
         &self,
         kind: DefinitionKind,
@@ -339,19 +274,8 @@ pub(crate) trait Definitions: Lookup {
         body: &serde_json::Value,
     ) -> Result<bool, DefinitionStoreError>;
 
-    /// Every id of this kind.
-    ///
-    /// For the dependency scans, which have to see the definitions a page
-    /// would leave out.
     async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError>;
 
-    /// One page of the definitions of this kind whose name or body holds
-    /// `needle`, ordered by name.
-    ///
-    /// The body too, because "which metrics read `class_git_commits`" is the
-    /// question a catalogue of a few hundred definitions is actually asked,
-    /// and a name cannot answer it. An empty needle is every definition of
-    /// that kind.
     async fn page(
         &self,
         kind: LibraryKind,
@@ -359,8 +283,6 @@ pub(crate) trait Definitions: Lookup {
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError>;
 
-    /// The same page as [`Definitions::page`], each definition with its body
-    /// and when it last changed, for a catalogue that draws a card of each.
     async fn page_entries(
         &self,
         kind: LibraryKind,
@@ -368,25 +290,18 @@ pub(crate) trait Definitions: Lookup {
         page: Page,
     ) -> Result<LibraryPage, DefinitionStoreError>;
 
-    /// The name of each of these ids that exists, by id, in one read.
     async fn names_of(
         &self,
         kind: LibraryKind,
         ids: &[&str],
     ) -> Result<HashMap<String, String>, DefinitionStoreError>;
 
-    /// Removes the definition, reporting whether there was one.
     async fn delete(
         &self,
         kind: DefinitionKind,
         id: &DefinitionId,
     ) -> Result<bool, DefinitionStoreError>;
 
-    /// Applies every change or none of them.
-    ///
-    /// A chat request builds a metric, its widgets and the dashboard that
-    /// holds them; written one at a time, a failure partway through left the
-    /// reader a metric, no dashboard, and no way to tell.
     async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError>;
 }
 

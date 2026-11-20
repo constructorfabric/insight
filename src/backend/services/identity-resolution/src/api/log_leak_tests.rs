@@ -1,7 +1,3 @@
-//! Seeded-leak checks (insight#2488 AC-4): write a person's address and the
-//! store credentials through the logging path — the values must never reach a
-//! line. Pins the address-free audit discipline #1847 established.
-
 use insight_log_context::test_support::capture_output;
 use uuid::Uuid;
 

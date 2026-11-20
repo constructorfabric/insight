@@ -33,21 +33,14 @@ import pytest
 import yaml
 
 HERE = Path(__file__).resolve()
-SUBCHART = HERE.parents[1]  # .../identity-resolution/helm
+SUBCHART = HERE.parents[1]
 REPO_ROOT = HERE.parents[6]
 UMBRELLA = REPO_ROOT / "charts" / "insight"
 
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
-# name suffix -> (schedule, args) — the per-job contract facts. One entry
-# today; the table stays so a second scheduled job arrives with its contract
-# already asserted. The tolerance flags are deliberate: the schedule is a
-# freshness backstop, and a backstop that is red on healthy stands (empty
-# identity_inputs, a raced lock) trains everyone to ignore it — refusals
-# surface as failed operations-journal rows instead.
 JOBS = {"seed": ("*/15 * * * *", ["seed", "--busy-ok", "--guard-ok"])}
 
-# Minimum viable subchart install (mirrors the umbrella's wiring).
 SUBCHART_BASE = [
     "--set",
     "image.tag=0.0.0-test",
@@ -57,9 +50,6 @@ SUBCHART_BASE = [
     "gateway.issuer=https://issuer.test",
 ]
 
-# Minimum viable umbrella install on the credentials.autoGenerate path (the
-# only path where the umbrella composes the identity-resolution config Secret
-# and can therefore vouch for the tenant inside it).
 UMBRELLA_BASE = [
     "--set",
     "identityResolution.deploy=true",
@@ -206,9 +196,6 @@ def test_cronjob_runs_its_subcommand_against_the_mounted_config(default_docs, jo
     container = _job_container(_cronjob(default_docs, job))
     assert container["command"] == ["/app/identity-resolution"]
     assert container["args"] == ["-c", "/app/config/insight.yaml", *JOBS[job][1]]
-    # A CronJob must never run forced — --force overrides the input guards and
-    # is a deliberate manual act. Tolerating a refusal (--guard-ok) is not
-    # forcing: the run publishes nothing and journals why.
     assert "--force" not in container["args"]
 
 
@@ -235,9 +222,6 @@ def test_cronjob_uses_the_deployments_secret_and_configmap(default_docs, job: st
 
 @pytest.mark.parametrize("job", JOBS)
 def test_cronjob_loads_the_observability_contract_like_the_deployment(default_docs, job: str) -> None:
-    # The seed job installs its own meter provider (#2891), so it must read the
-    # same platform ConfigMap the deployment does or its instruments no-op.
-    # Optional, so a standalone install without the umbrella still schedules.
     container = _job_container(_cronjob(default_docs, job))
     platform = next(
         e["configMapRef"]
@@ -249,7 +233,6 @@ def test_cronjob_loads_the_observability_contract_like_the_deployment(default_do
 
 @pytest.mark.parametrize("job", JOBS)
 def test_tenant_value_overrides_the_secret_via_env(default_docs, job: str) -> None:
-    # Default: no explicit env — the Secret is the tenant source.
     container = _job_container(_cronjob(default_docs, job))
     assert "env" not in container, container.get("env")
 
@@ -264,7 +247,6 @@ def test_disabling_one_job_removes_only_that_cronjob(job: str) -> None:
     docs = _subchart_docs("--set", f"{job}.enabled=false")
     jobs = _cronjobs(docs)
     assert f"contract-test-identity-resolution-{job}" not in jobs, sorted(jobs)
-    # Every other CronJob and the rest of the chart are untouched.
     for other in (j for j in JOBS if j != job):
         _cronjob(docs, other)
     _the(docs, "Deployment")
@@ -281,12 +263,6 @@ def test_job_pod_labels_never_match_the_service_selector(default_docs, job: str)
     assert any(pod_labels.get(k) != v for k, v in selector.items()), (
         f"{job} pod labels {pod_labels} satisfy the Service selector {selector}"
     )
-
-
-# ── umbrella: the tenant render guard ─────────────────────────────────────
-
-
-# `umbrella_deps` is session-scoped in conftest.py — one vendor per run.
 
 
 def test_umbrella_refuses_enabled_seed_without_a_tenant(umbrella_deps) -> None:

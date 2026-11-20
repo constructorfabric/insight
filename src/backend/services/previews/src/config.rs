@@ -1,45 +1,21 @@
-//! Gear configuration.
-//!
-//! Loaded via `GearCtx::config::<GearConfig>()` from the
-//! `gears.previews.config` YAML section. Env overrides are
-//! `APP__gears__previews__config__<field>`.
-
 use serde::Deserialize;
 
 use crate::domain::objects::RouteTarget;
 
-/// Configuration consumed by the previews gear. Deserialized from
-/// `gears.previews.config`. The image repository is NOT here on purpose — it
-/// is hardcoded ([`crate::domain::objects::IMAGE_REPOSITORY`]) so no
-/// deployment can widen the image surface.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct GearConfig {
-    /// The ONE namespace this service creates and deletes experiment objects
-    /// in; it never touches another.
     pub namespace: String,
-    /// The shared Gateway experiments' routes attach to.
     pub gateway_name: String,
     pub gateway_namespace: String,
-    /// Target listener on the Gateway (e.g. `https`). Empty = all listeners.
     pub gateway_section_name: String,
-    /// The single preview host every experiment serves under. Empty renders
-    /// host-relative URLs in responses; route creation still requires it.
     pub route_host: String,
-    /// Prefix experiments live under (`/exp/<name>`, prefix-stripped).
     pub base_path: String,
-    /// Cap on live experiments; a create beyond it is refused.
     pub max_experiments: usize,
-    /// TTL applied when a create names none.
     pub default_ttl_days: u32,
-    /// Longest TTL a create may ask for.
     pub max_ttl_days: u32,
-    /// How often the TTL sweep looks for expired experiments.
     pub sweep_interval_secs: u64,
-    /// OCI registry for tag listing; empty disables `GET /v1/images`.
     pub registry_url: String,
-    /// Bearer credential, needed only for a private repository (for GHCR,
-    /// the base64-encoded read token); empty lists anonymously.
     pub registry_token: String,
 }
 
@@ -66,13 +42,6 @@ impl Default for GearConfig {
 const TTL_DAYS_CEILING: u32 = 3650;
 
 impl GearConfig {
-    /// Refuse a config the request path could only mis-serve: a default TTL
-    /// outside `1..=max_ttl_days` would fail every ttl-less create, and an
-    /// unbounded maximum would let expiry arithmetic leave chrono's range.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error naming the violated bound.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.default_ttl_days >= 1 && self.default_ttl_days <= self.max_ttl_days,

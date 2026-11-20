@@ -40,8 +40,6 @@ async fn created(store: &MariaDefinitions, id: &DefinitionId, owner: PersonId) {
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// A copy of `from` as `owner`'s, in the folders of the original they may
-/// arrange.
 async fn copied(store: &MariaDefinitions, from: &DefinitionId, to: &DefinitionId, owner: PersonId) {
     store
         .apply(&[
@@ -65,7 +63,6 @@ async fn copied(store: &MariaDefinitions, from: &DefinitionId, to: &DefinitionId
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// The ids of the dashboards `person` sees in the folder.
 async fn filed_in(store: &MariaDefinitions, person: PersonId, folder: FolderId) -> Vec<String> {
     let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
     let query = DashboardQuery {
@@ -83,7 +80,6 @@ async fn filed_in(store: &MariaDefinitions, person: PersonId, folder: FolderId) 
         .collect()
 }
 
-/// The folders `person` sees holding the dashboard.
 async fn holding(
     store: &MariaDefinitions,
     board: &DefinitionId,

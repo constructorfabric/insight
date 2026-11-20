@@ -1,6 +1,3 @@
-//! Bearer-authenticated routes: which prefixes may carry one, and the
-//! challenge each emits.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use routegen::{RouteConfig, Settings, generate};

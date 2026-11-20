@@ -113,8 +113,6 @@ fn a_table_carries_the_dataset_a_reader_knows_and_the_attempt_that_made_it() {
     );
 }
 
-/// Taking a dataset that stands for a create would demote it out of sight,
-/// make a second table and leave its records in the first.
 #[test]
 fn a_create_never_takes_a_dataset_that_stands() {
     let stands = row(DatasetState::Ready, None);

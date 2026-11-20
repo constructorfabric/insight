@@ -1,16 +1,3 @@
-//! End-to-end login loop against a running authenticator + Keycloak + Redis
-//! (`run-e2e.sh` boots the stack):
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 \
-//!   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
-//! ```
-//!
-//! It drives the full loop: `/auth/login` -> the realm's login form ->
-//! `/auth/callback` (session + cookie) -> `/internal/authz` (JWT, verified
-//! against the published JWKS) -> `/auth/me` -> `/auth/logout` -> `/internal/authz`
-//! returns 401.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 mod common;
@@ -58,8 +45,6 @@ struct Jwk {
 struct Claims {
     sub: String,
     tenant_id: String,
-    /// Space-delimited on the wire (OAuth `scope` shape — the downstream
-    /// verifier's `token_scopes` mapping splits on whitespace).
     roles: String,
     sid: String,
     aud: String,
@@ -72,7 +57,6 @@ async fn full_login_exchange_logout_loop() {
     let test_user = env("E2E_USER", "dev@company.nonpresent");
     let http = client();
 
-    // 1. /auth/login -> 302 to the IdP authorize endpoint.
     let login = http
         .get(format!("{auth_base}/auth/login?return_to=/dashboard"))
         .send()
@@ -84,10 +68,8 @@ async fn full_login_exchange_logout_loop() {
         .unwrap()
         .to_owned();
 
-    // 2. Authenticate on the realm's login form -> redirect to the callback.
     let callback = common::kc::authorize(&authorize, &test_user).await;
 
-    // 3. Follow the callback -> session created, cookie set, 302 to return_to.
     let cb = http.get(&callback).send().await.unwrap();
     assert_eq!(
         cb.status(),
@@ -101,7 +83,6 @@ async fn full_login_exchange_logout_loop() {
     );
     let token = cookie_from(&cb).expect("callback must set __Host-sid");
 
-    // 4. /internal/authz with the cookie -> 200 + X-Gateway-Jwt + Cache-Control.
     let authz = http
         .get(format!("{auth_base}/internal/authz"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
@@ -121,7 +102,6 @@ async fn full_login_exchange_logout_loop() {
         .strip_prefix("Bearer ")
         .expect("X-Gateway-Jwt is a Bearer token");
 
-    // 5. Verify the JWT against the published JWKS (ES256).
     let jwks: Jwks = http
         .get(format!("{auth_base}/.well-known/jwks.json"))
         .send()
@@ -150,10 +130,8 @@ async fn full_login_exchange_logout_loop() {
         "default role present"
     );
     assert!(!claims.sid.is_empty(), "stable sid present");
-    let _ = &claims.tenant_id; // present (may be empty in a keyless local run)
+    let _ = &claims.tenant_id;
 
-    // 5b. The discovery document points downstream verifiers at that JWKS
-    //     (cf-gears-oidc-authn-plugin resolves jwks_uri from it).
     let discovery: serde_json::Value = http
         .get(format!("{auth_base}/.well-known/openid-configuration"))
         .send()
@@ -173,7 +151,6 @@ async fn full_login_exchange_logout_loop() {
         "discovery must point at the published JWKS"
     );
 
-    // 6. /auth/me returns the session summary.
     let me = http
         .get(format!("{auth_base}/auth/me"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
@@ -185,8 +162,6 @@ async fn full_login_exchange_logout_loop() {
     assert!(me_body.get("user").is_some());
     assert!(me_body.get("refresh_at").is_some());
 
-    // 7. /auth/logout revokes the session and clears the cookie. State-changing
-    //    /auth/* requires the CSRF token (step 10.5) — /auth/me echoed it.
     let csrf = me_body["csrf_token"].as_str().unwrap().to_owned();
     let logout = http
         .post(format!("{auth_base}/auth/logout"))
@@ -203,7 +178,6 @@ async fn full_login_exchange_logout_loop() {
         .any(|h| h.to_str().unwrap_or("").contains("Max-Age=0"));
     assert!(cleared, "logout must clear the cookie");
 
-    // 8. The exchange now fails closed.
     let after = http
         .get(format!("{auth_base}/internal/authz"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
@@ -218,20 +192,12 @@ async fn full_login_exchange_logout_loop() {
     );
 }
 
-/// Failed callbacks bounce back into the SPA (#2032): the browser lands on
-/// `/auth/callback` from an IdP redirect, so a problem+json answer would
-/// dead-end the login on raw JSON. Every browser-facing failure must 302 to
-/// `default_return_to` with a fixed `auth_error=<reason>` the SPA consumes to
-/// restart the flow.
 #[tokio::test]
 #[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn failed_callback_redirects_into_the_spa_with_auth_error() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let http = client();
 
-    // Distinct `state` values per case AND per run: the per-state callback
-    // rate-limit bucket (5-burst, 10/min refill) must not couple these
-    // requests — or trip on rapid suite re-runs against the same stack.
     let run = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())

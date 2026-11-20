@@ -1,9 +1,3 @@
-//! Persons-seed domain: group source-account profiles and resolve each group to
-//! a `person_id` — the **write-side** identity resolution (what the read side
-//! only looks up). Pure logic, no DB / IO. Divergent e-mail groups keep
-//! per-account bindings (classified by binding author) instead of collapsing
-//! onto the first binding.
-
 use std::collections::{HashMap, HashSet};
 
 use sea_orm::prelude::DateTime;
@@ -14,8 +8,6 @@ use super::provenance::{Provenance, ROSTER_MINT_REASON};
 use super::resolution::{BINDING_VALUE_TYPE, EXCLUDED_PERSON};
 use super::roster::RosterSource;
 
-/// Identifies one source-native account: the source instance (`source_type` +
-/// `source_id`) plus the account's native id within it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceAccountKey {
     pub source_type: String,
@@ -23,9 +15,6 @@ pub struct SourceAccountKey {
     pub account_id: String,
 }
 
-/// One raw observation from `identity.identity_inputs` (what the connectors
-/// emit). `synced_at` is monotonic per account; `is_delete` marks a tombstone
-/// (signal only — never persisted).
 #[derive(Debug, Clone)]
 pub struct IdentityInputRow {
     pub source_type: String,
@@ -37,9 +26,6 @@ pub struct IdentityInputRow {
     pub is_delete: bool,
 }
 
-/// One account folded from the raw input stream: its current email, whether its
-/// binding is closed, and the current upsert observations to persist once the
-/// group's `person_id` is resolved.
 #[derive(Debug, Clone)]
 pub struct SeedProfile {
     pub account: SourceAccountKey,
@@ -55,9 +41,6 @@ pub struct RosterMembership {
     pub observed_at: DateTime,
 }
 
-/// A resolved observation ready to append to `persons` — stamped with the
-/// assigned `person_id`, routed into one of the three value columns. Consumed by
-/// `infra::db::seed_repo::apply`.
 #[derive(Debug, Clone)]
 pub struct SeedObservationRow {
     pub value_type: String,
@@ -72,16 +55,11 @@ pub struct SeedObservationRow {
     pub created_at: DateTime,
 }
 
-/// Accounts that resolve to the same person — grouped by current email.
 #[derive(Debug, Clone)]
 pub struct ProfileGroup {
     pub profiles: Vec<SeedProfile>,
 }
 
-/// An account's current binding as loaded from `persons`: the person, who
-/// authored the binding row, and how it came about. Authorship decides conflict
-/// classification — an operator-authored binding marks divergence inside an
-/// e-mail group as an intentional, settled state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnownBinding {
     pub person_id: Uuid,
@@ -90,36 +68,25 @@ pub struct KnownBinding {
 }
 
 impl KnownBinding {
-    /// The all-zero author is the seed sentinel; any real UUID is an operator.
     #[must_use]
     pub fn is_operator_authored(&self) -> bool {
         !self.author_person_id.is_nil()
     }
 
-    /// A binding automation wrote and nobody has confirmed. It is what the
-    /// review queue asks about, the only kind an address may override, and the
-    /// only kind whose reason survives a re-emission.
     #[must_use]
     pub fn is_unconfirmed_mint(&self) -> bool {
         !self.is_operator_authored() && self.provenance != Provenance::Resolved
     }
 }
 
-/// How a group's `person_id` was decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignmentKind {
-    /// An account in the group was already bound to a person (idempotent reuse).
     ReusedKnown,
-    /// The group's email already maps to an existing person.
     LinkedByEmail,
-    /// A fresh person was minted for the group.
     Minted,
-    /// A fresh person was minted for a roster account carrying no address —
-    /// unverifiable by automation, so the operator is asked to confirm it.
     MintedFromRoster,
 }
 
-/// A group bound to a person, carrying the accounts that share it.
 #[derive(Debug, Clone)]
 pub struct PersonAssignment {
     pub person_id: Uuid,
@@ -127,7 +94,6 @@ pub struct PersonAssignment {
     pub profiles: Vec<SeedProfile>,
 }
 
-/// Assignments plus per-branch counters (feed the operation summary).
 #[derive(Debug, Default)]
 pub struct ResolveOutcome {
     pub assignments: Vec<PersonAssignment>,
@@ -136,43 +102,19 @@ pub struct ResolveOutcome {
     pub minted: usize,
     pub skipped_closed: usize,
     pub skipped_no_email: usize,
-    /// Accounts left unbound because no connector states an id for them. Minting
-    /// a person here would create one no account can ever belong to; the review
-    /// queue surfaces the account instead.
     pub skipped_no_source_id: usize,
-    /// Email groups whose accounts are bound to *more than one* person with no
-    /// operator-authored binding explaining it. Each account keeps its own
-    /// binding (never collapsed); the group is counted + logged for review.
     pub known_binding_conflicts: usize,
-    /// Divergent e-mail groups where at least one binding is operator-authored
-    /// — an intentional split, kept silent (not a conflict).
     pub operator_settled_groups: usize,
-    /// Unbound accounts inside a divergent e-mail group: their e-mail is
-    /// contested evidence, so they are not auto-linked to anyone.
     pub skipped_contested_email: usize,
-    /// Accounts bound to the excluded person (ADR-0003). They are not persons:
-    /// nothing is re-emitted for them, and their values link nobody —
-    /// automation may not spread an operator's exclusion to new accounts.
     pub skipped_excluded: usize,
-    /// Roster accounts with no address that were minted a person anyway. Each
-    /// one reaches the review queue: the roster says a human exists, nothing
-    /// says they are not already on it under another account.
     pub minted_from_roster: usize,
 }
 
-/// Case-fold an email for grouping / lookup (ADR-0011: matched
-/// case-insensitively). Lowercases only — it does **not** trim: surrounding
-/// whitespace is significant, so two accounts that differ only by stray
-/// whitespace resolve to distinct persons. Blank/whitespace-only values are
-/// treated as "no email" by the callers.
-/// The infra layer must key the `email → person` map with the same function.
 #[must_use]
 pub fn normalize_email(email: &str) -> String {
     email.to_lowercase()
 }
 
-/// Group profiles that share the same current email into one group; profiles
-/// with no (or blank) email each become a singleton group.
 #[must_use]
 pub fn group_by_email(profiles: Vec<SeedProfile>) -> Vec<ProfileGroup> {
     let mut by_email: HashMap<String, Vec<SeedProfile>> = HashMap::new();
@@ -200,15 +142,6 @@ pub fn group_by_email(profiles: Vec<SeedProfile>) -> Vec<ProfileGroup> {
     groups
 }
 
-/// Resolve each group to a `person_id`, in priority order: reuse already-bound
-/// accounts (idempotent — each account keeps **its own** binding, never
-/// collapsed across a divergent group); else link to the person the group's
-/// email already maps to; else mint a fresh person when at least one profile
-/// is active; else skip (all closed, or no address and no roster to vouch for
-/// the account). `mint` is injected so tests are deterministic.
-///
-/// `roster` names the source allowed to mint without an address. `None` — the
-/// default — keeps an addressless account unresolved, as before.
 #[must_use]
 pub fn resolve_assignments(
     groups: Vec<ProfileGroup>,
@@ -220,10 +153,6 @@ pub fn resolve_assignments(
     let mut out = ResolveOutcome::default();
 
     for group in groups {
-        // 0. Excluded accounts (bound to the sentinel) are not persons: they
-        //    contribute no new observations, and they leave the group before
-        //    any linking decision so their values claim nobody. The exclusion
-        //    itself stays in force — its journal row is already the latest.
         let (excluded, remaining): (Vec<_>, Vec<_>) = group.profiles.into_iter().partition(|p| {
             known
                 .get(&p.account)
@@ -234,31 +163,17 @@ pub fn resolve_assignments(
             continue;
         }
 
-        // The group's address — shared by every profile in an e-mail group; an
-        // addressless group is a singleton with none. (`first` is always `Some`
-        // here, groups being non-empty by construction, but avoid the panicking
-        // index.)
         let email = remaining
             .first()
             .and_then(|p| p.latest_email.as_deref())
             .map(normalize_email)
             .filter(|e| !e.trim().is_empty());
 
-        // The person that address already names, if any. A binding automation
-        // wrote and nobody confirmed gives way to it: leaving such an account on
-        // its minted person would hand one human two persons AND give the
-        // address two claimants, which resolves to NOBODY downstream — so the
-        // human's activity would reach no metric at all.
         let claimed_by = email
             .as_deref()
             .and_then(|e| email_to_person.get(e).copied())
             .filter(|pid| *pid != EXCLUDED_PERSON);
 
-        // 1. Known bindings win — and each bound account keeps its own person.
-        //    A group whose accounts are bound to different persons is an
-        //    intentional split when any binding is operator-authored (ADR-0003);
-        //    otherwise it is a conflict to surface. Either way the e-mail is
-        //    contested evidence, so unbound group members are not auto-linked.
         let (bound, unbound): (Vec<_>, Vec<_>) = remaining.into_iter().partition(|p| {
             known
                 .get(&p.account)
@@ -291,9 +206,6 @@ pub fn resolve_assignments(
             continue;
         }
 
-        // 2. Email matches an existing person → link. A map entry naming the
-        //    excluded sentinel (legacy rows from before exclusions stopped
-        //    re-emitting) is no person and links nobody — fall through to mint.
         if let Some(pid) = claimed_by {
             out.linked_by_email += group.profiles.len();
             out.assignments.push(PersonAssignment {
@@ -304,19 +216,11 @@ pub fn resolve_assignments(
             continue;
         }
 
-        // 3/4. No binding and no email match. A wholly-closed group creates no
-        //      person — tested first, because a closed account never reaches the
-        //      review queue and counting it as unbindable would promise operator
-        //      work that never appears there.
         if !group.profiles.iter().any(|p| !p.is_closed) {
             out.skipped_closed += group.profiles.len();
             continue;
         }
 
-        //      Mint only if some account here states an id the seed can bind.
-        //      Without one the person would be a bag of observations no account
-        //      belongs to, and no later run could fix that: the queue surfaces
-        //      the account for an operator instead.
         if !group.profiles.iter().any(states_a_bindable_id) {
             out.skipped_no_source_id += group.profiles.len();
             continue;
@@ -334,16 +238,8 @@ pub fn resolve_assignments(
     out
 }
 
-/// Reason stamped on observations linked via the email branch (forensics).
 pub const AUTO_SEED_LINK_REASON: &str = "auto-seed-link";
 
-/// The reason to stamp on one account's observations.
-///
-/// INVARIANT: an unconfirmed mint keeps saying so for as long as it stands. The
-/// binding read takes the LATEST `id` row, and a source re-emits that row on
-/// every change it makes to the account — so stamping the assignment's own
-/// reason would retire the operator's review item, and un-flag the person the
-/// merge picker greys out, with no decision behind either.
 fn reason_for(
     assignment: &PersonAssignment,
     profile: &SeedProfile,
@@ -365,11 +261,6 @@ fn reason_for(
     }
 }
 
-/// Record a group whose bound accounts name different persons. Each keeps its
-/// own binding — automation never collapses a split — and the group's address is
-/// contested evidence, so its unbound members are linked to nobody. An
-/// operator-authored binding among them makes the split an intentional one
-/// (ADR-0003), which is counted but not surfaced.
 fn record_divergent_group(
     bound: Vec<SeedProfile>,
     unbound: &[SeedProfile],
@@ -412,10 +303,6 @@ fn record_divergent_group(
     }
 }
 
-/// Whether an existing binding must give way to the person an address already
-/// names. Only a binding nobody has confirmed does, and only in favour of a
-/// DIFFERENT person: an operator's decision is final, and a binding the address
-/// itself produced is already the answer.
 fn yields_to_address(binding: &KnownBinding, claimed_by: Option<Uuid>) -> bool {
     let Some(person) = claimed_by else {
         return false;
@@ -424,14 +311,6 @@ fn yields_to_address(binding: &KnownBinding, claimed_by: Option<Uuid>) -> bool {
     person != binding.person_id && binding.is_unconfirmed_mint()
 }
 
-/// Resolve a group carrying no address. Only the roster may mint for one: an
-/// address is the sole key automation can match on, so every other source's
-/// addressless account is left for an operator.
-///
-/// The account must also state its own id. That observation becomes the binding
-/// row, and minting without one leaves a person no account points at —
-/// invisible to every later run, and to the operator who would have to repair
-/// it.
 fn record_addressless_group(
     group: ProfileGroup,
     roster: Option<&RosterSource>,
@@ -448,7 +327,6 @@ fn record_addressless_group(
         return;
     }
 
-    // Deactivated at its source: the roster lists no human to add.
     if !group.profiles.iter().any(|profile| {
         !profile.is_closed
             && profile
@@ -467,31 +345,19 @@ fn record_addressless_group(
     });
 }
 
-/// Whether the source states an id for this account that will actually land in
-/// `persons` as its binding row.
-///
-/// Presence is not enough: `route_value` drops an over-long id rather than
-/// truncating it, and a mint whose binding row was dropped leaves a person no
-/// account points at — with no address to recover it by, every later run mints
-/// another one.
 fn states_a_bindable_id(profile: &SeedProfile) -> bool {
     profile.observations.iter().any(|o| {
         o.value_type == BINDING_VALUE_TYPE && route_value(BINDING_VALUE_TYPE, &o.value).0.is_some()
     })
 }
 
-/// Route an observation value into exactly one of the three `persons` value
-/// columns by `value_type`: identifier
-/// types → `value_id`; human-readable attributes → `value_full_text`; the rest
-/// → the uncapped `value` (TEXT). Over-limit values return all-`None` (dropped,
-/// never truncated). Returns `(value_id, value_full_text, value)`.
 #[must_use]
 pub fn route_value(
     value_type: &str,
     value: &str,
 ) -> (Option<String>, Option<String>, Option<String>) {
     const MAX_VALUE_ID_LEN: usize = 320; // VARCHAR(320)
-    const MAX_VALUE_FULL_TEXT_LEN: usize = 512; // VARCHAR(512)
+    const MAX_VALUE_FULL_TEXT_LEN: usize = 512;
     const VALUE_ID_TYPES: [&str; 7] = [
         "id",
         "email",
@@ -528,10 +394,6 @@ pub fn route_value(
     (None, None, Some(value.to_owned()))
 }
 
-/// Fold the raw input stream (delivered **latest-first per account**) into one
-/// [`SeedProfile`] per source account: the latest row for each value type is
-/// current, the current id row determines whether the account is closed when
-/// present, and tombstone rows are signal-only (never persisted).
 #[must_use]
 pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
     struct Acc {
@@ -571,7 +433,7 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
             acc.id_is_closed = Some(row.is_delete);
         }
         if row.value_type == "email" && acc.latest_email.is_none() && !row.value.trim().is_empty() {
-            acc.latest_email = Some(row.value.clone()); // stored as-is (ADR-0011)
+            acc.latest_email = Some(row.value.clone());
         }
         if row.value_type == "roster_membership" && acc.roster_membership.is_none() {
             acc.roster_membership = Some(RosterMembership {
@@ -596,18 +458,6 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         .collect()
 }
 
-/// Turn resolved assignments into the observation rows to append to `persons`:
-/// each upsert observation, routed into its value column and stamped with the
-/// group's `person_id` and the seed author. Email-linked assignments carry the
-/// `auto-seed-link` reason; reused / minted carry an empty reason.
-/// Over-limit values are dropped.
-///
-/// The natural observation key ends in `created_at` and carries no account
-/// discriminator, so two accounts of one source resolving to one person at the
-/// same `synced_at` would collide on their `value_type='id'` rows and
-/// `INSERT IGNORE` would drop one binding. Rows are therefore nudged forward by
-/// whole microseconds until the key is unique within the batch — the smallest
-/// step `DATETIME(6)` can store, keeping observation chronology intact.
 #[must_use]
 pub fn assignments_to_rows(
     assignments: &[PersonAssignment],
@@ -623,7 +473,7 @@ pub fn assignments_to_rows(
             for obs in &profile.observations {
                 let (value_id, value_full_text, value) = route_value(&obs.value_type, &obs.value);
                 if value_id.is_none() && value_full_text.is_none() && value.is_none() {
-                    continue; // oversized — dropped per the routing rule
+                    continue;
                 }
 
                 let created_at = slots.claim(
@@ -658,8 +508,6 @@ mod tests {
 
     use super::*;
 
-    /// Resolve with no roster configured — the default, and what every case
-    /// about address matching wants: an addressless account stays unresolved.
     fn resolve_without_roster(
         groups: Vec<ProfileGroup>,
         known: &HashMap<SourceAccountKey, KnownBinding>,
@@ -669,9 +517,6 @@ mod tests {
         resolve_assignments(groups, known, email_to_person, None, mint)
     }
 
-    /// A profile as a connector describes one: it states its own account id,
-    /// which is what becomes the binding row. Use [`claim_only`] for an account
-    /// whose connector states none.
     fn prof(source_type: &str, account_id: &str, email: Option<&str>, closed: bool) -> SeedProfile {
         SeedProfile {
             account: SourceAccountKey {
@@ -693,8 +538,6 @@ mod tests {
         }
     }
 
-    /// An account a connector only makes claims ABOUT — an address, a name —
-    /// without stating an account id: the shape with no route to a binding.
     fn claim_only(source_type: &str, account_id: &str, email: &str) -> SeedProfile {
         let mut profile = prof(source_type, account_id, Some(email), false);
         profile.observations = vec![input(
@@ -708,7 +551,6 @@ mod tests {
         profile
     }
 
-    /// A minting factory yielding Uuid(1), Uuid(2), … deterministically.
     fn seed_bound(person: u128) -> KnownBinding {
         KnownBinding {
             person_id: Uuid::from_u128(person),
@@ -737,9 +579,9 @@ mod tests {
     fn groups_by_email_case_insensitively_singletons_for_no_email() {
         let groups = group_by_email(vec![
             prof("bamboohr", "1", Some("anna@corp.com"), false),
-            prof("slack", "U1", Some("ANNA@corp.com"), false), // same person, diff case
+            prof("slack", "U1", Some("ANNA@corp.com"), false),
             prof("bamboohr", "2", Some("boris@corp.com"), false),
-            prof("zoom", "Z1", None, false), // no email → singleton
+            prof("zoom", "Z1", None, false),
         ]);
         assert_eq!(
             groups.len(),
@@ -757,12 +599,10 @@ mod tests {
 
     #[test]
     fn emails_are_case_folded_but_not_trimmed() {
-        // Case variants merge; a trailing-space variant stays a separate
-        // group — the fold is case-insensitive but never trims.
         let groups = group_by_email(vec![
             prof("bamboohr", "1", Some("anna@corp.com"), false),
-            prof("slack", "U1", Some("ANNA@corp.com"), false), // case → merges
-            prof("zoom", "Z1", Some("anna@corp.com "), false), // trailing space → distinct
+            prof("slack", "U1", Some("ANNA@corp.com"), false),
+            prof("zoom", "Z1", Some("anna@corp.com "), false),
         ]);
         assert_eq!(
             groups.len(),
@@ -798,24 +638,22 @@ mod tests {
     fn reuses_known_account_binding_over_email() {
         let p = prof("bamboohr", "1", Some("anna@corp.com"), false);
         let mut known = HashMap::new();
-        known.insert(p.account.clone(), seed_bound(42)); // already bound
+        known.insert(p.account.clone(), seed_bound(42));
         let mut email_map = HashMap::new();
-        email_map.insert("anna@corp.com".to_owned(), Uuid::from_u128(99)); // different person!
+        email_map.insert("anna@corp.com".to_owned(), Uuid::from_u128(99));
 
         let out = resolve_without_roster(group_by_email(vec![p]), &known, &email_map, counter());
         assert_eq!(out.reused_known, 1);
         assert_eq!(out.linked_by_email, 0);
-        // Known binding wins over the email map.
         assert_eq!(out.assignments[0].person_id, Uuid::from_u128(42));
         assert_eq!(out.assignments[0].kind, AssignmentKind::ReusedKnown);
     }
 
     #[test]
     fn links_new_account_to_existing_person_by_email() {
-        // A brand-new account (not in `known`) whose email is already known.
         let groups = group_by_email(vec![prof("github", "gh1", Some("Anna@corp.com"), false)]);
         let mut email_map = HashMap::new();
-        email_map.insert("anna@corp.com".to_owned(), Uuid::from_u128(7)); // normalized key
+        email_map.insert("anna@corp.com".to_owned(), Uuid::from_u128(7));
         let out = resolve_without_roster(groups, &HashMap::new(), &email_map, counter());
         assert_eq!(out.linked_by_email, 1);
         assert_eq!(out.assignments[0].kind, AssignmentKind::LinkedByEmail);
@@ -824,8 +662,6 @@ mod tests {
 
     #[test]
     fn whole_email_group_binds_to_one_person_via_known_member() {
-        // Two accounts share an email; only one is already known → the whole
-        // group reuses that person (the new account joins the same person).
         let known_acc = prof("slack", "U1", Some("anna@corp.com"), false);
         let new_acc = prof("github", "gh1", Some("anna@corp.com"), false);
         let mut known = HashMap::new();
@@ -849,9 +685,6 @@ mod tests {
 
     #[test]
     fn divergent_group_keeps_each_accounts_own_binding() {
-        // Two accounts share an email but are bound to two *different* persons
-        // with no operator decision: each keeps its own binding (never
-        // collapsed) and the group is counted as a conflict for review.
         let acc_a = prof("slack", "U1", Some("anna@corp.com"), false);
         let acc_b = prof("github", "gh1", Some("anna@corp.com"), false);
         let mut known = HashMap::new();
@@ -879,8 +712,6 @@ mod tests {
 
     #[test]
     fn operator_authored_divergence_is_settled_not_a_conflict() {
-        // Same divergence, but one binding was written by an operator (a detach
-        // decision): the split is intentional — no conflict is counted.
         let acc_a = prof("slack", "U1", Some("team@corp.com"), false);
         let acc_b = prof("github", "gh1", Some("team@corp.com"), false);
         let mut known = HashMap::new();
@@ -904,9 +735,6 @@ mod tests {
 
     #[test]
     fn contested_email_does_not_auto_link_new_accounts() {
-        // A divergent group's e-mail is contested evidence: a brand-new account
-        // arriving with it is neither linked to either person nor minted — it
-        // is left for the operator (skipped + counted).
         let acc_a = prof("slack", "U1", Some("team@corp.com"), false);
         let acc_b = prof("github", "gh1", Some("team@corp.com"), false);
         let newcomer = prof("zoom", "Z9", Some("team@corp.com"), false);
@@ -938,10 +766,6 @@ mod tests {
 
     #[test]
     fn excluded_accounts_are_skipped_and_their_email_links_nobody() {
-        // A bot was excluded by an operator. The seed must not re-emit its
-        // observations under the sentinel, and a new account sharing the bot's
-        // e-mail must not inherit the exclusion — automation may not decide
-        // "not a person". The newcomer is its own fresh person.
         let bot = prof("github", "gh-bot", Some("ci@corp.com"), false);
         let newcomer = prof("jira", "jr-1", Some("ci@corp.com"), false);
         let mut known = HashMap::new();
@@ -963,10 +787,6 @@ mod tests {
 
     #[test]
     fn an_exclusion_does_not_settle_someone_elses_divergence() {
-        // Two automation bindings disagree AND a third account of the group is
-        // excluded. The exclusion is an operator decision about the BOT, not
-        // about the 5/6 split — the conflict must still surface (the review
-        // queue classifies it the same way).
         let acc_a = prof("slack", "U1", Some("team@corp.com"), false);
         let acc_b = prof("github", "gh1", Some("team@corp.com"), false);
         let bot = prof("zoom", "Z9", Some("team@corp.com"), false);
@@ -989,8 +809,6 @@ mod tests {
 
     #[test]
     fn a_legacy_email_map_entry_naming_the_sentinel_links_nobody() {
-        // Seeds that ran before exclusions stopped re-emitting may have left
-        // e-mail rows under the sentinel; such a map entry is not a person.
         let newcomer = prof("jira", "jr-1", Some("ci@corp.com"), false);
         let mut email_map = HashMap::new();
         email_map.insert("ci@corp.com".to_owned(), EXCLUDED_PERSON);
@@ -1028,10 +846,6 @@ mod tests {
 
     #[test]
     fn same_source_accounts_on_one_person_get_distinct_timestamps() -> anyhow::Result<()> {
-        // Two accounts of one source resolve to one person and were synced at
-        // the same instant: their `id` observations share every natural-key
-        // column, so without disambiguation INSERT IGNORE would drop one
-        // binding. Rows must land on distinct microseconds.
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         let mut a = prof("bamboohr", "1", Some("anna@corp.com"), false);
         let mut b = prof("bamboohr", "2", Some("anna@corp.com"), false);
@@ -1060,8 +874,6 @@ mod tests {
 
     #[test]
     fn distinct_value_types_at_one_instant_keep_their_timestamp() -> anyhow::Result<()> {
-        // Different value_types are already distinct in the natural key — no
-        // nudging, so observation chronology stays exactly as observed.
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         let mut p = prof("bamboohr", "1", Some("anna@corp.com"), false);
         p.observations = vec![
@@ -1116,10 +928,10 @@ mod tests {
     fn build_profiles_folds_latest_first() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         let profiles = build_profiles(vec![
-            input("bamboohr", "5001", "email", "new@corp.com", false, t), // latest
-            input("bamboohr", "5001", "email", "old@corp.com", false, t), // older, ignored
+            input("bamboohr", "5001", "email", "new@corp.com", false, t),
+            input("bamboohr", "5001", "email", "old@corp.com", false, t),
             input("bamboohr", "5001", "status", "Active", false, t),
-            input("bamboohr", "5001", "username", "tomb", true, t), // tombstone
+            input("bamboohr", "5001", "username", "tomb", true, t),
         ]);
         assert_eq!(profiles.len(), 1);
         let p = &profiles[0];
@@ -1142,7 +954,6 @@ mod tests {
             profiles[0].observations.is_empty(),
             "tombstone not persisted"
         );
-        // Email is still captured even from a tombstone row.
         assert_eq!(profiles[0].latest_email.as_deref(), Some("x@y.com"));
         Ok(())
     }
@@ -1215,7 +1026,7 @@ mod tests {
             observations: vec![
                 input("bamboohr", "5001", "email", "a@b.com", false, t),
                 input("bamboohr", "5001", "display_name", "Ann Smith", false, t),
-                input("bamboohr", "5001", "email", &"x".repeat(321), false, t), // oversized
+                input("bamboohr", "5001", "email", &"x".repeat(321), false, t),
             ],
         };
         let minted = PersonAssignment {
@@ -1230,9 +1041,7 @@ mod tests {
         };
 
         let rows = assignments_to_rows(&[minted, linked], Uuid::from_u128(99), &HashMap::new());
-        // 2 valid obs (email + display_name; oversized dropped) × 2 assignments.
         assert_eq!(rows.len(), 4);
-        // Routing: email → value_id, display_name → value_full_text.
         assert!(rows.iter().any(|r| r.value_type == "email"
             && r.value_id.as_deref() == Some("a@b.com")
             && r.value_full_text.is_none()));
@@ -1240,14 +1049,12 @@ mod tests {
             rows.iter().any(|r| r.value_type == "display_name"
                 && r.value_full_text.as_deref() == Some("Ann Smith"))
         );
-        // Minted rows: empty reason, seed author.
         assert!(
             rows.iter()
                 .filter(|r| r.person_id == Uuid::from_u128(10))
                 .all(|r| r.reason.as_deref() == Some("")
                     && r.author_person_id == Uuid::from_u128(99))
         );
-        // Email-linked rows: auto-seed-link reason.
         assert!(
             rows.iter()
                 .filter(|r| r.person_id == Uuid::from_u128(20))
@@ -1259,7 +1066,6 @@ mod tests {
     #[test]
     fn pure_pipeline_build_group_resolve_rows() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
-        // Anna across two sources sharing an email; empty persons → mint once.
         let profiles = build_profiles(vec![
             input("bamboohr", "5001", "id", "5001", false, t),
             input("bamboohr", "5001", "email", "anna@corp.com", false, t),
@@ -1286,15 +1092,10 @@ mod tests {
         Ok(())
     }
 
-    /// A fixed instant: nothing about roster minting depends on the clock, and a
-    /// literal keeps the rows a test builds comparable.
     fn epoch() -> DateTime {
         chrono::DateTime::UNIX_EPOCH.naive_utc()
     }
 
-    /// An addressless profile whose source states the account's own id — what a
-    /// roster emits, and the shape roster minting requires.
-    /// An addressless roster profile: it states its id and nothing else.
     fn rostered(source_type: &str, account_id: &str, closed: bool) -> SeedProfile {
         prof(source_type, account_id, None, closed)
     }
@@ -1381,10 +1182,6 @@ mod tests {
 
     #[test]
     fn only_the_configured_source_mints_without_an_address() {
-        // Two independent singletons, not a mixed group — an addressless profile
-        // is always its own group. Every other source keeps needing an address:
-        // minting from two rosters gives one addressless human two persons, and
-        // nothing joins them after.
         let groups = group_by_email(vec![
             member("bamboohr", "e-1", true),
             member("zoom", "Z1", true),
@@ -1415,7 +1212,6 @@ mod tests {
 
     #[test]
     fn a_closed_roster_account_is_not_minted() {
-        // The source has deactivated it, so there is no human to add.
         let groups = group_by_email(vec![member("bamboohr", "e-1", false)]);
 
         let out = resolve_assignments(
@@ -1433,11 +1229,6 @@ mod tests {
 
     #[test]
     fn an_account_that_states_no_id_is_not_minted_on_the_address_path_either() {
-        // The same rule as the roster path below, on the address-matched branch.
-        // An account whose connector states no id has no route to a binding, so
-        // a person minted here is one no account can ever belong to: invisible
-        // to every later run, and left for an operator to repair. The review
-        // queue surfaces the account instead.
         let out = resolve_without_roster(
             group_by_email(vec![claim_only(
                 "github-commit-email",
@@ -1456,8 +1247,6 @@ mod tests {
 
     #[test]
     fn a_closed_id_less_group_is_counted_closed_not_unbindable() {
-        // Closed accounts never reach the review queue, so counting one as
-        // unbindable would promise operator work that never shows up there.
         let mut gone = claim_only("github-commit-email", "gone@corp.com", "gone@corp.com");
         gone.is_closed = true;
 
@@ -1478,9 +1267,6 @@ mod tests {
 
     #[test]
     fn a_group_still_mints_when_any_of_its_accounts_states_an_id() {
-        // The person is anchored by the account that CAN be bound; the
-        // claim-only account rides along on the shared address rather than
-        // holding the group back.
         let out = resolve_without_roster(
             group_by_email(vec![
                 prof("bamboohr", "1", Some("anna@corp.com"), false),
@@ -1498,9 +1284,6 @@ mod tests {
 
     #[test]
     fn a_roster_account_that_states_no_id_is_not_minted() {
-        // The `id` observation is what becomes the binding row. Minting without
-        // one would leave a person no account points at — invisible to every
-        // later run, and to the operator who would have to repair it.
         let mut silent = prof("bamboohr", "e-1", None, false);
         silent.observations = vec![input(
             "bamboohr",
@@ -1526,9 +1309,6 @@ mod tests {
 
     #[test]
     fn a_roster_account_with_an_address_takes_the_address_path() {
-        // The roster branch exists for accounts automation cannot match. One
-        // carrying an address is matched on it, so it must not be marked as
-        // needing an operator's eye.
         let addressed = prof("bamboohr", "e-1", Some("sam@example.com"), false);
         let mut known_person = HashMap::new();
         known_person.insert("sam@example.com".to_owned(), Uuid::from_u128(0x5A_11));
@@ -1548,8 +1328,6 @@ mod tests {
 
     #[test]
     fn an_already_bound_roster_account_is_reused_not_minted_again() {
-        // Idempotence: the binding written by the first run is what the second
-        // one finds, so a daily seed does not add a person a day.
         let mut known = HashMap::new();
         known.insert(
             SourceAccountKey {
@@ -1579,8 +1357,6 @@ mod tests {
 
     #[test]
     fn a_roster_mint_is_stamped_so_the_queue_can_find_it() {
-        // The reason is the only record that the mint had no address behind it:
-        // the binding read turns it back into the item an operator confirms.
         let rows = assignments_to_rows(
             &[PersonAssignment {
                 person_id: Uuid::from_u128(7),
@@ -1636,10 +1412,6 @@ mod tests {
 
     #[test]
     fn an_unconfirmed_mint_keeps_saying_so_when_the_source_changes_the_account() {
-        // The source re-emits this account's id row on every change it makes, so
-        // the run after a mint writes a NEWER binding row. The queue reads the
-        // latest row, so an empty reason there would retire the operator's item
-        // with no decision behind it.
         let account = SourceAccountKey {
             source_type: "bamboohr".to_owned(),
             source_id: Uuid::from_u128(1),
@@ -1708,11 +1480,6 @@ mod tests {
 
     #[test]
     fn an_address_reclaims_an_account_from_the_person_it_was_minted_for() {
-        // The whole point of the roster mint is that nothing could match the
-        // account. Once something can, leaving it on the minted person would
-        // hand one human two persons AND give the address two claimants — which
-        // resolves to nobody downstream, so the human's activity would reach no
-        // metric at all.
         let real = Uuid::from_u128(0xBEEF);
         let mut known = HashMap::new();
         known.insert(
@@ -1726,7 +1493,6 @@ mod tests {
         let mut email_map = HashMap::new();
         email_map.insert("sam@example.com".to_owned(), real);
 
-        // The roster has published the address the other account already holds.
         let mut addressed = rostered("bamboohr", "e-1", false);
         addressed.latest_email = Some("sam@example.com".to_owned());
 
@@ -1783,9 +1549,6 @@ mod tests {
 
     #[test]
     fn an_excluded_roster_account_is_never_minted_a_person() {
-        // An operator has declared this account not a human. Minting for it
-        // would undo that decision every night, and automation may not spread
-        // an exclusion either — so it simply leaves before any decision.
         let mut known = HashMap::new();
         known.insert(
             SourceAccountKey {
@@ -1815,9 +1578,6 @@ mod tests {
 
     #[test]
     fn an_id_too_long_to_store_is_not_a_licence_to_mint() {
-        // `route_value` drops an over-long id rather than truncating it, so the
-        // binding row would never be written and the person would be reachable
-        // from no account — and with no address, every later run mints another.
         let mut oversized = prof("bamboohr", "e-1", None, false);
         let too_long = "x".repeat(321);
         oversized.observations = vec![input(

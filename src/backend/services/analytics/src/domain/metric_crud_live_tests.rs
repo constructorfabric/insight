@@ -1,14 +1,3 @@
-//! Live MariaDB integration tests for the custom-metric repository.
-//!
-//! `#[ignore]`d and skip silently when `INTEGRATION_TESTS_MARIADB_URL` is
-//! unset, so `cargo test` stays green on a stock dev machine (same convention
-//! as `metric_definitions/live_tests.rs`). CI runs them with `--include-ignored`
-//! against a migrated MariaDB, which is where the raw-SQL write/read paths
-//! (`insert_graph`, `delete_graph`, `fetch_*`, `export`/`import`) earn their
-//! coverage — the pure graph validation is unit-tested separately. No
-//! ClickHouse is touched: the repository is service-DB only (the observation
-//! probe lives in the handler, not here).
-
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement};
 use uuid::Uuid;
 
@@ -39,11 +28,6 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-/// A key suffix unique per call, so sibling metrics within a test and parallel
-/// `#[ignore]`d tests never collide on the per-tenant unique keys. The full
-/// simple form is used deliberately: a v7 UUID's leading hex is the millisecond
-/// timestamp, so truncating it would make two calls in the same millisecond
-/// collide — the random tail is what guarantees uniqueness.
 fn suffix() -> String {
     Uuid::now_v7().simple().to_string()
 }
@@ -140,7 +124,6 @@ async fn create_fetch_list_delete_roundtrip() -> R {
             .await?
             .is_none()
     );
-    // A second delete finds nothing.
     assert!(!delete_custom_metric(&db, tenant, &graph.metric_key).await?);
     Ok(())
 }
@@ -193,13 +176,11 @@ async fn create_conflicts_on_existing_key_or_source() -> R {
     let graph = sum_graph(&sfx);
     create_custom_metric(&db, tenant, &graph).await?;
 
-    // Same metric_key -> conflict.
     assert!(matches!(
         create_custom_metric(&db, tenant, &graph).await?,
         WriteOutcome::AlreadyExists
     ));
 
-    // Different metric_key, same source_key -> conflict.
     let mut other = sum_graph(&suffix());
     other.source_key = graph.source_key.clone();
     assert!(matches!(
@@ -223,7 +204,6 @@ async fn replace_updates_and_rejects_source_conflict() -> R {
     create_custom_metric(&db, tenant, &first).await?;
     create_custom_metric(&db, tenant, &second).await?;
 
-    // Replace `first` with a new label + new source_key.
     let mut updated = first.clone();
     updated.label = "Renamed".to_owned();
     updated.source_key = format!("custom_r{}", suffix());
@@ -237,7 +217,6 @@ async fn replace_updates_and_rejects_source_conflict() -> R {
     assert_eq!(fetched.label, "Renamed");
     assert_eq!(fetched.source_key, updated.source_key);
 
-    // Replacing `first` with `second`'s source_key is a conflict.
     let mut clash = fetched.clone();
     clash.source_key = second.source_key.clone();
     assert_eq!(
@@ -245,7 +224,6 @@ async fn replace_updates_and_rejects_source_conflict() -> R {
         ReplaceOutcome::SourceConflict
     );
 
-    // Replacing a key that does not exist reports NotFound.
     assert_eq!(
         replace_custom_metric(&db, tenant, "custom.absent_key", &clash).await?,
         ReplaceOutcome::NotFound
@@ -277,7 +255,6 @@ async fn export_then_import_rehomes_tenant_and_is_idempotent() -> R {
     assert!(exported.iter().any(|g| g.metric_key == a.metric_key));
     assert!(exported.iter().any(|g| g.metric_key == b.metric_key));
 
-    // Import onto another tenant: both land, re-homed under the same keys.
     let skipped = import_custom_metrics(&db, target_tenant, &exported).await?;
     assert!(skipped.is_empty(), "first import skips nothing");
     let landed = fetch_custom_metric(&db, target_tenant, &a.metric_key)
@@ -285,7 +262,6 @@ async fn export_then_import_rehomes_tenant_and_is_idempotent() -> R {
         .unwrap_or_else(|| panic!("imported metric must be fetchable on the target tenant"));
     assert_eq!(landed.origin.as_deref(), Some("custom"));
 
-    // Re-import is idempotent: every key already exists, so all are skipped.
     let skipped_again = import_custom_metrics(&db, target_tenant, &exported).await?;
     assert_eq!(skipped_again.len(), exported.len());
 
@@ -304,8 +280,6 @@ async fn builtin_keys_are_invisible_to_the_custom_repository() -> R {
     };
     let tenant = Uuid::now_v7();
 
-    // A builtin metric_key is owned by the reconcile (origin='builtin',
-    // tenant_id NULL); the custom repository must never see or mutate it.
     let builtin_key = a_builtin_metric_key(&db).await?;
     assert!(
         fetch_custom_metric(&db, tenant, &builtin_key)
@@ -326,10 +300,6 @@ async fn definition_with_no_inputs_is_still_deletable() -> R {
     let graph = sum_graph(&suffix());
     create_custom_metric(&db, tenant, &graph).await?;
 
-    // Simulate the recovery case the source-via-inputs join cannot serve: drop
-    // the definition's input rows out of band. The definition is now
-    // unreachable through the inputs join, but it must not become a listed,
-    // unremovable ghost.
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "DELETE i FROM metric_definition_inputs i \
@@ -339,16 +309,12 @@ async fn definition_with_no_inputs_is_still_deletable() -> R {
     ))
     .await?;
 
-    // The delete resolves the definition directly, so it succeeds and the row
-    // leaves the listing.
     assert!(delete_custom_metric(&db, tenant, &graph.metric_key).await?);
     let summaries = list_custom_metrics(&db, tenant).await?;
     assert!(!summaries.iter().any(|s| s.metric_key == graph.metric_key));
     Ok(())
 }
 
-/// Any seeded builtin `metric_key` — the reconcile runs during `migrate`, so at
-/// least one is guaranteed to exist.
 async fn a_builtin_metric_key(db: &DatabaseConnection) -> Result<String, sea_orm::DbErr> {
     let row = db
         .query_one_raw(Statement::from_string(

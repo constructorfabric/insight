@@ -1,19 +1,3 @@
-//! Live ClickHouse tests for the sync-ledger reads.
-//!
-//! These exist because an empty table hides every failure that matters here.
-//! A `Nullable` column read into a non-`Option` field, an alias shadowing its
-//! own source, a resolution that ties between two rows of one job — all of them
-//! pass against zero rows and answer 500 the moment a sweep has run. So this
-//! inserts rows and reads them back through the real query path.
-//!
-//! `#[ignore]`d and skipping silently when `INTEGRATION_TESTS_CLICKHOUSE_URL`
-//! is unset (the convention the other live tests here use); optional auth via
-//! `INTEGRATION_TESTS_CLICKHOUSE_USER` / `..._PASSWORD`.
-//!
-//! One test, run in sequence, on purpose: the newest sealed tick and the
-//! per-connector summary are both instance-wide reads, so two of these running
-//! in parallel against a shared server would read each other's rows.
-
 #![expect(
     clippy::expect_used,
     reason = "a live-server setup failure should fail the test loudly"
@@ -28,25 +12,15 @@ mod schedules;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
-/// The table this reads comes from the migration itself, not a copy of it: a
-/// column added there and not here would otherwise pass every test and fail on
-/// the first install to deploy both.
 const MIGRATION: &str = include_str!(
     "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
 );
 
 const TABLE: &str = "ingestion_history.sync_events";
 
-/// The instance every fixture row belongs to unless it says otherwise.
 const TENANT: &str = "tenant-under-test";
 const SOURCE: &str = "main";
 
-/// Stamps are anchored to a shared current instant, not to a fixed date.
-///
-/// The table's TTL runs from `ts`, so a row stamped further back than the
-/// retention window is dropped the moment it lands — which reads exactly like a
-/// query that returned nothing. Fixed dates in a test therefore rot silently
-/// into a false failure the day retention passes them.
 fn ago(now: DateTime<Utc>, minutes: i64) -> String {
     (now - Duration::minutes(minutes))
         .to_rfc3339_opts(SecondsFormat::Millis, false)
@@ -54,8 +28,6 @@ fn ago(now: DateTime<Utc>, minutes: i64) -> String {
         .replace("+00:00", "")
 }
 
-// Empty counts as unset: the CI matrix passes '' to entries without a
-// provisioned ClickHouse, and set-but-empty must skip exactly like absent.
 fn client_or_skip() -> Option<insight_clickhouse::Client> {
     let url = std::env::var(URL_VAR).unwrap_or_default();
     if url.is_empty() {
@@ -100,13 +72,7 @@ async fn truncate(ch: &insight_clickhouse::Client) {
         .expect("truncate");
 }
 
-/// One row, written the way the sweep writes it — every column named, so a
-/// column this test forgets is a compile-time-invisible but run-time-loud
-/// mismatch rather than a silent DEFAULT.
 struct Row<'a> {
-    /// Set explicitly rather than left to the column's DEFAULT: three inserts
-    /// in quick succession can share a millisecond, which would make the gap
-    /// between seals zero and the interval assertion below flaky.
     ts: &'a str,
     tick_id: &'a str,
     job_id: &'a str,
@@ -126,7 +92,6 @@ struct Row<'a> {
 }
 
 impl<'a> Row<'a> {
-    /// The same row, belonging to a different installation of the connector.
     fn of_instance(mut self, source_id: &'a str) -> Self {
         self.source_id = source_id;
         self
@@ -231,7 +196,6 @@ fn seal<'a>(tick_id: &'a str, at: &'a str) -> Row<'a> {
         tick_id,
         job_id: "",
         connector: "",
-        // The seal is about the tick, not about anything that synced.
         tenant_id: "",
         source_id: "",
         event: "sweep.completed",
@@ -247,7 +211,6 @@ fn seal<'a>(tick_id: &'a str, at: &'a str) -> Row<'a> {
     }
 }
 
-/// Three ticks a quarter of an hour apart, and three jobs beneath them.
 struct Stamps {
     tick_1: String,
     tick_2: String,
@@ -306,14 +269,6 @@ async fn the_ledger_reads_answer_from_real_rows() {
     the_resolution_survives_every_way_it_used_to_be_wrong(&ch, &at).await;
 }
 
-/// Three answers the previous shape got wrong, each measured against a real
-/// server before the shape was replaced.
-///
-/// It sorted the relation and read the winner off the top, which meant: job ids
-/// compared as text so `"9"` beat `"10"`; a NULL update stamp sorting last in
-/// BOTH directions so an older job won outright; and two rows of one job
-/// sharing a millisecond decided by physical row order. Each produced a
-/// confident wrong answer rather than an absence.
 async fn the_resolution_survives_every_way_it_used_to_be_wrong(
     ch: &insight_clickhouse::Client,
     at: &Stamps,
@@ -321,20 +276,16 @@ async fn the_resolution_survives_every_way_it_used_to_be_wrong(
     insert(
         ch,
         &[
-            // Same update moment, ids 9 and 10: text order says 9 is newer.
             sync("9", "numeric", "succeeded", &at.job_older),
             Row {
                 ts: &at.tick_1,
                 ..sync("10", "numeric", "running", &at.job_older)
             },
-            // The same job's terminal row, written in the SAME millisecond as
-            // its provisional one.
             Row {
                 ts: &at.tick_1,
                 records_reported: Some(0),
                 ..sync("10", "numeric", "failed", &at.job_older)
             },
-            // A newer job the mover gave no update stamp for.
             sync("1", "unplaced", "succeeded", &at.job_older),
             Row {
                 ts: &at.tick_3,
@@ -378,9 +329,6 @@ async fn the_resolution_survives_every_way_it_used_to_be_wrong(
     assert_eq!(resolved.status, SyncStatus::Failed);
 }
 
-/// A sweep can seal having found no connector — a fresh install before any is
-/// configured. The mover WAS read then, so the page must date itself rather than
-/// say nothing has been read.
 async fn a_sealed_empty_sweep_still_counts_as_history(
     ch: &insight_clickhouse::Client,
     at: &Stamps,
@@ -531,8 +479,6 @@ async fn a_dropped_connector_stops_reading_configured(
     ch: &insight_clickhouse::Client,
     at: &Stamps,
 ) {
-    // Two further seals a known distance apart, so the interval below is a fact
-    // this test states rather than one it reads back out of the query.
     insert(
         ch,
         &[
@@ -580,11 +526,6 @@ async fn one_connectors_window_is_newest_first(ch: &insight_clickhouse::Client) 
     );
 }
 
-/// Two installations of one connector, told apart by nothing but the identity.
-///
-/// The read is the half of this that no unit test can stand in for: the
-/// grouping happens in ClickHouse, and a `GROUP BY` short of the whole identity
-/// resolves both to one row while every pure test still passes.
 async fn two_instances_of_one_connector_resolve_separately(
     ch: &insight_clickhouse::Client,
     at: &Stamps,

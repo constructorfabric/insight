@@ -21,8 +21,6 @@ use crate::store::identity::IdentityClient;
 
 type R = Result<(), Box<dyn Error>>;
 
-/// A stand whose one dataset stands ready, since every stored metric reads
-/// one.
 fn surfaces() -> CustomSurfaces {
     surfaces_over("http://offline.invalid")
 }
@@ -47,7 +45,6 @@ fn surfaces_over(url: &str) -> CustomSurfaces {
     )
 }
 
-/// A stand where nobody has declared anything.
 fn surfaces_without_a_dataset() -> CustomSurfaces {
     built_over(
         Catalog::fixed(Vec::new()),
@@ -55,7 +52,6 @@ fn surfaces_without_a_dataset() -> CustomSurfaces {
     )
 }
 
-/// A stand whose warehouse holds two tables and no dataset.
 fn surfaces_over_a_warehouse() -> CustomSurfaces {
     built_over(
         Catalog::fixed(vec![
@@ -145,7 +141,6 @@ fn declaring(name: &str, body: Value) -> Parameters<PutRequest> {
     })
 }
 
-/// The id an accepted write answers.
 fn created(result: &CallToolResult) -> String {
     let written = assert_accepted(result);
 
@@ -155,7 +150,6 @@ fn created(result: &CallToolResult) -> String {
         .to_owned()
 }
 
-/// The names a listing answers, in its order.
 fn names(listed: &Value) -> Vec<String> {
     listed["items"]
         .as_array()
@@ -184,7 +178,6 @@ fn parts(caller: Option<&str>) -> Extension<Parts> {
     Extension(parts)
 }
 
-/// The administrator every case acts as unless it says otherwise.
 const ADMIN: &str = "0192a1b2-0000-7000-8000-000000000001";
 
 fn administrator() -> Extension<Parts> {
@@ -691,8 +684,6 @@ async fn with_nothing_declared_the_listing_says_who_declares_a_dataset() {
 
 #[tokio::test]
 async fn search_definitions_matches_a_name_and_a_body() {
-    // "Which metrics read this table" is the question a catalogue is asked,
-    // and a name cannot answer it.
     let surfaces = surfaces();
     assert_accepted(
         &surfaces
@@ -908,8 +899,6 @@ async fn arranging_a_board_orders_its_widgets_and_captions_them() {
             .await,
     );
 
-    // The title survives, the shorthand does not, and the order is the one
-    // that was asked for.
     assert_eq!(
         arranged,
         json!({
@@ -1220,8 +1209,6 @@ fn person(raw: &str) -> PersonId {
     PersonId::parse(raw).unwrap_or_else(|| panic!("`{raw}` is a person id"))
 }
 
-/// A dashboard of the case's administrator, stored under an id the case
-/// chooses, so the folder and tag cases can name it.
 async fn board(surfaces: &CustomSurfaces, id: &str) {
     board_of(surfaces, id, ADMIN).await;
 }
@@ -1248,7 +1235,6 @@ async fn board_of(surfaces: &CustomSurfaces, id: &str, owner: &str) {
         .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
 }
 
-/// The dashboard's body written again through the tool, under its id.
 async fn rewrite(surfaces: &CustomSurfaces, id: &str) {
     assert_accepted(
         &surfaces

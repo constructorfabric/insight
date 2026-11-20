@@ -242,8 +242,6 @@ async fn a_removal_that_kept_the_dataset_takes_the_row_with_it() -> R {
     Ok(())
 }
 
-/// Asking to create a name a dataset already answers to is a replacement, and
-/// the answer says so rather than handing out an operation.
 #[tokio::test]
 async fn a_create_over_a_dataset_that_stands_answers_that_it_stands() -> R {
     let store = MemoryDatasets::at(at(0));
@@ -300,9 +298,6 @@ async fn replacing_a_dataset_nothing_stands_under_writes_nothing() -> R {
     Ok(())
 }
 
-/// A removal that could not take the table away leaves the row mid-removal:
-/// the name stays held, nothing reads it, and the lapsing lease is what lets
-/// the request be repeated.
 #[tokio::test]
 async fn a_removal_that_could_not_finish_holds_the_name_until_its_lease_lapses() -> R {
     let store = MemoryDatasets::at(at(0));
@@ -322,7 +317,6 @@ async fn a_removal_that_could_not_finish_holds_the_name_until_its_lease_lapses()
         .await?;
     store.take_remove(&name("commits")).await?;
 
-    // The drop failed, so nothing was finished. Nobody may take the name.
     let refused = store.take_create(&name("commits"), &declaration()).await;
     assert!(
         matches!(refused, Err(DatasetStoreError::Refused(Refused::Busy(_)))),
@@ -333,7 +327,6 @@ async fn a_removal_that_could_not_finish_holds_the_name_until_its_lease_lapses()
     };
     assert_eq!(held.state, DatasetState::Removing);
 
-    // Once the lease lapses the removal is repeatable, and completes.
     store.set_now(at(LEASE_SECS + 1));
     let again = store.take_remove(&name("commits")).await?;
     store
@@ -345,9 +338,6 @@ async fn a_removal_that_could_not_finish_holds_the_name_until_its_lease_lapses()
     Ok(())
 }
 
-/// A removal carries away the table the row named when it took the operation.
-/// Reading the name when the drop runs would name whatever the row says then,
-/// which after a take-over and a fresh create is somebody else's records.
 #[tokio::test]
 async fn a_removal_remembers_the_table_it_took_the_dataset_for() -> R {
     let store = MemoryDatasets::at(at(0));
@@ -369,8 +359,6 @@ async fn a_removal_remembers_the_table_it_took_the_dataset_for() -> R {
     let stalled = store.take_remove(&name("commits")).await?;
     assert_eq!(stalled.table.as_deref(), Some("ds_commits_1"));
 
-    // Its lease lapses, another removal completes, and the name is taken again
-    // by a dataset whose records live somewhere else entirely.
     store.set_now(at(LEASE_SECS + 1));
     let repeated = store.take_remove(&name("commits")).await?;
     store
@@ -391,7 +379,6 @@ async fn a_removal_remembers_the_table_it_took_the_dataset_for() -> R {
         .finish(&name("commits"), &remade.token, Finish::Ready)
         .await?;
 
-    // The stalled removal still names what it took, not what stands now.
     assert_eq!(stalled.table.as_deref(), Some("ds_commits_1"));
     let Some(standing) = store.get(&name("commits")).await? else {
         panic!("the remade dataset stands");

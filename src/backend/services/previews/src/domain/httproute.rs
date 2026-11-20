@@ -1,5 +1,3 @@
-//! A minimal typed Gateway API `HTTPRoute` (gateway.networking.k8s.io/v1).
-//!
 //! k8s-openapi carries no Gateway API types, so this defines exactly the
 //! subset a preview experiment's route uses — parentRefs, hostnames, one
 //! `PathPrefix` rule with a `URLRewrite` prefix-strip and one `backendRef` — with a

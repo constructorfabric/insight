@@ -1,18 +1,3 @@
-//! End-to-end session management against a running authenticator + Keycloak +
-//! Redis (nginx+auth step 10, item 2).
-//!
-//! `#[ignore]` by default (needs the stack up; `run-e2e.sh` drives it):
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 \
-//!   cargo test -p authenticator --test e2e_sessions -- --ignored --nocapture
-//! ```
-//!
-//! Covers: listing active sessions (current flag, attribution fields), revoking
-//! a specific other session, the no-existence-oracle 404, and "log out
-//! everywhere". The admin revoke-by-user variant needs the gateway-JWT authn
-//! pipeline (TLS discovery front) and is exercised in the compose e2e instead.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -33,7 +18,6 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     common::kc::session_cookie(resp)
 }
 
-/// Fetch the session's CSRF token (state-changing /auth/* requires it, 10.5).
 async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String {
     #[derive(Deserialize)]
     struct CsrfBody {
@@ -49,8 +33,6 @@ async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String
     resp.json::<CsrfBody>().await.unwrap().csrf_token
 }
 
-/// Run the full login loop with this suite's user-agent (the list surfaces
-/// the attribution captured at login); returns the session cookie token.
 async fn login(http: &common::Client, auth_base: &str, user: &str) -> String {
     let login = http
         .get(format!("{auth_base}/auth/login"))
@@ -110,15 +92,10 @@ async fn sessions_list_revoke_and_logout_everywhere() {
     let test_user = env("E2E_USER", "dev@company.nonpresent");
     let http = client();
 
-    // Two devices: two independent logins for the same person.
     let token_a = login(&http, &auth_base, &test_user).await;
     let token_b = login(&http, &auth_base, &test_user).await;
     let csrf_b = get_csrf(&http, &auth_base, &token_b).await;
 
-    // 1. The list shows both sessions, flags the caller's as current, and
-    //    carries the attribution captured at login.
-    // Device A's own id, resolved from its own list (the person may carry
-    // leftover sessions from earlier e2e tests — same deterministic stub user).
     let session_a_id = list(&http, &auth_base, &token_a)
         .await
         .into_iter()
@@ -147,7 +124,6 @@ async fn sessions_list_revoke_and_logout_everywhere() {
         .expect("the other device's session must be listed");
     assert!(!other.current, "device A is not current for device B");
 
-    // 2. Revoking an unknown/foreign session id → 404 (no existence oracle).
     let bogus = http
         .delete(format!(
             "{auth_base}/auth/sessions/00000000-0000-7000-8000-000000000000"
@@ -159,7 +135,6 @@ async fn sessions_list_revoke_and_logout_everywhere() {
         .unwrap();
     assert_eq!(bogus.status(), 404);
 
-    // 3. Revoke the other device's session; it dies, the caller's survives.
     let revoke = http
         .delete(format!("{auth_base}/auth/sessions/{}", other.session_id))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
@@ -178,8 +153,6 @@ async fn sessions_list_revoke_and_logout_everywhere() {
     let survivors = list(&http, &auth_base, &token_b).await;
     assert!(survivors.iter().all(|s| s.session_id != other.session_id));
 
-    // 4. Log out everywhere: every session dies, cookie cleared.
-    // Without the CSRF token the destructive call is refused (10.5)…
     let no_csrf = http
         .delete(format!("{auth_base}/auth/sessions"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
@@ -192,7 +165,6 @@ async fn sessions_list_revoke_and_logout_everywhere() {
         "log-out-everywhere without CSRF must be 403"
     );
 
-    // …and with it, every session dies.
     let all = http
         .delete(format!("{auth_base}/auth/sessions"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))

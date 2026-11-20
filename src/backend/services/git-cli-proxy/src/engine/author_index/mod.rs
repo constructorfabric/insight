@@ -1,11 +1,3 @@
-//! Every commit author the proxy has observed per tenant and source, and the
-//! proxy time each one last changed — the source of the workspace-wide author
-//! change feed.
-//!
-//! Unlike a mirror, a book outlives eviction: a re-cloned entry is folded
-//! against what the book already holds and reports nothing new. A lost book
-//! is not a gap — every author re-surfaces as its mirrors are fetched again.
-
 mod book;
 mod cursor;
 mod file;
@@ -26,26 +18,20 @@ pub use cursor::{ChangesCursor, MalformedCursor, format_stamp, ordinal_of_us, pa
 use book::{Book, Observation, Window};
 use file::Shelf;
 
-/// What one feed request asks for; the cursor overrides the bounds on every
-/// page after the first.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FeedQuery<'a> {
-    /// Exclusive lower bound on `changed_at`.
     pub since_us: Option<i64>,
-    /// Authors whose newest readable commit predates this are omitted.
     pub committed_since_us: Option<i64>,
     pub cursor: Option<&'a ChangesCursor>,
     pub limit: usize,
 }
 
-/// One page of the change feed.
 #[derive(Debug)]
 pub struct ChangesPage {
     pub items: Vec<AuthorChange>,
     pub next: Option<ChangesCursor>,
 }
 
-/// The refresh of one mirror, as the index learns of it.
 #[derive(Debug)]
 pub struct Refresh {
     pub tenant_id: String,
@@ -57,7 +43,6 @@ pub struct Refresh {
     pub fingerprints: Vec<String>,
 }
 
-/// A book and where it lives on disk, behind one lock.
 #[derive(Debug)]
 struct Loaded {
     shelf: Shelf,
@@ -68,8 +53,6 @@ type Slot = Arc<OnceCell<Arc<Mutex<Loaded>>>>;
 
 pub struct AuthorIndex {
     dir: PathBuf,
-    /// INVARIANT: held only to find or insert a slot, never across a load —
-    /// one source's cold load must not stall every other source.
     books: Mutex<HashMap<String, Slot>>,
 }
 
@@ -82,13 +65,9 @@ impl std::fmt::Debug for AuthorIndex {
 }
 
 impl AuthorIndex {
-    /// # Errors
-    ///
-    /// I/O failure creating the index directory under `data_dir`.
     pub fn open(data_dir: &Path) -> std::io::Result<Self> {
         let dir = data_dir.join("authors");
         std::fs::create_dir_all(&dir)?;
-        // Startup is the one moment no writer is running.
         file::sweep_temporaries(&dir);
         Ok(Self {
             dir,
@@ -96,13 +75,6 @@ impl AuthorIndex {
         })
     }
 
-    /// Forget a mirror whose repository origin reports gone to a caller
-    /// holding `fingerprint` — only if the entry recorded that credential.
-    ///
-    /// # Errors
-    ///
-    /// I/O failure removing its record; the in-memory book has forgotten it
-    /// already, and a restart reloads it until origin is asked again.
     pub async fn forget(
         &self,
         tenant_id: &str,
@@ -118,7 +90,6 @@ impl AuthorIndex {
         Ok(())
     }
 
-    /// Whether `refresh` describes a snapshot the index has not folded.
     pub async fn needs_fold(&self, refresh: &Refresh) -> bool {
         let loaded = self.loaded(&refresh.tenant_id, &refresh.source_id).await;
         let loaded = loaded.lock().await;
@@ -127,14 +98,6 @@ impl AuthorIndex {
             .needs_fold(&refresh.dir_name, &refresh.incarnation, refresh.generation)
     }
 
-    /// Record one refresh; `authors` is `None` when the snapshot was already
-    /// folded and only its credentials may have changed.
-    ///
-    /// # Errors
-    ///
-    /// I/O failure persisting what changed. The in-memory book keeps the
-    /// update; the entry's on-disk record stays stale, so after a restart the
-    /// entry is folded again and its changes are stamped again.
     pub async fn record(
         &self,
         refresh: Refresh,
@@ -164,9 +127,6 @@ impl AuthorIndex {
         .map_err(std::io::Error::other)?
     }
 
-    /// One page of authors changed in `tenant_id`/`source_id`, visible to a
-    /// caller holding `fingerprint`.
-    ///
     pub async fn changes(
         &self,
         tenant_id: &str,
@@ -235,8 +195,6 @@ impl AuthorIndex {
     }
 }
 
-/// Directory name of a book: hex sha256 over the NUL-joined scope, so tenant
-/// and source names never become paths.
 fn book_name(tenant_id: &str, source_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(tenant_id.as_bytes());

@@ -17,13 +17,11 @@ use crate::store::definitions::memory::MemoryDefinitions;
 
 const BODY_LIMIT_BYTES: usize = 64 * 1024;
 
-/// What `system.tables` answers about a name nothing holds.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct NoTable {
     sorting_key: String,
 }
 
-/// How many records this harness's preview shows.
 const PREVIEW_ROWS: u64 = 3;
 
 struct TestHarness {
@@ -37,7 +35,6 @@ impl TestHarness {
         Self::with_caller(true)
     }
 
-    /// A caller who does or does not hold the admin role.
     fn with_caller(is_admin: bool) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
@@ -74,8 +71,6 @@ impl TestHarness {
         }
     }
 
-    /// The datasets database stands as a plain one, answers that nothing
-    /// holds the name, and takes whatever statement follows.
     fn a_free_name(&self) {
         self.mock
             .add(handlers::provide(vec![String::from("Atomic")]));
@@ -320,8 +315,6 @@ async fn datasets_are_not_listed_by_tag() {
     );
 }
 
-/// "Which dataset holds this field" is the question a catalogue is asked,
-/// and a name cannot answer it.
 #[tokio::test]
 async fn a_search_matches_a_name_and_a_declaration() {
     let harness = TestHarness::new();
@@ -353,8 +346,6 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
     assert_eq!(read(&body)["total"], json!(3));
 }
 
-/// The Custom zone is not shown to a reader without the role, and the API
-/// says the same rather than trusting the rail to hide it.
 #[tokio::test]
 async fn reading_the_catalogue_needs_the_admin_role() {
     let harness = TestHarness::with_caller(false);
@@ -366,14 +357,9 @@ async fn reading_the_catalogue_needs_the_admin_role() {
     assert_eq!(read_one, StatusCode::FORBIDDEN);
 }
 
-/// A dataset mid-removal is gone from every surface at once, rather than
-/// lingering on the one that forgot to ask.
 #[tokio::test]
 async fn a_dataset_still_being_made_is_shown_by_nothing() {
     let harness = TestHarness::new();
-    // The name is free, and then the table cannot be made: the row stays
-    // claimed, holding the name, with nothing published under it. The attempt
-    // takes back whatever it may have made before giving up.
     harness
         .mock
         .add(handlers::provide(vec![String::from("Atomic")]));
@@ -395,9 +381,6 @@ async fn a_dataset_still_being_made_is_shown_by_nothing() {
     assert_eq!(records, StatusCode::NOT_FOUND);
 }
 
-/// A removal that could not take the table away leaves the dataset where it
-/// was: unreachable, its name unclaimable, and the request repeatable once
-/// the lease lapses.
 #[tokio::test]
 async fn a_removal_that_cannot_drop_the_table_leaves_the_dataset_mid_removal() {
     let harness = TestHarness::new();
@@ -424,8 +407,6 @@ async fn a_removal_that_cannot_drop_the_table_leaves_the_dataset_mid_removal() {
     );
 }
 
-/// Replacing a dataset that stands changes its declaration where it lies; it
-/// is never taken for a create, which would leave its records behind.
 #[tokio::test]
 async fn declaring_a_name_that_stands_replaces_it_without_touching_its_table() {
     let harness = TestHarness::new();
@@ -446,8 +427,6 @@ async fn declaring_a_name_that_stands_replaces_it_without_touching_its_table() {
         )
         .await;
 
-    // No shape read and no DDL were queued for this one: a replacement that
-    // reached the warehouse would have found the mock empty and failed.
     assert_eq!(replaced, StatusCode::OK);
     assert_eq!(read(&body)["declaration"]["fields"][2]["name"], "repo");
 }
@@ -479,7 +458,6 @@ async fn a_name_outside_the_charset_is_refused_before_anything_is_read() {
     assert_eq!(refused, StatusCode::BAD_REQUEST);
 }
 
-/// A record as the dataset's table holds it, for the preview to read back.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct StoredRecord {
     #[serde(with = "clickhouse::serde::uuid")]
@@ -489,7 +467,6 @@ struct StoredRecord {
     raw_data: String,
 }
 
-/// What the table answers when asked how many records it holds.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct Counted {
     total: u64,
@@ -517,14 +494,10 @@ async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
 
     assert_eq!(looked, StatusCode::OK);
     assert_eq!(read(&body)["records"][0]["raw_data"], json!({"lines": 7}));
-    // The look is a slice; the count says how much lies behind it.
     assert_eq!(read(&body)["total"], json!(757));
-    // And how wide the slice was, so a reader stepping by offset does not
-    // have to assume the limit it asked for was the one applied.
     assert_eq!(read(&body)["limit"], json!(PREVIEW_ROWS));
 }
 
-/// A page is a window on what arrived: how many, from where, in what order.
 #[tokio::test]
 async fn a_page_is_ordered_by_a_declared_field_when_one_is_named() {
     let harness = TestHarness::new();
@@ -544,9 +517,6 @@ async fn a_page_is_ordered_by_a_declared_field_when_one_is_named() {
     assert_eq!(looked, StatusCode::OK);
 }
 
-/// A page cut down to the cap without saying so would let a reader paging by
-/// the size it asked for step over the records the smaller page left behind.
-/// A page of none is no page at all, and is refused against the same field.
 #[tokio::test]
 async fn a_page_of_a_size_this_installation_does_not_serve_is_refused() {
     for asked in [0, PREVIEW_ROWS + 1] {
@@ -570,8 +540,6 @@ async fn a_page_of_a_size_this_installation_does_not_serve_is_refused() {
     }
 }
 
-/// The reader names a field; the declaration says how it is read. A name it
-/// does not declare is refused against the parameter that carried it.
 #[tokio::test]
 async fn a_page_ordered_by_a_field_the_dataset_does_not_declare_is_refused() {
     let harness = TestHarness::new();
@@ -594,7 +562,6 @@ async fn a_page_ordered_by_a_field_the_dataset_does_not_declare_is_refused() {
     );
 }
 
-/// The table is not asked about at all: there is none to ask.
 #[tokio::test]
 async fn the_records_of_a_dataset_nobody_declared_are_not_found() {
     let harness = TestHarness::new();
@@ -613,8 +580,6 @@ async fn reading_records_needs_the_admin_role() {
     assert_eq!(looked, StatusCode::FORBIDDEN);
 }
 
-/// A removal takes the metrics' source with it, so a reader is shown what
-/// reads the dataset before they ask for one.
 #[tokio::test]
 async fn a_dataset_names_the_metrics_that_read_it() {
     let harness = TestHarness::new();
@@ -640,7 +605,6 @@ async fn a_dataset_names_the_metrics_that_read_it() {
     assert_eq!(read(&body)["metrics"], json!(["lines_per_day"]));
 }
 
-/// A metric over another dataset is not a dependent, however it reads.
 #[tokio::test]
 async fn a_dataset_nothing_reads_names_nothing() {
     let harness = TestHarness::new();
@@ -653,9 +617,6 @@ async fn a_dataset_nothing_reads_names_nothing() {
     assert_eq!(read(&body)["metrics"], json!([]));
 }
 
-/// A removal a metric would break, and a replacement that would break one, are
-/// conflicts rather than malformed requests: the body is fine, the stand is
-/// not, and the portal branches on the status.
 #[tokio::test]
 async fn a_dataset_something_still_reads_answers_a_conflict() {
     let harness = TestHarness::new();
@@ -702,8 +663,6 @@ async fn a_dataset_something_still_reads_answers_a_conflict() {
     );
 }
 
-/// Every place a declaration is wrong is answered at once, against the field
-/// that carries it, so a form marks them all in one pass.
 #[tokio::test]
 async fn a_declaration_wrong_in_several_ways_names_every_place() {
     let harness = TestHarness::new();
@@ -727,8 +686,6 @@ async fn a_declaration_wrong_in_several_ways_names_every_place() {
     assert!(said.contains("fields[1].colour"), "{said}");
 }
 
-/// A caller who may not write learns nothing from the body they sent: the
-/// refusal is theirs before the body is even read.
 #[tokio::test]
 async fn a_body_that_cannot_be_read_is_answered_only_after_the_role_is() {
     let refused = TestHarness::with_caller(false);
@@ -744,7 +701,6 @@ async fn a_body_that_cannot_be_read_is_answered_only_after_the_role_is() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-/// Every other read of a dataset asks for the ready state; this one did not.
 #[tokio::test]
 async fn the_dependents_of_a_dataset_nobody_declared_are_not_found() {
     let harness = TestHarness::new();

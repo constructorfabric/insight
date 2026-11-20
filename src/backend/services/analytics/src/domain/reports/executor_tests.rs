@@ -179,9 +179,6 @@ async fn keeps_more_than_fifty_metrics_in_recipe_order_with_four_queries_in_flig
     }
 }
 
-/// One metric reading a relation nothing has built makes the whole report
-/// not-ready: the file finishes, carries no records, and says why — rather
-/// than presenting that metric's column blank beside real numbers.
 #[tokio::test]
 async fn a_metric_over_an_unbuilt_relation_finishes_the_report_as_not_ready() {
     let tenant_id = Uuid::from_u128(9);

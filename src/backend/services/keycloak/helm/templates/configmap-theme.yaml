@@ -1,18 +1,8 @@
 {{- /*
-  The `insight` login theme. Overrides exactly one template — the page
-  Keycloak serves when a request names an authentication execution that no
-  longer matches the session — and inherits every other template from the
-  built-in theme via `parent`.
-
   The parent is `keycloak.v2`, the KC 26 default (Profile.LOGIN_V2 is on by
   default; plain `keycloak` is LOGIN_V1, Type.DEPRECATED). Naming the
   deprecated one would silently downgrade every OTHER page in a realm that
   binds this theme, and would break outright once it is removed.
-
-  Shipped with this Keycloak but inert: a realm reaches it only by setting
-  `loginTheme: insight`. An install whose keycloakConfig points at a Keycloak
-  this chart does NOT deploy must therefore leave loginTheme unset — the theme
-  ships with the server, not with the realm.
 */}}
 {{- $theme := default dict .Values.theme }}
 {{- $returnUrl := required "keycloak.theme.returnUrl must be a non-empty URL: the overridden page has nowhere to send the browser without one" $theme.returnUrl }}

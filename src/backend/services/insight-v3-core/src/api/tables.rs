@@ -1,6 +1,3 @@
-//! The warehouse tables a metric may read: the catalogue the editor offers,
-//! and the columns of one table.
-
 use std::sync::Arc;
 
 use axum::extract::{Extension, Path, Query};
@@ -203,8 +200,6 @@ fn detail(schema: TableSchema) -> TableDetail {
     }
 }
 
-/// A catalogue that did not answer. Only the wait is the caller's to see;
-/// what the warehouse said is logged, not answered.
 fn catalog_error(error: CatalogError) -> CanonicalError {
     match error {
         CatalogError::Timeout => TableApiError::timed_out("the warehouse catalogue timed out"),

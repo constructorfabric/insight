@@ -1,9 +1,3 @@
-//! Reading the sync ledger. Every statement here touches one relation.
-//!
-//! The ledger is written by the reconcile loop and read here; the two never
-//! meet. That is what lets this page answer while the mover, the cluster API
-//! and the ingestion pipeline are all unreachable.
-
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -16,44 +10,20 @@ use super::model::{
 };
 use super::name::{SourceId, TenantId};
 
-/// DDL owned by `scripts/migrations/20260827000000_connector-sync-history.sql`;
-/// the query-path role holds `SELECT` here and nothing that writes.
 const TABLE: &str = "ingestion_history.sync_events";
 
 const SYNC_COMPLETED: &str = "sync.completed";
 const CONNECTOR_CONFIGURED: &str = "connector.configured";
 const SWEEP_COMPLETED: &str = "sweep.completed";
 
-/// Rows in a connector's expandable history. A window, not the retention.
 pub(crate) const HISTORY_WINDOW: u32 = 50;
 
-/// Connector instances the summary will serve.
-///
-/// One row per instance, and an install decides how many instances it has: a
-/// descriptor can be configured as often as Secrets name it, so this is
-/// reachable by configuration in principle rather than only by accumulating
-/// identities in the ledger that no build ships. It sits far above what an
-/// install of this shape holds, which is what makes it a backstop rather than a
-/// page — and because it is reachable, the read logs when it truncates rather
-/// than dropping rows silently.
-///
-/// INVARIANT: applied to the merged response, not only to the statement that
-/// carries it into SQL. The summary is the union of two relations, and the
-/// configured half is deliberately unbounded in SQL — it is one tick's
-/// snapshot, and dropping members of it there would report a live instance as
-/// no longer configured. Dropping them from the tail of the sorted response
-/// instead leaves what is shown truthful.
 const CONNECTOR_LIMIT: u32 = 500;
 
-/// Sealed ticks sampled for the median gap between reads. Enough to survive one
-/// unusual interval; short enough that a cadence change shows up quickly.
 const INTERVAL_SAMPLE: u32 = 20;
 
-/// Two gaps is the fewest that has a median worth reporting.
 const MIN_GAPS_FOR_INTERVAL: u64 = 2;
 
-/// The newest tick that finished writing.
-///
 /// INVARIANT: the timestamp is aliased `sealed_at`, never `ts`. An alias that
 /// shadows its own source column is read by every other expression in the same
 /// SELECT — including the aggregate that needs the column — and ClickHouse
@@ -66,12 +36,9 @@ static SEALED_TICK_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// How often the mover has actually been read lately.
-///
 /// `arrayDifference` over the sorted stamps yields the gaps with a leading
 /// zero, which the filter drops along with any two seals inside the same
-/// millisecond. Measured rather than configured: reading an intended cadence
-/// from chart values would let the page assert a schedule it cannot verify.
+/// millisecond.
 static READ_INTERVAL_SQL: LazyLock<String> = LazyLock::new(|| {
     // SAFETY: `median` of an empty array is NaN, and `toUInt64(NaN)` is
     // CANNOT_CONVERT_TYPE — a 500 on every install whose ledger is empty, which
@@ -89,23 +56,6 @@ static READ_INTERVAL_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// Orders every recorded row of every sync, newest last. Never NULL.
-///
-/// Four components, each earning its place:
-///
-/// * `coalesce(job_updated_at, ts)` — the axis the ledger places jobs along,
-///   falling back to when the row was recorded. The writer no longer leaves a
-///   NULL here, but rows recorded before the placement rule settled still hold
-///   one and a reader cannot survive it: ClickHouse sorts NULLs last in BOTH
-///   directions, so such a row would not merely lose the comparison — a
-///   different, older job would win it, and the page would present a stale
-///   success as the current state.
-/// * `toUInt64OrZero(job_id)` — the mover's ids are numbers stored as text, so
-///   comparing them as text makes `"9"` newer than `"10"`.
-/// * the terminal flag — within one job a final row outranks a provisional one
-///   whatever the clocks say. Two rows of one job can share a millisecond, and
-///   without this the answer is decided by physical row order.
-/// * `ts` — the last resort, newest recorded wins.
 static ROW_ORDER: LazyLock<String> = LazyLock::new(|| {
     let terminal = SyncStatus::TERMINAL
         .iter()
@@ -118,8 +68,6 @@ static ROW_ORDER: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// The columns a resolved sync carries, as one tuple.
-///
 /// INVARIANT: resolved as a single tuple, never column by column. `argMax`
 /// ignores rows whose value argument is NULL, so six independent `argMax`
 /// calls answer from six independently-chosen rows — one column taken from
@@ -128,31 +76,13 @@ static ROW_ORDER: LazyLock<String> = LazyLock::new(|| {
 const SYNC_COLUMNS: &str = "job_id, status, started_at, job_updated_at, \
      duration_ms, records_reported";
 
-/// The unpacked tuple, under names no ledger column carries.
-///
-/// A `resolved_` prefix rather than the column's own name: an alias equal to a
-/// column name is harmless where nothing in scope carries that column, but a
-/// guard that must know which of the two cases it is looking at is a guard
-/// with an exception. This keeps the rule absolute.
 const UNPACK_WINNER: &str = "winner.1 AS resolved_job_id, \
      winner.2 AS resolved_status, winner.3 AS resolved_started_at, \
      winner.4 AS resolved_job_updated_at, winner.5 AS resolved_duration_ms, \
      winner.6 AS resolved_records_reported";
 
-/// The columns that identify one installation of a connector.
-///
-/// INVARIANT: the summary groups by all three. Grouping by the name alone
-/// resolves two instances of one connector to a single newest sync, so the one
-/// that synced last stands for the pair and the other disappears — including
-/// when the one that disappeared is the one that is failing.
 const INSTANCE_COLUMNS: &str = "connector, tenant_id, source_id";
 
-/// The newest sync per connector instance.
-///
-/// An aggregate, not a sort. Sorting the relation by a column outside its sort
-/// key reads and orders the whole retention window to answer with one row per
-/// instance — measured at hundreds of megabytes where this stays at single
-/// digits, and the service caps its own query memory.
 static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT {INSTANCE_COLUMNS}, {UNPACK_WINNER} \
@@ -165,7 +95,6 @@ static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// The set the controller managed on one sealed tick.
 static CONFIGURED_SET_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT DISTINCT {INSTANCE_COLUMNS}, schedules, schedule_timezone, schedule_origin, schedule_suspended \
@@ -174,17 +103,8 @@ static CONFIGURED_SET_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// One connector's recent syncs, one row per job, newest first.
-///
-/// Narrowed by the sort key's first two columns before anything is grouped, so
-/// the aggregate sees one connector's rows rather than the whole relation.
 static SYNC_HISTORY_SQL: LazyLock<String> = LazyLock::new(|| sync_history(""));
 
-/// The same window, narrowed to one installation of that connector.
-///
-/// A second statement rather than one predicate switching on a sentinel value:
-/// they differ by a clause, and a statement assembled per request is one the
-/// guards below cannot read.
 static INSTANCE_HISTORY_SQL: LazyLock<String> =
     LazyLock::new(|| sync_history(" AND tenant_id = ? AND source_id = ?"));
 
@@ -218,13 +138,6 @@ struct IntervalRow {
 /// INVARIANT: every `Nullable` column is `Option` here. A non-`Option` field
 /// against a nullable column is rejected while decoding the row, which yields a
 /// 500 — and only once rows exist, so an empty ledger hides it completely.
-/// INVARIANT: every `Nullable` column is `Option` here. A non-`Option` field
-/// against a nullable column is rejected while decoding the row, which yields a
-/// 500 — and only once rows exist, so an empty ledger hides it completely.
-///
-/// The `resolved_` names are the SQL aliases, not the domain's: the statement
-/// must not alias anything to a ledger column name, and the rename keeps that
-/// constraint in the one place it belongs.
 #[derive(Debug, Deserialize, clickhouse::Row)]
 struct SyncRow {
     connector: String,
@@ -323,10 +236,6 @@ pub(crate) async fn read_health(
         configured_set(ch, sealed.as_ref().map(|tick| tick.tick_id.as_str())),
     )?;
 
-    // A sealed tick IS recorded history, even when it found no connector: the
-    // mover was read, and the page must say when rather than claim nothing has
-    // been read. Deriving this from the rows alone would make a sealed empty
-    // install indistinguishable from one that has never recorded anything.
     let has_history = sealed.is_some() || !syncs.is_empty();
     let summaries = merge(syncs, configured);
     Ok(LedgerFacts {
@@ -338,9 +247,6 @@ pub(crate) async fn read_health(
     })
 }
 
-/// Bound to the tick resolved once above, never re-resolved per statement: a
-/// sweep landing between two reads would otherwise answer with the newer
-/// configured set beside the older facts — a state that existed on no tick.
 async fn configured_set(
     ch: &insight_clickhouse::Client,
     tick_id: Option<&str>,
@@ -356,11 +262,6 @@ async fn configured_set(
     Ok(rows.into_iter().map(ConnectorRow::into_entry).collect())
 }
 
-/// One connector's window, or one installation's.
-///
-/// `scope` absent spans every instance under the name, which is what a caller
-/// naming only the connector asked for — and what an install with one instance
-/// of it gets either way.
 pub(crate) async fn read_syncs(
     ch: &insight_clickhouse::Client,
     connector: &str,
@@ -395,15 +296,6 @@ impl HistoryRow {
     }
 }
 
-/// The union of what synced and what is configured, bounded.
-///
-/// A connector that was never configured and never synced appears in neither,
-/// so it cannot be listed — the reader may read this one relation and nothing
-/// else, and no record of such a connector exists in it.
-///
-/// Two bounded relations union to twice the bound, so the cap is applied once
-/// more here — after the ordering, so what a truncated response keeps is what
-/// needs attention rather than an arbitrary half.
 fn merge(
     syncs: Vec<SyncRow>,
     mut configured: HashMap<InstanceKey, Option<AppliedSchedule>>,
@@ -466,14 +358,10 @@ pub(super) fn absent_ledger(error: &clickhouse::error::Error) -> bool {
 mod guards {
     use super::*;
 
-    /// The migration itself, not a copy of it: a column added there and not
-    /// here would otherwise drop silently out of the guard below.
     const MIGRATION: &str = include_str!(
         "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
     );
 
-    /// Every SQL statement this module issues, so a new one joins the guards
-    /// automatically rather than being remembered into them.
     fn statements() -> [(&'static str, &'static str); 6] {
         [
             ("SEALED_TICK_SQL", SEALED_TICK_SQL.as_str()),
@@ -485,7 +373,6 @@ mod guards {
         ]
     }
 
-    /// The ledger's column names, read out of `CREATE TABLE`.
     fn ledger_columns() -> Vec<String> {
         let body = MIGRATION
             .split_once("CREATE TABLE")
@@ -501,11 +388,6 @@ mod guards {
             .collect()
     }
 
-    /// Lower-cased, whitespace-collapsed, quoting stripped.
-    ///
-    /// Every one of these is invisible to a raw substring scan and shadows a
-    /// column exactly the same way in ClickHouse: `AS  ts`, `as ts`, a newline
-    /// between the two, and `AS "ts"`.
     fn normalised(sql: &str) -> String {
         sql.to_ascii_lowercase()
             .replace(['`', '"'], " ")
@@ -539,9 +421,6 @@ mod guards {
         assert_eq!(columns.len(), 17, "{columns:?}");
     }
 
-    /// The summary answers one row per instance, so every one of the three
-    /// columns that identify one has to be in the grouping. Two instances
-    /// grouped by fewer resolve to a single newest sync between them.
     #[test]
     fn the_summary_groups_by_the_whole_identity() {
         let sql = normalised(&LAST_SYNC_SQL);
@@ -556,9 +435,6 @@ mod guards {
         );
     }
 
-    /// One half cannot narrow a window: a source id is unique within a tenant,
-    /// so a statement filtering on one of them would serve another tenant's
-    /// instance under the same source id.
     #[test]
     fn a_scoped_window_filters_on_both_halves_of_the_identity() {
         let sql = normalised(&INSTANCE_HISTORY_SQL);
@@ -570,9 +446,6 @@ mod guards {
         );
     }
 
-    /// An alias that repeats a column name shadows that column for every other
-    /// expression in the same SELECT, so an aggregate reading it reads the alias
-    /// instead and ClickHouse answers `ILLEGAL_AGGREGATION`.
     #[test]
     fn no_statement_aliases_a_value_to_a_ledger_column_name() {
         let columns = ledger_columns();
@@ -620,10 +493,6 @@ mod guards {
         );
     }
 
-    /// The response is what two relations add up to. The bounded one bounds
-    /// only itself, and the configured half is deliberately unbounded in SQL —
-    /// so without a cap on the union an install can be served every identity
-    /// its ledger holds.
     #[test]
     fn the_summary_cannot_answer_with_more_instances_than_the_cap() {
         let configured = (0..CONNECTOR_LIMIT + 10)
@@ -754,9 +623,6 @@ mod guards {
 
     #[test]
     fn the_resolution_never_aggregates_a_column_on_its_own() {
-        // Six independent `argMax` calls answer from six independently-chosen
-        // rows, because `argMax` skips a NULL value argument per column. Both
-        // resolutions must aggregate the tuple.
         for (name, sql) in [
             ("LAST_SYNC_SQL", LAST_SYNC_SQL.as_str()),
             ("SYNC_HISTORY_SQL", SYNC_HISTORY_SQL.as_str()),
@@ -773,8 +639,6 @@ mod guards {
 
     #[test]
     fn the_row_order_is_never_null() {
-        // A NULL sort key does not lose a comparison in ClickHouse — it wins a
-        // different one, because NULLs sort last in both directions.
         let order = normalised(&ROW_ORDER);
         assert!(order.contains("coalesce(job_updated_at, ts)"), "{order}");
         assert!(order.contains("touint64orzero(job_id)"), "{order}");
@@ -798,8 +662,6 @@ mod guards {
 
     #[test]
     fn every_row_returning_read_is_bounded() {
-        // An unbounded response is a bug however unlikely the input, and the
-        // repository's own rule is to bound it at the edge.
         for (name, sql) in [
             ("SYNC_HISTORY_SQL", SYNC_HISTORY_SQL.as_str()),
             ("LAST_SYNC_SQL", LAST_SYNC_SQL.as_str()),
@@ -813,10 +675,6 @@ mod guards {
         }
     }
 
-    /// The configured set is the one read with no row limit, deliberately: it is
-    /// filtered to a single tick, so its size is the number of connector
-    /// instances that tick managed — and dropping members of a snapshot would
-    /// make it read as a smaller set than the one that was sealed.
     #[test]
     fn the_configured_set_is_bounded_by_its_tick_not_by_a_limit() {
         let sql = normalised(&CONFIGURED_SET_SQL);

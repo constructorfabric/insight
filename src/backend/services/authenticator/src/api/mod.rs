@@ -1,6 +1,3 @@
-//! HTTP API layer: shared state, route table (via `OperationBuilder`), and the
-//! subrequest/JWKS contract the nginx gateway consumes (R8).
-
 pub mod error;
 pub mod handlers;
 
@@ -18,38 +15,23 @@ use crate::mcp_oauth::McpOAuthStore;
 use crate::service_token::ServiceRegistry;
 use crate::session::SessionManager;
 
-/// Shared application state, attached to every route as an `Extension` (main
-/// listener) and shared with the service-token listener via `Arc`.
 pub struct AppState {
     pub cfg: AuthenticatorConfig,
     pub sessions: SessionManager,
     pub keystore: Arc<KeyStore>,
-    /// The configured OIDC issuer(s): host-keyed at `/auth/login`, pinned by
-    /// issuer everywhere else (ADR-0003).
     pub oidc: IssuerSelector,
     pub resolver: Arc<dyn PersonResolver>,
-    /// Parsed service-token registry (DD-AUTH-05); used by the token listener.
     pub service_registry: ServiceRegistry,
-    /// The SDK contract impl (also registered in the `ClientHub`): the admin
-    /// revoke-by-user operation goes through it, so the HTTP surface and
-    /// in-process consumers (the future permissions service) share one path.
     pub authn_client: Arc<dyn authenticator_sdk::AuthenticatorClientV1>,
-    /// Audit publisher (Redpanda; no-op when unconfigured).
     pub audit: crate::audit::AuditEmitter,
     pub mcp_oauth: McpOAuthStore,
 }
 
-/// Register the authenticator routes onto the host router. The `Extension`
-/// layer scopes `Arc<AppState>` to these routes (leaving the host's
-/// `/health`, `/openapi.json`, `/docs` untouched).
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    // CSRF verification wraps the route table (state-changing `/auth/*` only —
-    // the middleware filters); the Extension layer runs first so handlers and
-    // middleware share the same state.
     let api = build_operations(Router::new(), openapi)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -68,10 +50,6 @@ mod log_context_tests;
 #[cfg(test)]
 mod log_leak_tests;
 
-/// Declare every operation through the toolkit's `OperationBuilder` so each
-/// lands in the generated OpenAPI (the machine-checkable subrequest contract),
-/// grouped by surface. All step-04 endpoints are `.anonymous().exposed()` — the credential
-/// is the session cookie, checked inside the handler.
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_auth_routes(router, openapi);
     let router = register_mcp_oauth_routes(router, openapi);
@@ -134,7 +112,6 @@ fn register_mcp_oauth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> R
         .register(router, openapi)
 }
 
-/// The browser-facing `/auth/*` surface (proxied plainly by the gateway).
 fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router = router;
 
@@ -224,8 +201,6 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .register(router, openapi)
 }
 
-/// The session-management surface (PRD 5.9): list + revoke for the current
-/// user, and the gateway-JWT-authenticated admin revoke-by-user variant.
 fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router = router;
 
@@ -263,10 +238,6 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .handler(handlers::sessions_revoke_all)
         .register(router, openapi);
 
-    // Admin/service variant (PRD 5.9): `.authenticated()` — the host authn
-    // pipeline verifies a gateway JWT (the authenticator trusts its own tokens
-    // exactly like any downstream service, G10) and the handler enforces the
-    // authorized role.
     router = OperationBuilder::delete("/auth/admin/users/{person_id}/sessions")
         .operation_id("authenticator.sessions.admin_revoke_by_user")
         .summary("Revoke every session of a user (admin/service, gateway-JWT authenticated)")
@@ -282,7 +253,6 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
     router
 }
 
-/// The gateway-facing `/internal/*` surface (the `auth_request` target).
 fn register_internal_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     OperationBuilder::get("/internal/authz")
         .operation_id("authenticator.authz")
@@ -296,9 +266,6 @@ fn register_internal_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .register(router, openapi)
 }
 
-/// The public well-known surface for downstream JWT verification: the OIDC
-/// discovery document (`cf-gears-oidc-authn-plugin` resolves the JWKS from it)
-/// and the JWKS itself.
 fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = OperationBuilder::get("/.well-known/openid-configuration")
         .operation_id("authenticator.openid_configuration")
@@ -397,13 +364,6 @@ fn openapi_info() -> OpenApiInfo {
     }
 }
 
-/// Build the authenticator `OpenAPI` document **offline** — no `AppState`,
-/// Redis, IdP, or HTTP listener. Backs the `authenticator openapi` subcommand
-/// (committed-doc regeneration + drift gate), reusing the exact
-/// `build_operations` route table the live gear serves, so the two can never
-/// diverge. The service-token listener (`POST /internal/token`, DD-AUTH-05) is
-/// a separate raw-axum port outside `build_operations`, so it is deliberately
-/// absent here.
 pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let openapi = OpenApiRegistryImpl::new();
     let _ = build_operations(Router::new(), &openapi);
@@ -416,10 +376,6 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
 mod tests {
     use super::*;
 
-    /// Exercises the full route table + `OpenAPI` registration with no
-    /// `AppState`, Redis, or IdP: handlers are only *registered* (state comes
-    /// in via `Extension` at serve time), never invoked. Guards against
-    /// overlapping-route panics / bad `OperationBuilder` state.
     #[test]
     fn build_operations_registers_the_full_table_without_state() {
         let openapi = OpenApiRegistryImpl::new();

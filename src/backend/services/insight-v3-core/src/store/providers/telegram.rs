@@ -1,6 +1,3 @@
-//! Telegram, through a bot's `sendMessage`. The answer carries the message
-//! id, which is the receipt.
-
 use async_trait::async_trait;
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;

@@ -4,47 +4,30 @@ use super::resolution::BindingRow;
 use super::seed::SourceAccountKey;
 use crate::infra::identity_evidence::ObservedAccount;
 
-/// Widths of the `persons.value_id` and `persons.insight_source_type` columns
-/// a binding lands in (`000_baseline.sql`). 320 is also the limit
-/// `POST /v1/profiles` states for an id value, so one number is one contract
-/// across both entrances.
 pub const MAX_VALUE_ID_CHARS: usize = 320;
 pub const MAX_SOURCE_TYPE_CHARS: usize = 30;
 
-/// The journal reason marking a row the login bootstrap wrote.
 pub const LOGIN_BOOTSTRAP_REASON: &str = "login-bootstrap";
 
-/// Namespace for [`derived_person_id`]. Fixed, and used for nothing else.
 const PERSON_NAMESPACE: Uuid = Uuid::from_u128(0x9f2c_6ad1_4e83_4f27_bd51_7c0a_38e9_1b64);
 
-/// Why a principal may not be provisioned. Each variant is an answer about the
-/// principal, not a fault — the caller turns them into refusals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
-    /// A field is unusable: empty, or longer than the column it lands in.
     Invalid {
         field: &'static str,
         message: String,
     },
-    /// The token asserts a tenant this journal is not keyed by, or the service
-    /// cannot say which tenant that is.
     Tenant(TenantRefusal),
-    /// The source has deactivated the account.
     Closed,
-    /// The account carries an address, so identity resolution links it.
     Addressed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TenantRefusal {
-    /// The service has no configured tenant, so it cannot know which journal
-    /// it would be writing into.
     Unconfigured,
-    /// The asserted tenant is not the configured one.
     Mismatch,
 }
 
-/// What the caller asked for, already parsed.
 #[derive(Debug, Clone, Copy)]
 pub struct Principal<'a> {
     pub source_type: &'a str,
@@ -52,24 +35,13 @@ pub struct Principal<'a> {
     pub asserted_tenant: Uuid,
 }
 
-/// Why an address cannot be used to resolve a login at all — decided before any
-/// query runs, so a shape that could never answer never reaches the journal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RosterEmailRefusal {
-    /// The caller resolved no address. In email mode that means a token reached
-    /// the authenticator without the claim it was configured to resolve by.
     AddressMissing,
-    /// No roster is declared, so there is no source whose addresses may admit
-    /// anyone. Widening to every source instead is the one thing this lookup
-    /// may not do.
     RosterUnconfigured,
-    /// The caller's token carries no tenant. An address is not unique across
-    /// tenants sharing a journal, so without one the lookup cannot be confined.
     TenantUnresolved,
 }
 
-/// An address the roster may be asked about, with the two things that confine
-/// the question.
 #[derive(Debug, PartialEq, Eq)]
 pub struct RosterEmail<'a> {
     pub tenant_id: Uuid,
@@ -77,11 +49,6 @@ pub struct RosterEmail<'a> {
     pub address: &'a str,
 }
 
-/// Whether this address may be asked about at all.
-///
-/// # Errors
-///
-/// Returns the refusal describing which confinement is missing.
 pub fn parse_roster_email<'a>(
     address: &'a str,
     roster_source_type: &'a str,
@@ -105,19 +72,12 @@ pub fn parse_roster_email<'a>(
     })
 }
 
-/// The person a login resolves to, and how many the roster offered.
 #[derive(Debug, PartialEq, Eq)]
 pub struct RosterEmailMatch {
     pub person_id: Uuid,
-    /// More than one means the roster states this address for several people.
-    /// The seed refuses to auto-link that shape and an operator may have split
-    /// them deliberately, so answering it is a decision the caller records
-    /// rather than one the journal makes quietly.
     pub candidates: usize,
 }
 
-/// Pick the person an address resolves to. `None` when the roster states it for
-/// nobody who still holds a live account under it.
 #[must_use]
 pub fn choose_roster_email_match(candidates: &[Uuid]) -> Option<RosterEmailMatch> {
     candidates.first().map(|&person_id| RosterEmailMatch {
@@ -126,8 +86,6 @@ pub fn choose_roster_email_match(candidates: &[Uuid]) -> Option<RosterEmailMatch
     })
 }
 
-/// Trim and bound the principal a request names.
-///
 /// Left unbounded, an over-long id is a database error under strict SQL and,
 /// under a lax mode, a silently truncated row that neither the write guard nor
 /// the read-back can match again — so every attempt appends another unusable
@@ -172,10 +130,6 @@ pub fn parse_principal<'a>(
     })
 }
 
-/// The tenant a provisioned binding may be written under.
-///
-/// A row under any other tenant is invisible to the persons-seed: never
-/// adopted, and a second person minted for the same account on its next run.
 pub fn provisioning_tenant(configured: &str, asserted: Uuid) -> Result<Uuid, TenantRefusal> {
     let configured = configured.trim();
     if configured.is_empty() {
@@ -190,14 +144,7 @@ pub fn provisioning_tenant(configured: &str, asserted: Uuid) -> Result<Uuid, Ten
     Ok(configured)
 }
 
-/// The person a given account provisions to.
-///
-/// Derived, not random: the journal's natural key carries `person_id`, so two
-/// concurrent logins minting random ids would both insert and split one human
-/// across two people. Deriving it makes the racers agree.
 pub fn derived_person_id(tenant: Uuid, account: &SourceAccountKey) -> Uuid {
-    // The unit separator is what keeps the parts from running together: plain
-    // concatenation lets ("a", "bc") and ("ab", "c") name one person.
     let name = format!(
         "{tenant}\u{1f}{}\u{1f}{}\u{1f}{}",
         account.source_type, account.source_id, account.account_id
@@ -205,45 +152,22 @@ pub fn derived_person_id(tenant: Uuid, account: &SourceAccountKey) -> Uuid {
     Uuid::new_v5(&PERSON_NAMESPACE, name.as_bytes())
 }
 
-/// The binding to append for this principal, or why it may not be provisioned.
-///
-/// Every rule that decides WHO may be minted lives here, over values, so it is
-/// answerable without a database or an evidence client.
 pub fn decide(
     principal: Principal<'_>,
     observed: &ObservedAccount,
     tenant: Uuid,
     now: sea_orm::prelude::DateTime,
 ) -> Result<BindingRow, Refusal> {
-    // Gone from its source: the review queue drops such accounts before it
-    // counts anything, and entering through one would keep a door the roster
-    // has already shut.
     if observed.is_closed {
         return Err(Refusal::Closed);
     }
 
-    // An account with an address is the BATCH's to resolve, and minting here
-    // would do harm rather than duplicate work: the seed groups by address, so
-    // it would have attached this account to whoever already holds that one. A
-    // person minted first takes the binding, and the seed then reads the group
-    // as a conflict between two persons with no operator decision to settle it
-    // — it keeps both, so one human stays split until somebody merges by hand.
-    //
-    // The deferral is to the batch OR to the operator, not to the batch alone:
-    // where the account's source states no id, no seed run can bind it either
-    // (`seed::resolve_assignments`), and it waits on the review queue as
-    // `no_source_id` instead. Refusing here is still right — a login may not
-    // decide who a claimed address belongs to — but nothing about the refusal
-    // promises automation will.
     if observed.email.is_some() {
         return Err(Refusal::Addressed);
     }
 
     let account = SourceAccountKey {
         source_type: principal.source_type.to_owned(),
-        // The instance the evidence names, never one of our choosing: the
-        // persons-seed matches accounts on the whole triple, so a binding
-        // under any other id would never be recognised as this account's.
         source_id: observed.source_id,
         account_id: principal.external_id.to_owned(),
     };
@@ -251,8 +175,6 @@ pub fn decide(
     Ok(BindingRow {
         person_id: derived_person_id(tenant, &account),
         account,
-        // Automation, not an operator decision: an operator-authored binding
-        // settles a contested group (ADR-0003), and this one settles nothing.
         author_person_id: Uuid::nil(),
         reason: LOGIN_BOOTSTRAP_REASON.to_owned(),
         created_at: now,
@@ -286,8 +208,6 @@ mod tests {
     }
 
     fn now() -> sea_orm::prelude::DateTime {
-        // A fixed instant: nothing here depends on the clock, and a literal
-        // keeps the rows a test builds comparable.
         chrono::DateTime::UNIX_EPOCH.naive_utc()
     }
 
@@ -426,8 +346,6 @@ mod tests {
         let row = decide(principal, &evidence, TENANT, now())
             .map_err(|r| format!("should provision, refused: {r:?}"))?;
 
-        // Not an id of our choosing: the persons-seed recognises an account by
-        // the whole triple, so anything else is never adopted.
         assert_eq!(row.account.source_id, Uuid::from_u128(0xbb02));
         Ok(())
     }
@@ -448,7 +366,6 @@ mod tests {
             ("baseline", TENANT, account("octocat")),
             ("another account", TENANT, account("octocat2")),
             ("another tenant", Uuid::from_u128(10), account("octocat")),
-            // The pair plain concatenation would collide.
             ("separator on the left", TENANT, account("a\u{1f}bc")),
             ("separator on the right", TENANT, account("ab\u{1f}c")),
             (
@@ -478,9 +395,6 @@ mod tests {
         assert_eq!(asked.source_type, "bamboohr");
         assert_eq!(asked.tenant_id, tenant);
 
-        // Each missing confinement refuses on its own, and says which — the
-        // three mean different operator mistakes and would otherwise all read
-        // as "this person cannot log in".
         for (address, source, tenant_id, expected) in [
             (
                 "   ",
@@ -525,8 +439,6 @@ mod tests {
                 candidates: 1
             })
         );
-        // The install answers rather than refusing, so the count is what the
-        // caller records. Losing it here would make the choice unauditable.
         assert_eq!(
             choose_roster_email_match(&[first, second]),
             Some(RosterEmailMatch {

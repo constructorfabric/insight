@@ -1,9 +1,5 @@
-//! Where in a condition a refusal is about, built step by step as the
-//! parse walks down.
-
 use super::{ConditionError, Problem};
 
-/// A path step by step, so each refusal names where it is.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct At<'a> {
     pub(super) parent: Option<&'a At<'a>>,

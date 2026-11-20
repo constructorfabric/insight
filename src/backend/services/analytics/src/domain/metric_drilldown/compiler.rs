@@ -34,9 +34,6 @@ const RATIO_TIEBREAKERS: &[&str] = &[
     "entity_id",
 ];
 
-/// Person evidence is keyed by the source identity, so a person's rows are the
-/// rows of every identity the live map resolves to them; tenant evidence
-/// repeats its tenant key as the entity id.
 pub fn compile_query(
     req: &ValidatedMetricDrilldown,
 ) -> Result<(String, Vec<String>), CanonicalError> {
@@ -155,7 +152,6 @@ fn evidence_scope(req: &ValidatedMetricDrilldown, params: &mut Vec<String>) -> S
     )
 }
 
-/// INVARIANT: a folded record keeps only the dimensions every one of its rows shares.
 fn folded_record_source(database: &str, table: &str, scope: &str, parts: &str) -> String {
     format!(
         "(SELECT evidence.entity_id AS entity_id, \
@@ -220,16 +216,12 @@ fn record_key_expr() -> String {
     )
 }
 
-/// The `person` column's identity resolution, and nothing more: a selection
-/// that does not present the column pays for no join.
 struct PersonProjection {
     expression: String,
     join: String,
 }
 
 impl PersonProjection {
-    /// A query that resolves nobody: the column is not presented, so there is
-    /// no join to read and no identity to compare against.
     fn unresolved() -> Self {
         Self {
             expression: "''".to_owned(),
@@ -242,9 +234,6 @@ impl PersonProjection {
     }
 }
 
-/// INVARIANT: both identity relations are views, so an unnarrowed join reads
-/// every account and every email the tenant holds. The roster the selection
-/// already binds is what bounds them.
 fn person_projection(
     entity: &MetricDrilldownEntity,
     columns: &[MetricDrilldownColumn],
@@ -281,8 +270,6 @@ fn person_projection(
     }
 }
 
-/// The two halves of the division and how the denominator adds up — a plan
-/// missing any of the three describes a ratio nothing can compute.
 fn ratio_halves(
     req: &ValidatedMetricDrilldown,
 ) -> Result<(&EvidenceInput, &EvidenceInput, RatioDenominatorAggregation), CanonicalError> {
@@ -327,8 +314,6 @@ fn compile_ratio_query(
         denominator.measure_key.clone(),
     ];
     let scope = evidence_scope(req, &mut params);
-    // Both terms read the aggregates the subquery emits, so both wait for the
-    // outer level rather than joining the filters inside.
     let search = search_predicate(
         req.selection.search.as_deref(),
         &columns,
@@ -345,8 +330,6 @@ fn compile_ratio_query(
     let outer_sql = where_clause(&[search, cursor]);
     let limit = req.limit + 1;
     let order_by = order.order_by(RATIO_TIEBREAKERS);
-    // INVARIANT: a flagged measure collapses identities before the daily rollup
-    // sums it, or the drilldown explains a ratio the tile never showed.
     let collapsed = collapsed_evidence_value(numerator, denominator);
     let sql = format!(
         "WITH {sort_source} \
@@ -458,10 +441,6 @@ impl RatioRowSql {
     }
 }
 
-/// INVARIANT: the collapse groups by the resolved PERSON, not the source
-/// identity. Grouping by identity would leave one person's aliases uncollapsed;
-/// omitting the person entirely would collapse a roster's people into each
-/// other, so a flagged denominator would read `1` for a whole team.
 fn resolved_person_expr() -> &'static str {
     "multiIf(coalesce(account_map.account_id, '') != '', \
       toString(assumeNotNull(account_map.person_id)), \
@@ -470,8 +449,6 @@ fn resolved_person_expr() -> &'static str {
       evidence.entity_id)"
 }
 
-/// Per-identity combination for the two halves of a ratio, at evidence grain.
-/// `sum` needs no special case: summing identities then days is the same sum.
 fn collapsed_evidence_value(numerator: &EvidenceInput, denominator: &EvidenceInput) -> String {
     let mut arms = String::new();
     for input in [numerator, denominator] {
@@ -492,8 +469,6 @@ fn collapsed_evidence_value(numerator: &EvidenceInput, denominator: &EvidenceInp
     format!("multiIf({arms}sum(ifNull(evidence.contribution, 0)))")
 }
 
-/// The evidence row's account-binding key, in the identity store's form —
-/// shared with the observation reads so both surfaces resolve identically.
 fn account_binding_key(alias: &str) -> String {
     format!(
         "({alias}.account_source_type, {source_uuid}, {account_id})",
@@ -502,12 +477,6 @@ fn account_binding_key(alias: &str) -> String {
     )
 }
 
-/// Person selections resolve account-first: a row whose account key is bound
-/// decides by that binding alone — a binding to the requested person matches,
-/// any other binding (the excluded person included) terminates — and only an
-/// unbound row falls back to the person's email set. Tenant evidence keys on
-/// the tenant itself. Pushes its own params where the predicate renders; a
-/// person id is bound once per arm, never interpolated into the SQL.
 fn entity_predicate(
     entity: &super::dto::MetricDrilldownEntity,
     params: &mut Vec<String>,
@@ -544,9 +513,6 @@ fn entity_predicate(
         super::dto::MetricDrilldownEntity::Tenant {} => {
             "evidence.entity_id = evidence.tenant_id".to_owned()
         }
-        // An empty roster is rejected in validation, so it cannot arrive
-        // through the API; matching no row beats emitting `IN ()`, which is a
-        // syntax error rather than an empty result.
         super::dto::MetricDrilldownEntity::Persons { .. }
         | super::dto::MetricDrilldownEntity::Unknown => "1 = 0".to_owned(),
     }
@@ -567,22 +533,8 @@ fn filter_predicate(filters: &[MetricDrilldownFilter], params: &mut Vec<String>)
     sql
 }
 
-/// The sorted cell, bound once. The flag, the key, the cursor comparison and
-/// the ORDER BY all read it, and the fallback expression behind it is long
-/// enough that repeating it would dominate the query text.
-///
-/// INVARIANT: the bound term carries no placeholder. It leads the query, so
-/// one would take the first bound parameter and shift every other by one —
-/// column keys reach it as inlined literals for exactly this reason.
 const SORT_SOURCE: &str = "sort_source";
 
-/// The order the rows travel in, and everything that has to agree with it: the
-/// ORDER BY, the columns the cursor replays, and how a replayed key re-enters
-/// the comparison.
-///
-/// INVARIANT: one direction for the whole key. Blank cells are pushed last by
-/// the leading flag rather than by a second direction, so the next page stays a
-/// single tuple comparison instead of a per-column chain.
 struct OrderKey {
     source: String,
     flag: String,
@@ -592,12 +544,6 @@ struct OrderKey {
 }
 
 impl OrderKey {
-    /// INVARIANT: an unresolved sort has no ordering key to fall back on. A
-    /// constant one would still be replayed against a cursor minted by a real
-    /// key, and the two leading tuple elements would decide the comparison
-    /// before the tiebreakers were reached — serving a page twice or dropping
-    /// the rest of the result set, silently. Validation refuses such a sort
-    /// first, so reaching here is a fault, not a degradation.
     fn build(
         columns: &[MetricDrilldownColumn],
         sort: &MetricDrilldownSort,
@@ -617,7 +563,6 @@ impl OrderKey {
         })
     }
 
-    /// The `WITH` term the rest of the key reads through.
     fn source(&self) -> String {
         format!("{source} AS {SORT_SOURCE}", source = self.source)
     }
@@ -646,7 +591,6 @@ impl OrderKey {
         params: &mut Vec<String>,
     ) -> Option<String> {
         let cursor = cursor?;
-        // INVARIANT: bound in the order the tuple names the columns.
         params.push(u8::from(cursor.sort_flag).to_string());
         params.push(cursor.sort_value.clone());
         params.extend([
@@ -671,16 +615,6 @@ impl OrderKey {
     }
 }
 
-/// A free-text needle against every column the reader can see, read exactly as
-/// the cell is rendered.
-///
-/// INVARIANT: the UTF-8 form of the comparison. A name or a commit subject is
-/// not always ASCII, and the ASCII form would fold only half of one.
-///
-/// `Who` is the one column the row does not carry as text — the query holds an
-/// identity and the reader sees a name — so it is matched by the ids whose
-/// names the caller's needle already picked out. Leaving it out would make a
-/// visible column silently unsearchable.
 fn search_predicate(
     search: Option<&str>,
     columns: &[MetricDrilldownColumn],
@@ -801,22 +735,22 @@ mod tests {
         assert_eq!(
             params,
             [
-                "commit_count", // role expression branch
+                "commit_count",
                 "value",
-                &TEST_TENANT.to_string(), // tenant predicate leads the scope
-                "git",                    // scope: source, entity type, entity id
+                &TEST_TENANT.to_string(),
+                "git",
                 "person",
-                &TEST_PERSON.to_string(), // the person, once per resolution arm:
-                &TEST_PERSON.to_string(), // account binding first, email fallback
-                "2026-07-01",             // period bounds
+                &TEST_PERSON.to_string(),
+                &TEST_PERSON.to_string(),
+                "2026-07-01",
                 "2026-07-31",
-                "commit_count", // measure_key IN
-                "repository",   // filter: indexOf twice, then values
+                "commit_count",
+                "repository",
                 "repository",
                 "org/repo",
-                "0", // cursor tuple: emptiness flag, then the sorted cell
+                "0",
                 "2026-07-01",
-                "value", // then the tiebreakers, the complete ordering key
+                "value",
                 "2026-07-01",
                 "",
                 "git",
@@ -824,7 +758,7 @@ mod tests {
                 "abc",
                 "commit",
                 "",
-                "person@example.com", // source identity closes the ordering key
+                "person@example.com",
             ]
         );
         assert_eq!(sql.matches('?').count(), params.len());
@@ -885,9 +819,6 @@ mod tests {
             ),
             "email fallback arm"
         );
-        // The roster reads as one query over people, not as a tenant total:
-        // the entity type stays `person`, which is the partition the evidence
-        // rows are keyed by.
         assert!(params.iter().any(|value| value == "person"));
         assert!(params.iter().any(|value| *value == TEST_PERSON.to_string()));
         assert!(params.iter().any(|value| *value == second.to_string()));
@@ -941,18 +872,18 @@ mod tests {
         assert_eq!(
             params,
             [
-                "focus_hours", // sumIf numerator, then denominator
+                "focus_hours",
                 "work_hours",
-                &TEST_TENANT.to_string(), // tenant predicate leads the scope
-                "git",                    // scope: source, entity type, entity id
+                &TEST_TENANT.to_string(),
+                "git",
                 "person",
-                &TEST_PERSON.to_string(), // the person, once per resolution arm:
-                &TEST_PERSON.to_string(), // account binding first, email fallback
-                "2026-07-01",             // period bounds
+                &TEST_PERSON.to_string(),
+                &TEST_PERSON.to_string(),
+                "2026-07-01",
                 "2026-07-31",
-                "focus_hours", // measure_key IN
+                "focus_hours",
                 "work_hours",
-                "repository", // filter: indexOf twice, then values
+                "repository",
                 "repository",
                 "org/repo",
             ]
@@ -1004,9 +935,6 @@ mod tests {
         assert_eq!(sql.matches('?').count(), params.len());
     }
 
-    // INVARIANT: the identity closes the ordering key. Two identities of one
-    // person can tie on every other column, and a page boundary between two
-    // indistinguishable rows repeats or skips one.
     #[test]
     fn the_ordering_key_ends_with_the_source_identity() {
         let request = validated(plan(
@@ -1069,8 +997,6 @@ mod tests {
         assert_eq!(sql.matches('?').count(), params.len());
     }
 
-    // One person's own drilldown already knows whose records it shows, so it
-    // pays for neither the column nor the joins behind it.
     #[test]
     fn one_person_pays_for_no_identity_join() {
         let (sql, params) = compile_query(&commit_plan())
@@ -1145,9 +1071,6 @@ mod tests {
         assert_eq!(sql.matches('?').count(), params.len());
     }
 
-    // The reader searches a column they can see. `Who` shows a name and the
-    // row carries an identity, so the needle reaches the query as the people
-    // it already picked out.
     #[test]
     fn a_search_reaches_the_who_column_through_the_people_it_names() {
         let mut request = roster_plan(&[TEST_PERSON]);
@@ -1163,8 +1086,6 @@ mod tests {
         assert_eq!(sql.matches('?').count(), params.len());
     }
 
-    // Nothing to compare against, so nothing is added — and never a bare `IN
-    // ()`, which is a syntax error rather than an empty result.
     #[test]
     fn a_search_matching_nobody_adds_no_identity_term() {
         let mut request = roster_plan(&[TEST_PERSON]);
@@ -1458,16 +1379,11 @@ mod tests {
         ))
         .unwrap_or_else(|error| panic!("query must compile: {error}"));
 
-        // Pinned to the collapse arms, not to `multiIf(` — the resolved-person
-        // expression is a multiIf and is present in every ratio drilldown.
         assert!(!sql.contains("max(ifNull(evidence.contribution, 0))"));
         assert!(!sql.contains("min(ifNull(evidence.contribution, 0))"));
         assert!(sql.contains("sum(ifNull(evidence.contribution, 0))"));
     }
 
-    // A roster drilldown collapses each person separately: grouping without the
-    // person would take one `max` across the whole team, so a flagged
-    // denominator would read 1 for five active people.
     #[test]
     fn the_ratio_collapse_groups_by_the_resolved_person() {
         let (sql, _) = compile_query(&ratio_plan(

@@ -1,12 +1,3 @@
-//! Gate for the SQL a caller authors on the public query path (#1962).
-//!
-//! Requires the SQL to parse (sqlparser, ClickHouse dialect) to exactly one read
-//! statement — a `SELECT`/`WITH` query. Multiple statements, DDL/DML, and
-//! unparseable input are rejected. Using a parser (not hand-rolled scanning)
-//! keeps a `;` inside a string/comment/identifier from hiding a second
-//! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
-//! real boundary, except for the databases named in [`ADMIN_ONLY_DATABASES`].
-
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{Query, Statement, Visit as _, Visitor};
@@ -15,12 +6,6 @@ use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
-/// Table functions a custom observation source may not call. These reach data
-/// outside the read-only warehouse contract — remote/clustered nodes, external
-/// systems, and the local filesystem — so a custom SQL that used one could
-/// exfiltrate to, or read tenant-crossing data from, a source the
-/// `presentation_ro` grants and the outer tenant predicate cannot govern.
-/// Matched case-insensitively as a bare `name(` call token pair.
 const DENIED_TABLE_FUNCTIONS: &[&str] = &[
     "remote",
     "remotesecure",
@@ -55,30 +40,10 @@ const DENIED_TABLE_FUNCTIONS: &[&str] = &[
     "dictionary",
 ];
 
-/// Databases only an admin may read. `product_usage` holds the records the
-/// admin-gated usage summary serves, and today one ClickHouse account serves
-/// that route and this path alike, so the grants cannot tell the two readers
-/// apart: a caller-scoped route asks [`admin_only_database`] and then checks the
-/// role, and [`validate_custom_observation_sql`] refuses outright, having no
-/// reader to check.
 const ADMIN_ONLY_DATABASES: &[&str] = &["product_usage"];
 
-/// Admin-only database FAMILIES, matched by prefix.
-///
-/// Bronze holds raw, untransformed connector payloads. `presentation_ro` was
-/// deliberately granted silver and up — until the ingestion-intensity ops view
-/// (`src/ingestion/gold/bronze_insert_events.sql`) required bronze SELECT, which
-/// `provision-presentation-access.sh` now grants per database. That grant is
-/// what makes the ops surface work, and it also means the grants no longer keep
-/// caller-authored SQL out of bronze. This does.
-///
-/// A prefix rather than a name because bronze databases are created per
-/// connector: any static list would go stale the next time one is deployed, in
-/// the direction that silently permits.
 const ADMIN_ONLY_DATABASE_PREFIXES: &[&str] = &["bronze_"];
 
-/// Reject anything that is not a single read statement (`SELECT`/`WITH`).
-/// Returns a short, user-facing reason on rejection.
 pub fn validate_single_select(sql: &str) -> Result<(), String> {
     let statements = parse_read_statements(sql)?;
 
@@ -92,7 +57,6 @@ pub fn validate_single_select(sql: &str) -> Result<(), String> {
     }
 }
 
-/// Gate SQL submitted through the MCP explorer.
 pub fn validate_mcp_sql(sql: &str) -> Result<(), String> {
     let statements = parse_read_statements(sql)?;
 
@@ -148,15 +112,6 @@ fn query_output_control(query: &Query) -> Option<QueryOutputControl> {
     }
 }
 
-/// Gate a custom observation source's SQL: a single read (as above) that names
-/// no admin-only database and calls no external/remote table function. The
-/// compiler wraps this SQL as `FROM (<sql>)` and executes it as
-/// `presentation_ro`; the outer tenant predicate filters the rows it *emits*,
-/// not the tables it *reads*, so denying the functions that escape the warehouse
-/// contract is what keeps a custom source inside the same boundary a managed one
-/// has. Tenant-row isolation of
-/// the warehouse relations themselves is the authorship-trust + experimental
-/// gate, the same posture as the saved-query console.
 pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
     validate_single_select(sql)?;
 
@@ -191,14 +146,6 @@ fn parse_read_statements(sql: &str) -> Result<Vec<Statement>, String> {
     Parser::parse_sql(&ClickHouseDialect {}, &stripped).map_err(|_| rejection)
 }
 
-/// Rewrite `sql` with `FINAL` tokens in table-modifier position removed.
-/// The tokenizer classifies keywords context-free, so an unquoted column or
-/// alias named `final` also carries `Keyword::FINAL`; a table modifier is told
-/// apart by what precedes it — a table name, alias, or closing paren — while
-/// an identifier follows `SELECT`, a comma, a dot, an operator, or a clause
-/// keyword. Returns `None` when the SQL has no such token (or cannot be
-/// tokenized), so the caller retries the parse only when `FINAL` could have
-/// been the reason it failed.
 fn strip_final_modifiers(sql: &str) -> Option<String> {
     let tokens = Tokenizer::new(&ClickHouseDialect {}, sql).tokenize().ok()?;
 
@@ -235,9 +182,6 @@ fn ends_table_factor(token: &Token) -> bool {
     }
 }
 
-/// Return the first admin-only database `sql` names, if any. Matched wherever
-/// the name appears, not only in qualified-name position: a table function takes
-/// its database as a string argument.
 pub fn admin_only_database(sql: &str) -> Option<String> {
     let lowered = sql.to_ascii_lowercase();
 
@@ -252,21 +196,6 @@ pub fn admin_only_database(sql: &str) -> Option<String> {
     admin_only_prefixed_database(&lowered)
 }
 
-/// The first database from an admin-only prefix family that `lowered` names.
-///
-/// Scanned like [`names`] — anywhere, not only in qualified-name position — then
-/// extended forward over the rest of the identifier, so the refusal can name the
-/// database the caller actually wrote rather than the prefix it matched.
-///
-/// Unlike [`names`], a hit preceded by `.` is skipped: a qualified table name
-/// is always in that position and a database name never is, so
-/// `silver.bronze_backed_events` is a silver table and not a bronze database.
-/// Every way of writing the database itself — bare, quoted, back-quoted, or as a
-/// table function's string argument — leaves something other than `.` in front.
-///
-/// Errs toward refusing otherwise: a column or alias merely *named*
-/// `bronze_something` trips this too. That is the same trade [`names`] already
-/// makes, and the safe direction for a gate standing in for a grant.
 fn admin_only_prefixed_database(lowered: &str) -> Option<String> {
     let bytes = lowered.as_bytes();
 
@@ -280,14 +209,11 @@ fn admin_only_prefixed_database(lowered: &str) -> Option<String> {
             while bytes.get(end).copied().is_some_and(continues_identifier) {
                 end += 1;
             }
-            // The bare prefix is not a database name.
             (end > at + hit.len()).then(|| lowered[at..end].to_owned())
         })
     })
 }
 
-/// Whether `lowered` carries `name` as a whole identifier — a longer name that
-/// merely contains it (`product_usage_score`) is a different relation.
 fn names(lowered: &str, name: &str) -> bool {
     let bytes = lowered.as_bytes();
 
@@ -302,9 +228,6 @@ fn continues_identifier(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-/// Return the first denied table-function name called in `sql`, if any. A call
-/// is a denied identifier token immediately followed by `(`; a column or alias
-/// merely *named* like one is not (it is not followed by a paren).
 fn first_denied_table_function(sql: &str) -> Option<String> {
     let tokens = Tokenizer::new(&ClickHouseDialect {}, sql).tokenize().ok()?;
 
@@ -401,14 +324,10 @@ mod tests {
 
     #[test]
     fn a_read_of_raw_bronze_is_admin_only() {
-        // `presentation_ro` can read bronze now (the ingestion ops view needs
-        // it), so the grants no longer refuse this and the gate must.
         for (sql, expected) in [
             ("SELECT * FROM bronze_jira.issues", "bronze_jira"),
             ("SELECT * FROM Bronze_Jira.Issues", "bronze_jira"),
             ("SELECT * FROM `bronze_slack.messages`", "bronze_slack"),
-            // A connector nobody has deployed yet is covered too — that is why
-            // the family is a prefix and not a list.
             (
                 "SELECT * FROM bronze_not_yet_invented.things",
                 "bronze_not_yet_invented",
@@ -424,13 +343,11 @@ mod tests {
 
     #[test]
     fn the_bare_bronze_prefix_is_not_a_database() {
-        // Nothing to refuse: `bronze_` names no relation.
         assert_eq!(admin_only("SELECT bronze_ FROM silver.events"), None);
     }
 
     #[test]
     fn a_custom_observation_source_may_not_read_raw_bronze() {
-        // The custom-source path has no reader to check, so it refuses outright.
         let refusal = custom("SELECT ts FROM bronze_jira.issues").err();
         assert!(
             refusal
@@ -448,8 +365,6 @@ mod tests {
             "SELECT person_id FROM identity.identity_persons",
             "SELECT usage_events FROM silver.events",
             "SELECT product_usage_score FROM silver.events",
-            // Silver is where a bronze stream lands after transformation; the
-            // prefix must not reach across into it.
             "SELECT * FROM silver.bronze_backed_events",
         ] {
             assert_eq!(admin_only(sql), None, "should need no role: {sql:?}");
@@ -482,7 +397,6 @@ mod tests {
             "SELECT * FROM mysql('h', 'db', 't', 'u', 'p')",
             "WITH x AS (SELECT * FROM cluster('c', system.one)) SELECT * FROM x",
             "SELECT * FROM MERGE(currentDatabase(), '.*')",
-            // The *Cluster variants run the same reader across cluster nodes.
             "SELECT * FROM fileCluster('c', '/x', CSV)",
             "SELECT * FROM s3Cluster('c', 's3://b/k', CSV)",
             "SELECT * FROM azureBlobStorageCluster('c', 'conn', 'ct', 'b')",
@@ -496,8 +410,6 @@ mod tests {
 
     #[test]
     fn custom_gate_allows_a_column_named_like_a_function() {
-        // A denied name only matters as a `name(` call; a column or alias that
-        // merely shares the name is not a table function.
         assert!(custom("SELECT file FROM gold.events").is_ok());
         assert!(custom("SELECT value AS url FROM gold.events").is_ok());
     }
@@ -546,10 +458,10 @@ mod tests {
             "  SELECT * FROM t  ",
             "SELECT 1;",
             "SELECT count(*) FROM silver.events c JOIN person.map p ON c.id = p.id",
-            "SELECT 1 UNION ALL SELECT 2", // one statement, read-only
+            "SELECT 1 UNION ALL SELECT 2",
             "WITH a AS (SELECT 1) SELECT * FROM a",
             "with a as (select 1) select * from a",
-            "(SELECT 1)", // a parenthesized query is still one read statement
+            "(SELECT 1)",
         ] {
             assert!(check(sql).is_ok(), "should accept: {sql:?}");
         }
@@ -587,7 +499,7 @@ mod tests {
             "ALTER TABLE t ADD COLUMN c Int",
             "CREATE TABLE t (x Int)",
             "SET max_threads = 1",
-            "SELECTX 1", // not valid SQL -> unparseable -> rejected
+            "SELECTX 1",
         ] {
             assert!(check(sql).is_err(), "should reject: {sql:?}");
         }
@@ -599,7 +511,7 @@ mod tests {
             "SELECT 1; SELECT 2",
             "SELECT 1; DROP TABLE t",
             "SELECT 1 ; INSERT INTO t VALUES (1)",
-            "SELECT 'it''s'; SELECT 2", // real `;` after a doubled-quote escape
+            "SELECT 'it''s'; SELECT 2",
         ] {
             assert!(
                 check(sql).is_err(),

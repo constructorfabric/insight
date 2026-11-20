@@ -30,7 +30,6 @@ UMBRELLA = REPO_ROOT / "charts" / "insight"
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 WEBHOOK = "https://discord.example.test/api/webhooks/1/x"
 
-# Minimum viable umbrella install with insight-v3-core deployed.
 BASE = {
     "global.insightV3Core.deploy": "true",
     "global.tenantDefaultId": TENANT,

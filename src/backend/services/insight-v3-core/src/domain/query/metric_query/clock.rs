@@ -1,5 +1,3 @@
-//! The timestamp a metric windows and buckets by.
-
 use serde::Deserialize;
 
 use super::MetricQueryError;
@@ -9,7 +7,6 @@ use crate::domain::query::time_window::{Bounds, Grain, Window};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct TimeField {
-    /// The declared field of the dataset the window selects by.
     #[serde(default, rename = "field")]
     pub(super) declared: Option<String>,
     #[serde(default)]
@@ -25,13 +22,10 @@ fn datetime_type() -> String {
 }
 
 impl TimeField {
-    /// The declared field this windows by, when it names one.
     pub(super) fn reads(&self) -> Option<&str> {
         self.declared.as_deref()
     }
 
-    /// Where the clock addresses a record itself rather than naming a
-    /// declared field.
     pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
         if self.json.is_some() {
             into.push((format!("{at}.json"), "json"));
@@ -50,8 +44,6 @@ impl TimeField {
     }
 }
 
-/// How a clock is read out of a row. A payload key that is absent or
-/// unparseable reads as no clock, not as a failed query.
 pub(super) fn clock_expression(
     source: Source<'_>,
     qualifier: Option<&str>,

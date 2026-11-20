@@ -59,7 +59,6 @@ struct NameRequest {
 
 impl toolkit::api::api_dto::RequestApiDto for NameRequest {}
 
-/// A folder as a dashboard's reader is told it holds the dashboard.
 pub(crate) fn holding_json(folder: &Folder) -> Value {
     json!({
         "id": folder.id.to_string(),
@@ -131,7 +130,6 @@ fn path_param(name: &str, description: &str) -> ParamSpec {
     ParamSpec::path(name).description(description)
 }
 
-/// A folder id in a path; one that cannot be an id names nothing.
 fn folder_id(raw: &str) -> Result<FolderId, CanonicalError> {
     FolderId::parse(raw).map_err(|_| {
         FolderApiError::not_found(format!("no folder has the id `{raw}`"))

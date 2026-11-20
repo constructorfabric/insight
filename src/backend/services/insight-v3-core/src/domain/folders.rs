@@ -16,8 +16,6 @@ use crate::domain::tags::Tags;
 
 const MAX_NAME_CHARS: usize = 64;
 
-/// Per owner: a folder counts against whoever owns it, whoever it is
-/// shared with.
 pub(crate) const MAX_FOLDERS: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -67,14 +65,12 @@ pub(crate) struct Folder {
     pub(crate) owner: Owner,
 }
 
-/// A folder as the store holds it, with what decides one caller's access.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HeldFolder {
     pub(crate) folder: Folder,
     pub(crate) standing: FolderStanding,
 }
 
-/// A folder the caller sees, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SeenFolder {
     pub(crate) folder: Folder,
@@ -95,22 +91,18 @@ impl SeenFolder {
 #[derive(Debug, Clone)]
 pub(crate) struct FolderSummary {
     pub(crate) seen: SeenFolder,
-    /// The dashboards in it the caller sees.
     pub(crate) dashboards: u64,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct FolderList {
     pub(crate) folders: Vec<FolderSummary>,
-    /// The dashboards the caller sees in none of the folders they see.
     pub(crate) unfiled: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FolderFilter {
-    /// In none of the folders the caller sees.
     Unfiled,
-    /// In this folder, which the caller sees.
     In(FolderId),
 }
 
@@ -174,44 +166,27 @@ impl From<Refused> for FolderError {
 
 #[async_trait]
 pub(crate) trait Folders: Send + Sync + fmt::Debug {
-    /// The folders `caller` sees, each counting the dashboards in it they
-    /// see, and how many they see in none of them.
     async fn list_folders(&self, caller: Caller) -> Result<FolderList, FolderError>;
 
-    /// Makes a folder of `owner`'s, refused once they own [`MAX_FOLDERS`].
     async fn create_folder(&self, owner: PersonId, name: FolderName)
     -> Result<Folder, FolderError>;
 
-    /// The folder and what decides `caller`'s access to it, or none when no
-    /// folder has the id.
     async fn held_folder(
         &self,
         id: FolderId,
         caller: Caller,
     ) -> Result<Option<HeldFolder>, DefinitionStoreError>;
 
-    /// Renames the folder, reporting whether there was one.
     async fn rename_folder(&self, id: FolderId, name: &FolderName) -> Result<bool, FolderError>;
 
-    /// Removes the folder with its entries and grants, never a dashboard,
-    /// reporting whether there was one.
     async fn delete_folder(&self, id: FolderId) -> Result<bool, FolderError>;
 
-    /// The folders `caller` sees that hold the dashboard, by name.
     async fn folders_holding(
         &self,
         dashboard: &DefinitionId,
         caller: Caller,
     ) -> Result<Vec<Folder>, FolderError>;
 
-    /// Puts the dashboard in the folder as `caller` places it, answering
-    /// what the stored entry carries.
-    ///
-    /// INVARIANT: lands only on a dashboard `caller` sees as the row is
-    /// written, and carries only while `caller` owns it or holds an editor
-    /// grant on it, to them or to everyone, so an entry cannot rely on a
-    /// grant withdrawn meanwhile. A carrying one makes the entry already
-    /// there carry as `caller`'s; a filing one changes nothing of it.
     async fn add_entry(
         &self,
         folder: FolderId,
@@ -220,10 +195,6 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
         entry: Entry,
     ) -> Result<Entry, FolderError>;
 
-    /// Takes the dashboard out of the folder, reporting whether it was in.
-    ///
-    /// INVARIANT: removes nothing unless `caller` sees the dashboard as the
-    /// row goes.
     async fn remove_entry(
         &self,
         folder: FolderId,
@@ -232,8 +203,6 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
     ) -> Result<bool, FolderError>;
 }
 
-/// A folder the caller sees, or not found - which they are never told
-/// apart.
 pub(crate) async fn seen_folder(
     store: &dyn DefinitionStore,
     caller: Caller,
@@ -283,9 +252,6 @@ pub(crate) async fn delete(
     Ok(())
 }
 
-/// Puts a dashboard the caller sees in a folder they may arrange: carrying
-/// where they own it or hold an editor grant on it, filing otherwise.
-/// Answers what the stored entry carries.
 pub(crate) async fn add(
     store: &dyn DefinitionStore,
     caller: Caller,
@@ -313,8 +279,6 @@ pub(crate) async fn add(
     Ok(entry)
 }
 
-/// Takes a dashboard the caller sees out of a folder they may arrange; one
-/// they cannot see is not found, and its entry stays.
 pub(crate) async fn remove(
     store: &dyn DefinitionStore,
     caller: Caller,
@@ -343,8 +307,6 @@ pub(crate) async fn remove(
     Ok(())
 }
 
-/// INVARIANT: one store holds them all, because a dashboard duplicate carries
-/// its owner, entries and tags inside the definitions' own transaction.
 pub(crate) trait DefinitionStore:
     Definitions + Folders + Tags + Pins + DashboardCatalogue + Grants
 {

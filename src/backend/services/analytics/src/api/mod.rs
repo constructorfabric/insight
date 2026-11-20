@@ -1,5 +1,3 @@
-//! HTTP API layer — routes and handlers.
-
 pub(crate) mod ai;
 mod connector_health;
 pub(crate) mod error;
@@ -49,14 +47,12 @@ use crate::domain::saved_query;
 use crate::infra::anthropic::AnthropicClient;
 use crate::infra::identity::IdentityClient;
 
-/// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
     pub db: DatabaseConnection,
     pub ch: insight_clickhouse::Client,
     pub identity: IdentityClient,
     pub anthropic: AnthropicClient,
-    /// Caps explain calls in flight in this process.
     pub ai_calls: Arc<Semaphore>,
     pub report_generations: Arc<Semaphore>,
     pub report_artifacts: Arc<Semaphore>,
@@ -70,8 +66,6 @@ pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option
         .and_then(|value| value.to_str().ok())
 }
 
-// SAFETY: an identity that is absent or unreachable is a server error, never a
-// permit.
 pub(crate) async fn is_admin_caller(
     state: &AppState,
     headers: &axum::http::HeaderMap,
@@ -91,9 +85,6 @@ pub(crate) async fn is_admin_caller(
         })
 }
 
-/// What a refused admin surface says. The builder is generic over its own
-/// resource, so each caller constructs the refusal in its namespace and this
-/// gate decides only whether to raise it.
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
 
 pub(crate) async fn require_admin(
@@ -107,26 +98,10 @@ pub(crate) async fn require_admin(
     Err(denied())
 }
 
-/// Clips to a CHARACTER budget: a byte slice would split a multi-byte value.
 pub(crate) fn clip(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
 
-/// Register all analytics routes onto the host's stateless router.
-///
-/// Builds the analytics endpoints on a fresh sub-router (via
-/// [`build_operations`]) so the tenant-override middleware + `AppState`
-/// extension scope to the analytics gear's routes only — not the host's `/health`,
-/// `/healthz`, `/openapi.json`, `/docs` — then merges it into the host router.
-///
-/// The shared `Arc<AppState>` is attached via `router.layer(Extension(state))`.
-/// Gateway-JWT identity is enforced entirely by the host authn pipeline: the
-/// `oidc-authn-plugin` verifies the ES256 gateway JWT (signature / `iss` /
-/// `aud` / `exp`) against the authenticator's JWKS and maps its claims to the
-/// request `SecurityContext` via configured `claim_mapping` (`sub` →
-/// `subject_id`, `tenant_id` → `subject_tenant_id`, `roles` → `token_scopes`;
-/// `subject_tenant_id` is required). No bespoke mapping layer here
-/// (`NGINX_BFF` R1 / G2).
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -145,11 +120,6 @@ mod log_context_tests;
 #[cfg(test)]
 mod log_leak_tests;
 
-/// `OpenAPI` document metadata — the stable API-contract identity baked into
-/// the committed `docs/components/backend/analytics/openapi.json` and the
-/// spec the offline `analytics openapi` subcommand emits. `version` is the
-/// API-contract version (deliberately not `CARGO_PKG_VERSION`), so the drift
-/// gate fires only on real route/schema changes, not release bumps.
 fn openapi_info() -> OpenApiInfo {
     OpenApiInfo {
         title: "Analytics API".to_owned(),
@@ -165,25 +135,11 @@ fn openapi_info() -> OpenApiInfo {
     }
 }
 
-/// Declare every analytics operation on a **stateless** router.
-///
-/// Routes are declared through the toolkit's [`OperationBuilder`], so each
-/// endpoint records an `OpenAPI` `OperationSpec` plus auth/license metadata in
-/// the host-provided `openapi` registry (the gears-rust idiom). Handlers take
-/// `Extension<Arc<AppState>>` (state supplied by the caller's layer), so this
-/// registers routes without touching any backend — which also makes the full
-/// route table unit-testable without constructing an `AppState`/DB.
-///
-/// `OperationBuilder::register` merges method routers per path, so endpoints
-/// sharing a path across methods are registered as independent operations.
-// One `OperationBuilder` chain per endpoint makes this a long-but-flat route
-// table; splitting it further would only obscure the 1:1 route↔handler map.
+// One `OperationBuilder` chain per endpoint makes this a long-but-flat route table.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router: Router = router;
 
-    // Usage monitoring (#2573). Ingest is open to any signed-in caller — it is
-    // the SPA's beacon; the read model is admin-gated inside the handler.
     router = OperationBuilder::post("/v1/usage/events")
         .operation_id("analytics_api.usage.ingest")
         .summary("Record usage events")
@@ -291,9 +247,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(usage::get_usage_actions)
         .register(router, openapi);
 
-    // Connector health: the operator's view of what the mover reports about
-    // every connector's syncs. Admin-gated inside the handler, like every other
-    // instance-wide read here.
     router = OperationBuilder::get("/v1/connector-health")
         .operation_id("analytics_api.connector_health.summary")
         .summary("Recorded sync state of every connector")
@@ -337,9 +290,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(connector_health::get_connector_syncs)
         .register(router, openapi);
 
-    // Ingestion intensity (ops). Admin-gated inside the handler, like the usage
-    // read model: bronze rows carry no tenant, so this surface is
-    // infrastructure-wide and cannot be scoped by the caller's tenant.
     router = OperationBuilder::get("/v1/ingestion/intensity")
         .operation_id("analytics_api.ingestion.intensity")
         .summary("Bronze extraction intensity per bucket")
@@ -369,8 +319,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(ingestion::get_ingestion_intensity)
         .register(router, openapi);
 
-    // Sending is open to any signed-in caller; the listing is admin-gated
-    // inside the handler, not here.
     router = OperationBuilder::post("/v1/feedback")
         .operation_id("analytics_api.feedback.submit")
         .summary("Send product feedback")
@@ -378,8 +326,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .no_license_required()
         .json_request::<feedback::FeedbackRequest>(openapi, "A feedback submission")
         .no_content_response(StatusCode::NO_CONTENT, "Recorded")
-        // Only what a submission can actually answer: it addresses no resource,
-        // so the standard bundle's 404/409/429 would promise cases with no path.
         .error_400(openapi)
         .error_401(openapi)
         .error_415(openapi)
@@ -407,8 +353,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(feedback::list_feedback)
         .register(router, openapi);
 
-    // AI assist. `config` answers on every stand — "off" is the answer the SPA
-    // needs; the rest 404 while the stand switch is off.
     router = OperationBuilder::get("/v1/ai/config")
         .operation_id("analytics_api.ai.config")
         .summary("Whether this instance explains metrics with AI")
@@ -636,8 +580,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(reports::export_report)
         .register(router, openapi);
 
-    // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
-    // surface. CRUD is service-DB metadata; only `/run` reaches ClickHouse.
     router = OperationBuilder::get("/v1/queries")
         .operation_id("analytics_api.queries.list")
         .summary("List saved queries")
@@ -771,9 +713,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(metric_drilldown::export_metric_drilldown)
         .register(router, openapi);
 
-    // Unified metric definitions listing — display fields only, tenant
-    // scope resolved server-side from the session. GET is safe here: no
-    // request-context fields exist to leak into access logs.
     router = OperationBuilder::get("/v1/metric-definitions")
         .operation_id("analytics_api.metric_definitions.list")
         .summary("List unified metric definitions")
@@ -789,9 +728,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(metric_definitions::list_metric_definitions)
         .register(router, openapi);
 
-    // Custom-metric CRUD + export/import — the `origin='custom'` authoring
-    // surface. Every route is tenant-scoped and touches custom rows only, so a
-    // builtin key is read-only through this API.
     router = OperationBuilder::get("/v1/metrics")
         .operation_id("analytics_api.metrics.list")
         .summary("List custom metrics")
@@ -894,15 +830,10 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
 
     // `/health` + `/healthz` are provided by the api-gateway host gear (its
     // `rest_prepare`), so we must NOT register them here — doing so panics with
-    // "Overlapping method route". State + the (stateless `from_fn`) tenant
-    // middleware are layered by `register_routes`, not here.
+    // "Overlapping method route".
     router
 }
 
-/// Build the analytics `OpenAPI` document **offline** — no `AppState`, DB,
-/// or HTTP listener. Backs the `analytics openapi` subcommand (committed-doc
-/// regeneration + drift gate), reusing the exact `build_operations` route table
-/// the live gear serves, so the two can never diverge.
 pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let openapi = OpenApiRegistryImpl::new();
     let _ = build_operations(Router::new(), &openapi);
@@ -958,10 +889,6 @@ mod tests {
     use super::*;
     use toolkit::api::OpenApiRegistryImpl;
 
-    /// Exercises the full route table + `OpenAPI` registration with no `AppState`
-    /// or DB: handlers are only *registered* (via `Extension` extractors), never
-    /// invoked. Guards against overlapping-route panics / bad `OperationBuilder`
-    /// state, and records every `OperationSpec` in the registry.
     #[test]
     fn build_operations_registers_the_full_table_without_state() {
         let openapi = OpenApiRegistryImpl::new();

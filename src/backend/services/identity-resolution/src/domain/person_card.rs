@@ -1,8 +1,3 @@
-//! Compact person card — the id→display projection operator surfaces embed
-//! where a bare `person_id` would push the lookup onto every consumer (queue
-//! candidates today, person search later). Deliberately flat: no supervisor,
-//! no subordinates, no source ids — those belong to the full profile.
-
 use std::collections::HashMap;
 
 use uuid::Uuid;
@@ -10,9 +5,6 @@ use uuid::Uuid;
 use crate::domain::profile::latest_values;
 use crate::infra::db::entities::persons;
 
-/// The observation attributes a card is assembled from. The repo fetch filters
-/// on this list so hydrating a page of candidates reads card rows only, not
-/// every binding observation the journal holds for those persons.
 pub const CARD_VALUE_TYPES: [&str; 7] = [
     "email",
     "username",
@@ -27,8 +19,6 @@ pub const CARD_VALUE_TYPES: [&str; 7] = [
 pub struct PersonCard {
     pub person_id: Uuid,
     pub email: Option<String>,
-    /// Source-native handle (e.g. a git login) — often the only recognisable
-    /// field of an identity no HR system has observed yet.
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub job_title: Option<String>,
@@ -36,9 +26,6 @@ pub struct PersonCard {
 }
 
 impl PersonCard {
-    /// The card for a person the journal holds no card attributes for — a
-    /// candidate observed only through bindings still gets an entry, so a
-    /// consumer can render the id rather than dropping the person.
     #[must_use]
     pub fn empty(person_id: Uuid) -> Self {
         Self {
@@ -52,9 +39,6 @@ impl PersonCard {
     }
 }
 
-/// Collapse card observations for MANY persons — rows as the repo returns
-/// them, grouped here — to one card per person, current value per attribute
-/// (same latest-wins rule the profile uses).
 #[must_use]
 pub fn assemble_cards(rows: Vec<persons::Model>) -> HashMap<Uuid, PersonCard> {
     let mut by_person: HashMap<Uuid, Vec<persons::Model>> = HashMap::new();
@@ -75,9 +59,6 @@ fn card(person_id: Uuid, observations: Vec<persons::Model>) -> PersonCard {
     let latest = latest_values(observations);
     let get = |value_type: &str| latest.get(value_type).cloned();
 
-    // The profile splits display_name into first/last when those are missing;
-    // a card wants the opposite fallback — compose a display name from the
-    // parts when no display_name was ever observed.
     let display_name =
         get("display_name").or_else(|| compose_name(get("first_name"), get("last_name")));
 
@@ -91,9 +72,6 @@ fn card(person_id: Uuid, observations: Vec<persons::Model>) -> PersonCard {
     }
 }
 
-/// Cards for `ids` in the callers' order — a person the map has no card for
-/// still appears, as the id alone. The one place the "absent card is not a
-/// dropped person" rule lives; both the queue and the search render through it.
 #[must_use]
 pub fn in_requested_order(ids: &[Uuid], cards: &HashMap<Uuid, PersonCard>) -> Vec<PersonCard> {
     ids.iter()

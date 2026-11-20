@@ -8,11 +8,6 @@ type TestResult = anyhow::Result<()>;
 
 const PAGE: u64 = 50;
 
-/// The roster as these cases read it: every identity, so a visibility case is
-/// about visibility alone. The endpoint asks for account holders — the fixture's
-/// `person()` carries no canonical binding, so requiring one here would empty
-/// every case below and prove nothing about the visible set.
-/// [`only_account_holders`] covers the requirement itself.
 async fn page(
     f: &super::test_fixture::Fixture,
     viewer: Uuid,
@@ -33,7 +28,6 @@ async fn page(
     .await
 }
 
-/// The roster exactly as the endpoint asks for it.
 async fn only_account_holders(
     f: &super::test_fixture::Fixture,
     viewer: Uuid,
@@ -140,7 +134,6 @@ async fn the_roster_is_ordered_by_label_and_a_cursor_resumes_after_it() -> TestR
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    // The label prefers a display name, so the order must ignore the address.
     let carol = f.person("zzz-1@roster.test").await?;
     f.observed(carol, "display_name", "Carol").await?;
     let alice = f.person("zzz-2@roster.test").await?;
@@ -216,11 +209,6 @@ async fn a_search_term_narrows_the_roster_within_the_visible_set() -> TestResult
 
 #[tokio::test]
 async fn a_roster_of_account_holders_leaves_out_an_identity_nobody_claims() -> TestResult {
-    // The shape a git-only organisation is full of: an address a commit carried,
-    // which the journal turned into a person because that is what the journal
-    // does. Nobody here holds it — no connector ever claimed it as an account —
-    // so it is an observation, and a roster that lists it is a directory of
-    // strangers. The account holder beside it is what the roster IS.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };

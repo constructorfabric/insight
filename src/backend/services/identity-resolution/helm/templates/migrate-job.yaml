@@ -1,18 +1,3 @@
-{{/*
-Release-scoped hook Job: the only writer of the `identity` schema, applying
-pending MariaDB migrations and the first-admin bootstrap. Servers validate
-and never migrate (`assert_schema_compatible`).
-
-Migrations and the bootstrap run inside ONE advisory-locked session — the
-bootstrap's `INSERT … WHERE NOT EXISTS` has no unique constraint backing the
-active (tenant, person, role) triple, so it must not escape the critical
-section.
-
-Why a Job and not a per-pod initContainer, why `pre-*`, why the config is
-written inline instead of mounted, and why the `existingSecret` Secret must
-exist BEFORE `helm install` runs: see the analytics migrate-job, which
-carries the full rationale.
-*/}}
 apiVersion: batch/v1
 kind: Job
 metadata:

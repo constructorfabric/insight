@@ -21,8 +21,6 @@ fn a_declaration_needs_only_a_title_and_its_fields() {
 
 #[test]
 fn a_property_the_shape_does_not_carry_is_refused_rather_than_ignored() {
-    // A mistyped property must reach the author by name; dropping it silently
-    // is what makes a declaration disagree with what its author believes.
     let refused: Result<Declaration, _> = serde_json::from_value(json!({
         "title": "QA test runs",
         "fields": [{ "name": "run_id", "path": "run_id", "type": "string" }],
@@ -72,7 +70,6 @@ fn a_path_addresses_a_nested_key_and_a_key_holding_a_dot() {
         ("status", vec!["status"]),
         ("test.name", vec!["test", "name"]),
         ("commit.author.email", vec!["commit", "author", "email"]),
-        // A source is free to use a dot inside a key, so one is escaped.
         (r"metrics\.p95", vec!["metrics.p95"]),
         (r"outer.metrics\.p95", vec!["outer", "metrics.p95"]),
         (r"a\\b", vec![r"a\b"]),
@@ -97,8 +94,6 @@ fn a_field_is_found_by_the_name_a_metric_uses() {
 
 #[test]
 fn what_is_stored_is_what_was_declared() {
-    // The body is written back to the store and read by the portal, so a round
-    // trip must not quietly gain or lose a property.
     let body = json!({
         "title": "QA test runs",
         "description": "One record per test in one CI run.",

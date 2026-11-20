@@ -1,6 +1,3 @@
-//! A local issuer for the tests: it serves a JWKS and signs tokens against it,
-//! so the verifier is exercised against real ES256 material rather than a stub.
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;

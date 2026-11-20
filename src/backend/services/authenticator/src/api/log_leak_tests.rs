@@ -1,7 +1,3 @@
-//! Seeded-leak checks (insight#2488 AC-4): write a token, a session credential
-//! and a person record through the logging path — each must render as a
-//! redaction marker, never as its value.
-
 use insight_log_context::test_support::capture_output;
 
 use crate::config::{HostIdpConfig, IdpConfig};

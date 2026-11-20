@@ -15,7 +15,6 @@ use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::definitions::memory::MemoryDefinitions;
 
-/// The administrator the fixed identity answers for a request naming none.
 const ME: &str = "00000000-0000-0000-0000-000000000000";
 
 const SOMEONE_ELSE: &str = "0192a1b2-0000-7000-8000-000000000002";
@@ -103,7 +102,6 @@ impl Harness {
         self.send_as(ME, method, path, body).await
     }
 
-    /// A request from the administrator `person`.
     async fn send_as(&self, person: &str, method: &str, path: &str, body: Option<Value>) -> Answer {
         let request = Request::builder()
             .method(method)
@@ -152,8 +150,6 @@ impl Harness {
             .to_owned()
     }
 
-    /// Stores a dashboard of mine under an id the case chooses, or writes
-    /// its body again through the route when it is already there.
     async fn dashboard(&self, id: &str) {
         let path = format!("/v1/dashboards/{id}");
         let body = json!({ "title": id, "widgets": [] });
@@ -172,7 +168,6 @@ impl Harness {
         assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
     }
 
-    /// Stores a dashboard predating ownership under an id the case chooses.
     async fn ownerless(&self, id: &str) {
         let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
         self.definitions
@@ -203,7 +198,6 @@ impl Harness {
         .await
     }
 
-    /// The folders the caller sees holding the dashboard.
     async fn folders_of(&self, dashboard: &str) -> Value {
         let answer = self
             .send("GET", &format!("/v1/dashboards/{dashboard}"), None)

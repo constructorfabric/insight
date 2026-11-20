@@ -1,80 +1,38 @@
-//! Resource-scoped canonical error types for analytics handlers.
-//!
-//! Each unit struct binds a GTS resource namespace and exposes builder-style
-//! constructors (`not_found`, `invalid_argument`, …) from the
-//! `toolkit-canonical-errors` crate. The resulting `CanonicalError` serializes
-//! to an RFC 9457 `application/problem+json` envelope via the crate's
-//! `IntoResponse` impl.
-//!
-//! See the committed contract at `docs/components/backend/analytics/openapi.json`
-//! and DNA `REST/API.md §7` for the platform-wide contract.
-
 use toolkit_canonical_errors::resource_error;
 
 #[resource_error("gts.cf.insight.analytics_api.metric.v1~")]
 pub struct MetricError;
 
-/// Resource namespace for `/v1/reports*`.
 #[resource_error("gts.cf.insight.analytics_api.report.v1~")]
 pub struct ReportError;
 
-/// Resource namespace for `/v1/queries*` (saved-query CRUD + run, #1965).
 #[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
 pub struct SavedQueryError;
 
-/// Resource namespace for `/v1/usage*` (adoption events + the admin read model).
 #[resource_error("gts.cf.insight.analytics_api.usage.v1~")]
 pub struct UsageError;
 
-/// Resource namespace for `/v1/connector-health*` (the operator's view of what
-/// the data mover reports about every connector's syncs).
 #[resource_error("gts.cf.insight.analytics_api.connector_health.v1~")]
 pub struct ConnectorHealthError;
 
-/// Resource namespace for `/v1/feedback*` (in-product feedback + the admin
-/// read model).
 #[resource_error("gts.cf.insight.analytics_api.feedback.v1~")]
 pub struct FeedbackError;
 
-/// Resource namespace for `/v1/ai*` (written context, the tenant system
-/// prompt, per-person keys, and the explain call).
 #[resource_error("gts.cf.insight.analytics_api.ai_assist.v1~")]
 pub struct AiError;
 
-/// Resource namespace for `/v1/ingestion*` (the admin ingestion-intensity read
-/// over the bronze ops view). Infrastructure-wide, not tenant-scoped.
 #[resource_error("gts.cf.insight.analytics_api.ingestion.v1~")]
 pub struct IngestionError;
 
-/// Resource namespace for `/v1/metrics*` (custom-metric CRUD + export/import).
 #[resource_error("gts.cf.insight.analytics_api.custom_metric.v1~")]
 pub struct CustomMetricError;
 
-/// Resource namespace for tenant-resolution failures
-/// (`cpt-metric-cat-constraint-tenant-default`). The middleware surfaces an
-/// `invalid_argument` envelope with `field_violations[{field: "tenant_id",
-/// reason: "TENANT_UNRESOLVED"}]` when neither a session tenant nor a
-/// configured default is present.
-// Tenant namespace retained for re-enabling auth; no unresolved path under auth_disabled.
 #[allow(dead_code)]
 #[resource_error("gts.cf.insight.analytics_api.tenant.v1~")]
 pub struct TenantError;
 
 #[cfg(test)]
 mod tests {
-    //! Wire-shape contract for analytics error responses.
-    //!
-    //! These tests pin the §3.3 / RFC 9457 envelope: status code,
-    //! `Content-Type: application/problem+json`, `type` GTS URI, and
-    //! `context.resource_type` / `context.resource_name` /
-    //! `context.field_violations` per category. They prevent silent regressions
-    //! in the contract the FE and downstream services depend on.
-    //!
-    //! Tests assert against `Problem` JSON rather than spinning up an Axum
-    //! router so they stay free of the production `AppState` (which needs
-    //! MariaDB + `ClickHouse` + `IdentityClient`). The crate's own tests cover
-    //! the `IntoResponse` wiring end-to-end; here we verify the analytics gear's
-    //! namespaces and field shapes.
 
     use axum::body::to_bytes;
     use axum::http::header::CONTENT_TYPE;
@@ -134,8 +92,6 @@ mod tests {
 
     #[test]
     fn saved_query_invalid_sql_envelope() -> Result<(), Box<dyn std::error::Error>> {
-        // POST/PUT /v1/queries with SQL the single-SELECT gate rejects: a 400
-        // pinning the `sql` field under the saved-query resource namespace.
         let err = SavedQueryError::invalid_argument()
             .with_resource("q-123")
             .with_field_violation("sql", "query must be a single SELECT statement", "INVALID")
@@ -156,9 +112,6 @@ mod tests {
 
     #[test]
     fn internal_envelope_carries_no_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
-        // Internal errors MUST NOT leak the raw error string to the client.
-        // The diagnostic (`description`) is serde-skipped on the wire and only
-        // surfaces through `CanonicalError::diagnostic()` for server-side logs.
         let err = CanonicalError::internal("DB connection refused: 127.0.0.1:5432").create();
         let p = problem(err)?;
         assert_eq!(p["status"], 500);
@@ -166,14 +119,11 @@ mod tests {
             p["type"],
             "gts://gts.cf.core.errors.err.v1~cf.core.err.internal.v1~"
         );
-        // The default Internal detail message is used; the raw diagnostic
-        // never appears in `detail` or `context`.
         assert_eq!(
             p["detail"],
             "An internal error occurred. Please retry later."
         );
         assert_eq!(p["context"], serde_json::json!({}));
-        // No keys leak the diagnostic string.
         let body = serde_json::to_string(&p)?;
         assert!(
             !body.contains("DB connection refused"),
@@ -185,8 +135,6 @@ mod tests {
     #[tokio::test]
     async fn into_response_sets_problem_json_content_type() -> Result<(), Box<dyn std::error::Error>>
     {
-        // End-to-end: a CanonicalError flows through axum's IntoResponse and
-        // lands on the wire with the RFC 9457 content type and correct status.
         let err = MetricError::not_found("metric not found or disabled")
             .with_resource("abc-123")
             .create();

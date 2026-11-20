@@ -1,7 +1,3 @@
-//! Direct access to the rig's Redis, for assertions about what the
-//! authenticator stored that no HTTP response exposes (record TTLs, index
-//! membership). `run-e2e.sh` provides `E2E_REDIS_URL`; the default matches it.
-
 use redis::aio::MultiplexedConnection;
 
 pub async fn connect() -> MultiplexedConnection {

@@ -1,7 +1,3 @@
--- The identity schema as migrations 001-018 left it. Every statement is
--- idempotent, so a run interrupted partway converges when re-run.
--- See docs/domain/identity-resolution/specs/DESIGN.md for the tables.
-
 CREATE TABLE IF NOT EXISTS persons (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     value_type VARCHAR(50) NOT NULL,
@@ -89,8 +85,6 @@ CREATE TABLE IF NOT EXISTS roles (
     UNIQUE KEY uk_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- INVARIANT: the role ids are stable API; `admin` is mirrored by
--- roles_repo::ADMIN_ROLE_ID, and consumers gate on the names.
 INSERT INTO roles (role_id, name)
 VALUES
     (UNHEX('a4d11000000040008000000000000001'), 'admin'),

@@ -233,8 +233,6 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
         StatusCode::OK,
         "initialize should be accepted for a valid token"
     );
-    // No session id: legacy_session_mode is off, so the transport is stateless
-    // and every request stands alone.
     assert!(
         !initialize.headers().contains_key("mcp-session-id"),
         "a stateless transport hands out no session"
@@ -309,8 +307,6 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
     Ok(())
 }
 
-/// A client writes a condition from the tool's schema alone, so the schema
-/// declares every group as a property of its own and names every operator.
 fn assert_create_alert_describes_the_condition(tools: &[Value]) {
     let schema = tools
         .iter()
@@ -340,7 +336,6 @@ fn assert_create_alert_describes_the_condition(tools: &[Value]) {
     }
 }
 
-/// Whether any object in the schema lists `name` among its properties.
 fn declares_property(schema: &Value, name: &str) -> bool {
     match schema {
         Value::Object(object) => {

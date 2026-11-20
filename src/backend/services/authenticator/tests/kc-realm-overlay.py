@@ -32,23 +32,17 @@ import copy
 import json
 from pathlib import Path
 
-# One user per concern. The e2e_override suite runs its five tests in
-# parallel, and view-as sessions are indexed under both the impersonator and
-# the target — sharing either side lets one test's revoke-all kill another
-# test's session mid-flight. Impersonators authenticate against Keycloak;
-# override *targets* are resolved by the identity stub from the email alone
-# and only need a realm user when the test also logs in as them.
 TEST_USERS = [
-    "backchannel@example.com",  # e2e_backchannel: admin logout kills its sessions
-    "refresh-victim@example.com",  # e2e_refresher: disabled mid-test (invalid_grant)
-    "refresh-survivor@example.com",  # e2e_refresher: must outlive the victim
-    "viewer-mints@example.com",  # e2e_override: override_mints_the_session…
-    "target-mints@example.com",  # e2e_override: its baseline logs in AS the target
-    "viewer-relogin@example.com",  # e2e_override: override_relogin_swaps…
-    "viewer-switch@example.com",  # e2e_override: override_switch_without_logout…
-    "viewer-unknown@example.com",  # e2e_override: override_with_unknown_target…
-    "viewer-disabled@example.com",  # e2e_override: override_is_inert_when_disabled
-    "roles-stall@example.com",  # e2e_refresh: identity hangs mid-refresh
+    "backchannel@example.com",
+    "refresh-victim@example.com",
+    "refresh-survivor@example.com",
+    "viewer-mints@example.com",
+    "target-mints@example.com",
+    "viewer-relogin@example.com",
+    "viewer-switch@example.com",
+    "viewer-unknown@example.com",
+    "viewer-disabled@example.com",
+    "roles-stall@example.com",
 ]
 
 

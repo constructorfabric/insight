@@ -1,10 +1,3 @@
-//! Where a page ended, as bytes the reader holds and hands back.
-//!
-//! A cursor is bound to what it was issued over: the metric as stored, the
-//! window, the order and the columns. Any of those changing between two pages
-//! would make the position it holds mean something else, so the cursor says
-//! no rather than serving a page out of a result that no longer exists.
-
 use std::fmt::Write as _;
 
 use base64::Engine as _;
@@ -15,8 +8,6 @@ use toolkit_security::crypto::hash::Sha256;
 use super::{Column, Sort};
 use crate::domain::query::time_window::Window;
 
-/// Bumped when the ordering key changes shape: an older cursor addresses a
-/// page this key would not produce, and is refused rather than replayed.
 const VERSION: u8 = 1;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,25 +15,17 @@ pub(super) struct Envelope {
     version: u8,
     pub(super) fingerprint: String,
     pub(super) snapshot: String,
-    /// The window as the first page resolved it. A named range means a
-    /// different period an hour later, and a walk is over one period.
     pub(super) window: Window,
     pub(super) key: CursorKey,
 }
 
-/// The ordering key of the last row a page held, element for element as the
-/// query compares it.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct CursorKey {
-    /// The blank flag as the query computed it, which leads the key because
-    /// it leads the order.
     pub(super) flag: bool,
     pub(super) value: KeyValue,
-    /// Every other element of the key, as text, in key order.
     pub(super) ties: Vec<String>,
 }
 
-/// The sorted cell in the form the query orders it by.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub(super) enum KeyValue {
@@ -85,10 +68,6 @@ pub(super) fn decode(written: &str) -> Result<Envelope, CursorError> {
     Ok(envelope)
 }
 
-/// Everything a page is bound to, as one digest. Any edit to the metric
-/// changes what the rows are, so the body itself is in it; so is the
-/// resolved window, so an envelope whose window was edited no longer
-/// matches the digest it carries.
 pub(super) fn fingerprint(
     name: &str,
     body: &serde_json::Value,

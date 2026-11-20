@@ -1,6 +1,3 @@
-//! The condition's JSON shape, for the API document and the MCP tool
-//! schemas. A draft is read by [`super::Condition::parse`], which names the
-//! path of whatever is wrong; these types only describe what it accepts.
 #![expect(
     dead_code,
     reason = "schema descriptions only; drafts are parsed from JSON"

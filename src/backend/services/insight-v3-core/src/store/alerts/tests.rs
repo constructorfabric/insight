@@ -1,7 +1,3 @@
-//! Against a real `MariaDB`, because the claims here are about rows: one
-//! writer at a time, a check landing only on its revision, a notification
-//! owed once. Run with `INTEGRATION_TESTS_MARIADB_URL` set, after `migrate`.
-
 use std::error::Error;
 
 use chrono::Utc;
@@ -15,7 +11,6 @@ use crate::domain::alerts::{Outcome, UnknownReason};
 type R = Result<(), Box<dyn Error>>;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
-/// The rule bound where a case is not about it.
 const UNBOUNDED: u64 = u64::MAX;
 
 #[test]
@@ -72,7 +67,6 @@ fn a_provider_answer_is_cut_to_what_the_row_holds() {
     }
 }
 
-/// The in-memory store, on the rules it shares with the SQL one.
 mod memory {
     use std::error::Error;
 

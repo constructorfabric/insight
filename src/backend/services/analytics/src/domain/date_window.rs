@@ -1,5 +1,3 @@
-//! The `since`/`until` pair a read model over a time range accepts.
-
 use chrono::{Duration, NaiveDate, Utc};
 
 const MAX_WINDOW_DAYS: i64 = 400;
@@ -12,8 +10,6 @@ pub(crate) struct Window {
     pub(crate) until: NaiveDate,
 }
 
-/// Why a window was refused. The caller raises it in its own resource
-/// namespace; this module knows the rule, not the surface that broke it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowError {
     Malformed { field: &'static str },
@@ -22,7 +18,6 @@ pub(crate) enum WindowError {
 }
 
 impl WindowError {
-    /// The request field a reader has to change to be let in.
     pub(crate) fn field(self) -> &'static str {
         match self {
             Self::Malformed { field } => field,

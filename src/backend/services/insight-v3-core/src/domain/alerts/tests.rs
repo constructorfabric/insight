@@ -24,7 +24,6 @@ fn columns() -> Vec<(String, ColumnKind)> {
     vec![("total".to_owned(), ColumnKind::Number)]
 }
 
-/// What the metric answers, as a rule is checked against it.
 fn metric_columns() -> Columns {
     Columns {
         kinds: columns(),
@@ -48,7 +47,6 @@ fn now() -> DateTime<Utc> {
     DateTime::UNIX_EPOCH
 }
 
-/// A valid one-row check of `total`, and the value it read.
 fn seen(breached: bool, value: serde_json::Value) -> Outcome {
     Outcome::Valid {
         breached,
@@ -502,8 +500,6 @@ fn a_draft_names_only_the_fields_a_rule_has() {
     assert!(serde_json::from_value::<RuleDraft>(extra).is_err());
 }
 
-/// One send through a deliverer over the in-memory store, with a provider
-/// played in-process.
 mod deliveries {
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -527,7 +523,6 @@ mod deliveries {
         futures::executor::block_on(future)
     }
 
-    /// A rule whose first check breached: the notification it owes, pending.
     async fn owed(store: &MemoryAlerts) -> (AlertRule, Notification) {
         let spec = RuleSpec::parse(
             &super::draft(|body| body["condition"]["where"]["value"] = json!(10)),
@@ -640,8 +635,6 @@ mod deliveries {
         assert_eq!(row(&store, notification.id).attempts, 2);
     }
 
-    /// A provider that, while the message is in flight, has the rule turned
-    /// off — and confirms the message anyway.
     #[derive(Debug)]
     struct Withdrawing {
         store: Arc<MemoryAlerts>,

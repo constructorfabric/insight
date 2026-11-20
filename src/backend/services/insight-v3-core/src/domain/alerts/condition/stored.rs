@@ -1,6 +1,3 @@
-//! A condition as a row keeps it: the JSON a draft takes, beside the kind of
-//! every column it reads, so it is read back without the metric at hand.
-
 use serde_json::{Map, Value, json};
 
 use super::{Condition, Node, Test};
@@ -14,8 +11,6 @@ impl Condition {
         json!({ "condition": self.to_json(), "kinds": kinds }).to_string()
     }
 
-    /// A condition as [`Condition::to_stored`] wrote it, or nothing for
-    /// anything else.
     pub(crate) fn from_stored(text: &str) -> Option<Self> {
         let stored: Value = serde_json::from_str(text).ok()?;
         let kinds = stored

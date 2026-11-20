@@ -1,6 +1,3 @@
-//! A condition in the words a recipient reads: "open above 10 and (team is
-//! core or stale above 3)".
-
 use std::fmt;
 
 use chrono::{DateTime, Utc};
@@ -39,7 +36,6 @@ impl fmt::Display for Node {
     }
 }
 
-/// Children joined by a word; a group inside a group keeps its parentheses.
 fn joined(formatter: &mut fmt::Formatter<'_>, children: &[Node], word: &str) -> fmt::Result {
     for (index, child) in children.iter().enumerate() {
         if index > 0 {

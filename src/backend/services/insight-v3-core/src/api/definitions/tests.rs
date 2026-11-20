@@ -16,7 +16,6 @@ use crate::domain::folders::DefinitionStore;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
-/// The dataset every metric stored here reads.
 fn commits() -> serde_json::Value {
     json!({
         "title": "Commits",
@@ -28,8 +27,6 @@ fn commits() -> serde_json::Value {
     })
 }
 
-/// A dataset that marks a main date, so a metric over it is windowed without
-/// naming a clock of its own.
 fn deploys() -> serde_json::Value {
     json!({
         "title": "Deploys",
@@ -52,8 +49,6 @@ struct Chain {
 }
 
 struct TestHarness {
-    /// Held, not read: the stores this harness does not exercise are built
-    /// against its address, so it has to outlive them.
     _clickhouse: Mock,
     router: Router,
 }
@@ -63,7 +58,6 @@ impl TestHarness {
         Self::with_caller(true).await
     }
 
-    /// A harness whose definition store refuses every write.
     #[expect(
         clippy::unused_async,
         clippy::unused_async_trait_impl,
@@ -76,7 +70,6 @@ impl TestHarness {
         )
     }
 
-    /// A caller who does or does not hold the admin role.
     #[expect(
         clippy::unused_async,
         clippy::unused_async_trait_impl,
@@ -153,7 +146,6 @@ impl TestHarness {
         TestResponse::from_response(response).await
     }
 
-    /// Creates a definition and answers the id it was given.
     async fn created(&self, segment: &str, name: &str, body: serde_json::Value) -> String {
         let made = self
             .post_json(
@@ -184,8 +176,6 @@ impl TestHarness {
         .await
     }
 
-    /// A metric, a widget drawing it, and a dashboard holding that widget,
-    /// by the ids they were given.
     async fn seed_chain(&self) -> Chain {
         let metric = self
             .created(
@@ -301,8 +291,6 @@ impl TestResponse {
     }
 }
 
-/// The smallest body that reads back as a metric, for tests about storage
-/// rather than about what a metric says.
 fn metric_body() -> serde_json::Value {
     json!({
         "dataset": "commits",
@@ -317,14 +305,12 @@ fn day_metric() -> serde_json::Value {
     })
 }
 
-/// The items a listing answers, in its order.
 fn items(listed: &serde_json::Value) -> &[serde_json::Value] {
     listed["items"]
         .as_array()
         .unwrap_or_else(|| panic!("a listing answers items: {listed}"))
 }
 
-/// The names a listing answers, in its order.
 fn names(listed: &serde_json::Value) -> Vec<String> {
     items(listed)
         .iter()
@@ -332,7 +318,6 @@ fn names(listed: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-/// A stamp written as UTC to the millisecond: `YYYY-MM-DDTHH:mm:ss.sssZ`.
 fn assert_millisecond_utc(stamp: &serde_json::Value, case: &str) {
     let written = stamp.as_str().unwrap_or_default();
     let shape = chrono::NaiveDateTime::parse_from_str(written, "%Y-%m-%dT%H:%M:%S%.3fZ");
@@ -343,7 +328,6 @@ fn assert_millisecond_utc(stamp: &serde_json::Value, case: &str) {
     );
 }
 
-/// A reader is shown what a removal would break before they ask for one.
 #[tokio::test]
 async fn a_definition_names_what_holds_it() {
     let harness = TestHarness::new().await;
@@ -472,8 +456,6 @@ async fn a_name_that_is_blank_or_too_long_is_refused() {
     }
 }
 
-/// An id that cannot be one names nothing, so every route answers it as it
-/// answers an id nobody holds.
 #[tokio::test]
 async fn a_malformed_id_in_a_path_is_not_found() {
     let harness = TestHarness::new().await;
@@ -498,8 +480,6 @@ async fn a_malformed_id_in_a_path_is_not_found() {
     }
 }
 
-/// A card is windowed or not by what the read says, never by whether the
-/// stored body happens to name a clock.
 #[tokio::test]
 async fn a_metric_inheriting_its_dataset_s_clock_reads_back_saying_so() {
     let harness = TestHarness::new().await;
@@ -545,8 +525,6 @@ async fn a_metric_naming_its_own_clock_reads_back_saying_it_named_it() {
     );
 }
 
-/// A dataset marking no main date leaves a metric that names none unwindowed,
-/// and the read says nothing rather than inventing a field.
 #[tokio::test]
 async fn a_metric_with_no_clock_anywhere_reads_back_without_one() {
     let harness = TestHarness::new().await;
@@ -571,7 +549,6 @@ async fn get_missing_definition_is_not_found() {
 async fn list_answers_each_definition_by_id_and_name_in_name_order() {
     let harness = TestHarness::new().await;
 
-    // Stored out of order, listed in it.
     let lines = harness
         .created("metrics", "Lines per day", metric_body())
         .await;
@@ -689,7 +666,6 @@ async fn a_metric_item_carries_no_metric_name() {
 async fn a_widget_definition_round_trips() {
     let harness = TestHarness::new().await;
 
-    // The widget draws this metric's columns, so it has to be there first.
     let metric = harness
         .created("metrics", "Commits per day", day_metric())
         .await;
@@ -777,16 +753,12 @@ async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
 
     let refused = harness.delete_json(&format!("/v1/metrics/{metric}")).await;
 
-    // A widget whose metric is gone renders an error where a chart should be.
-    // Something still holding it is a conflict, the same answer a dataset
-    // something still reads gives, and the reply names the widget.
     assert_eq!(refused.status(), StatusCode::CONFLICT);
     let body = refused.json().await;
     assert!(
         body.to_string().contains("Lines table"),
         "the refusal must name what still uses it: {body}"
     );
-    // And it really is still there.
     assert_eq!(
         harness
             .get_json(&format!("/v1/metrics/{metric}"))
@@ -811,8 +783,6 @@ async fn a_widget_a_dashboard_holds_is_kept_and_the_dashboard_named() {
 
 #[tokio::test]
 async fn a_dashboard_is_removed_even_though_widgets_point_into_it() {
-    // Nothing holds a dashboard, so it is always free to remove - and its
-    // widgets and metrics stay for the next one.
     let harness = TestHarness::new().await;
     let ids = harness.seed_chain().await;
 
@@ -843,8 +813,6 @@ async fn a_search_matches_a_name() {
 
 #[tokio::test]
 async fn a_search_matches_what_the_body_says() {
-    // "Which metrics read this field" is the question a catalogue is asked,
-    // and a name cannot answer it.
     let harness = TestHarness::new().await;
     harness.seed_chain().await;
     harness

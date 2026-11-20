@@ -1,18 +1,9 @@
-//! Whether a dataset can answer the metric written over it.
-//!
-//! A metric names two kinds of thing. A **field reference** names a field the
-//! dataset declares, and appears as the source of each selected field, of each
-//! condition and of the clock. An **output name** names a column the metric
-//! produces, and appears in its grouping and its ordering. Only the first kind
-//! is the dataset's to answer for.
-
 use serde::Serialize;
 
 use crate::domain::kinds::dataset::declaration::{BUCKET_COLUMN, Declaration, FieldType};
 use crate::domain::query::metric_query::{Aggregate, MetricQuery, Reference, Used};
 use crate::domain::violation::{Reason, Violation};
 
-/// Every reason this dataset cannot answer this metric, reported together.
 pub(crate) fn check(metric: &MetricQuery, declaration: &Declaration) -> Vec<Violation> {
     let mut violations = Vec::new();
 
@@ -37,10 +28,6 @@ pub(crate) fn check(metric: &MetricQuery, declaration: &Declaration) -> Vec<Viol
     violations
 }
 
-/// The field a window selects by, and where it was decided.
-///
-/// A metric that names none inherits the dataset's own; a dataset that marks
-/// none leaves the metric answering every record, whatever window is picked.
 pub(crate) fn effective_clock<'a>(
     metric: &'a MetricQuery,
     declaration: &'a Declaration,
@@ -54,7 +41,6 @@ pub(crate) fn effective_clock<'a>(
         .map(|field| (field.name.as_str(), ClockSource::Dataset))
 }
 
-/// Who decided which field a window selects by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ClockSource {
@@ -62,14 +48,9 @@ pub(crate) enum ClockSource {
     Dataset,
 }
 
-/// The clock a window over this metric selects by, as a reader is told it.
-///
-/// A metric over a dataset may name no clock and still be windowed, so its
-/// body does not say whether a card follows the board's window. This does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct EffectiveClock {
     pub(crate) field: String,
-    /// Whether the metric named this field or inherited it.
     pub(crate) from: ClockSource,
 }
 
@@ -81,7 +62,6 @@ impl EffectiveClock {
         })
     }
 
-    /// A metric over a table windows only by the clock it names itself.
     pub(crate) fn of_table(metric: &MetricQuery) -> Option<Self> {
         metric.table_clock().map(|field| Self {
             field: field.to_owned(),
@@ -108,8 +88,6 @@ fn check_reference(
         return;
     };
 
-    // Grouping, filtering, counting, the smallest and the largest are open to
-    // every type, so a numeric identifier groups as readily as a name.
     match &reference.used {
         Used::Selected(Some(Aggregate::Arithmetic)) if !declared.r#type.is_numeric() => {
             into.push(Violation::new(
@@ -148,7 +126,6 @@ fn check_reference(
     }
 }
 
-/// Whether a value a metric compares against can be read as the declared type.
 fn holds(declared: FieldType, value: &serde_json::Value) -> bool {
     match declared {
         FieldType::String | FieldType::Datetime => value.is_string(),

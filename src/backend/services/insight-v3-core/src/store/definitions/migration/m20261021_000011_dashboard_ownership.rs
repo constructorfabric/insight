@@ -1,16 +1,3 @@
-//! Dashboards, folders and tags gain an owner; dashboards and folders gain
-//! grants, and folders hold dashboards through entries, any number each.
-//!
-//! Every row already stored stays ownerless, and a dashboard's legacy folder
-//! becomes a carrying entry of it. Folder names stop being unique, and a tag
-//! name is unique within its owner's scope rather than everywhere.
-//!
-//! INVARIANT: every step is safe to run again. Columns, indexes and tables
-//! are added with `IF NOT EXISTS`, keys dropped with `IF EXISTS`, entries
-//! copied with `INSERT IGNORE`, and the scoped tag key is in place before the
-//! global one goes, so a run stopped at any step and run again ends where one
-//! whole run does.
-
 use sea_orm::DbErr;
 use sea_orm_migration::prelude::*;
 

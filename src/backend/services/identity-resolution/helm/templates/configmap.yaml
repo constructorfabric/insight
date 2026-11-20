@@ -5,26 +5,12 @@ metadata:
   labels:
     {{- include "insight-identity-resolution.labels" . | nindent 4 }}
 data:
-  # gears-rust host config. Structural only — the deployment-specific leaf
-  # values (database_url / clickhouse_*) are injected as APP__* env vars from
-  # the `insight-identity-resolution-config` Secret (see deployment.yaml
-  # `envFrom`), which override this YAML at load time.
-  #
-  # Auth ENABLED: the upstream `cf-gears-oidc-authn-plugin` verifies the ES256
-  # gateway JWT (signature / iss / aud / exp) against the authenticator's JWKS —
-  # resolved via OIDC discovery on the issuer — and maps its claims straight into
-  # the SecurityContext (NGINX_BFF R1). The issuer / discovery / audience are
-  # rendered below from `.Values.gateway.*`; there is no `authverify` wrapper and
-  # no `X-Tenant-ID` selector. No auth_disabled path.
   insight.yaml: |
     server:
       home_dir: "/app/data"
 
     logging:
       default:
-        # The install-wide knobs: global.observability.logs.{level,format} —
-        # the same values the platform CM publishes as INSIGHT_LOG_LEVEL /
-        # INSIGHT_LOG_FORMAT.
         console_level: {{ ((((.Values.global).observability).logs).level) | default "info" }}
         console_format: {{ ((((.Values.global).observability).logs).format) | default "json" }}
 
@@ -32,8 +18,6 @@ data:
       resource:
         service_name: "insight-identity-resolution"
         attributes:
-          # The release the pod runs; the log_ctx span and the OTel resource
-          # both read it (semconv service.version).
           service.version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
       exporter:
         kind: {{ .Values.opentelemetry.exporter.kind }}
@@ -54,8 +38,6 @@ data:
           metrics:
             prefix: "host"
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
-          # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT
-          # and maps its claims into the SecurityContext (R1).
           auth_disabled: false
           cors_enabled: false
           enable_docs: false
@@ -75,10 +57,6 @@ data:
         config:
           vendor: "hyperspot"
 
-      # Downstream gateway-JWT verification (NGINX_BFF R1). Verifies the ES256
-      # gateway JWT against the authenticator's JWKS (resolved via OIDC discovery
-      # on the issuer) and maps its claims into the SecurityContext. Rendered
-      # from `.Values.gateway.*`; the plugin resolves the JWKS over https only.
       oidc-authn-plugin:
         config:
           vendor: "hyperspot"
@@ -89,15 +67,11 @@ data:
             require_audience: true
             expected_audience:
               - {{ .Values.gateway.audience | default "internal-services" | quote }}
-            # `issuer` = the token `iss` (authenticator gateway_issuer);
-            # `discovery_url` defaults to `{issuer}` when unset.
             trusted_issuers:
               - issuer: {{ tpl (.Values.gateway.issuer | default "") . | quote }}
                 {{- with .Values.gateway.discoveryUrl }}
                 discovery_url: {{ tpl . $ | quote }}
                 {{- end }}
-            # tenant_id is REQUIRED (mapped to subject_tenant_id) — a token
-            # without it is rejected ("no tenant, no auth").
             claim_mapping:
               subject_id: "sub"
               subject_tenant_id: "tenant_id"
@@ -107,7 +81,6 @@ data:
           http_client:
             request_timeout: 5s
             {{- with .Values.gateway.caCertPaths }}
-            # Extra trust roots for the discovery/JWKS TLS (e.g. an internal CA).
             custom_ca_certificate_paths:
               {{- toYaml . | nindent 14 }}
             {{- end }}
@@ -133,15 +106,11 @@ data:
         config:
           vendor: "hyperspot"
 
-      # Derives the tenant from the SecurityContext at request time; the
-      # oidc-authn-plugin sets it from the gateway JWT's single `tenant_id`.
       single-tenant-tr-plugin:
         config:
           vendor: "hyperspot"
           priority: 20
 
-      # Leaf values (database_url, clickhouse_*) come from the Secret via
-      # envFrom; the org-chart knobs are rendered here from values.
       identity-resolution:
         config:
           database_url: ""

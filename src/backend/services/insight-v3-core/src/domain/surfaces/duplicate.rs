@@ -3,9 +3,6 @@ use crate::domain::access::Owner;
 use crate::domain::definition::{Change, DefinitionId, DefinitionKind, DefinitionLabel};
 
 impl Surfaces<'_> {
-    /// Copies a dashboard the caller may change under a fresh id, as theirs:
-    /// in each owned folder holding the original that they may arrange, and
-    /// carrying its tags' names as their own tags.
     pub(crate) async fn duplicate(
         &self,
         from: &DefinitionId,

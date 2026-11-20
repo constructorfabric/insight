@@ -1,7 +1,3 @@
-"""The subchart's own contract: the experiment namespace has ONE source, the
-RBAC stays confined to the experiment trio, and the deploy shape (single
-replica, dedicated ServiceAccount) cannot silently widen."""
-
 from __future__ import annotations
 
 import subprocess
@@ -45,9 +41,6 @@ def _gear_config(docs: list[dict]) -> dict:
 
 
 def test_the_experiments_namespace_has_one_source() -> None:
-    """`experiments.namespace` must reach the gear config, the Namespace
-    object and the Role/RoleBinding together — set independently they drift
-    and every create 403s."""
     docs = _docs("--set", "experiments.namespace=custom-previews-ns")
 
     assert _gear_config(docs)["namespace"] == "custom-previews-ns"
@@ -57,8 +50,6 @@ def test_the_experiments_namespace_has_one_source() -> None:
 
 
 def test_rbac_grants_exactly_the_experiment_trio() -> None:
-    """create/list/delete on deployments, services and httproutes — nothing
-    else, and only via a namespaced Role (no ClusterRole may appear)."""
     docs = _docs()
 
     assert not _kind(docs, "ClusterRole")
@@ -92,8 +83,6 @@ def test_an_unmanaged_namespace_still_gets_the_rbac() -> None:
 
 @pytest.mark.parametrize("replicas", [0, 2])
 def test_anything_but_one_replica_is_refused(replicas: int) -> None:
-    """The TTL sweep has no leader election and zero pods serves nothing —
-    the chart, not a reviewer, holds the exactly-one-replica line."""
     code, _, err = _render("--set", f"replicaCount={replicas}")
 
     assert code != 0, f"should refuse replicaCount={replicas}"

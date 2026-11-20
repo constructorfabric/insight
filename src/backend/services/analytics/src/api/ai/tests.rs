@@ -1,5 +1,3 @@
-//! Wire-shape and gating rules that hold without a database.
-
 use toolkit_canonical_errors::Problem;
 
 use super::*;

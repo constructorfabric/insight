@@ -1,10 +1,3 @@
-//! Operator identity corrections — write surface.
-//!
-//! Four verbs over the account-to-person binding: bind (single or bulk), merge,
-//! detach, exclude. Each appends binding observations to `persons` under the
-//! calling operator and journals the call in `operations`; nothing is updated or
-//! deleted. Admin-gated like the rest of the operator surface.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -36,17 +29,10 @@ use crate::infra::identity_evidence::{
 const DEFAULT_ACCOUNT_SEARCH_LIMIT: u64 = 20;
 const MAX_ACCOUNT_SEARCH_LIMIT: u64 = 100;
 
-/// A trail is read, not paged: enough calls to cover any account's history
-/// without letting one response grow without bound.
 const MAX_ACCOUNT_OPERATIONS: u64 = 50;
 
-/// How many accounts one bulk call may carry — a prepared matching table is
-/// pasted by a human, not streamed.
 pub(super) const MAX_BULK_ITEMS: usize = 1_000;
 
-/// The ceiling `reason` carries on the grant routes, applied to the other
-/// free-text field an operator writes. Not a column limit: `request_json` is
-/// JSON, and the journal takes whatever it is given.
 const MAX_COMMENT_LEN: usize = 500;
 
 /// A source-native account, as named by the caller.
@@ -141,9 +127,6 @@ pub struct CorrectionResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for CorrectionResponse {}
 
-/// `POST /v1/resolution/bind` — attach accounts to persons (also the confirm
-/// act: binding an account to the person automation already gave it records the
-/// operator's decision and clears it from review).
 pub async fn bind(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -161,8 +144,6 @@ pub async fn bind(
     for item in &req.bindings {
         let account = SourceAccountKey::from(&item.account);
 
-        // One call naming an account twice has no answer: which person wins is
-        // the caller's contradiction to resolve, not ours to guess.
         if !seen.insert(account.clone()) {
             return Err(invalid(
                 "bindings",
@@ -188,7 +169,6 @@ pub async fn bind(
         targets,
         Decision {
             verb: Verb::Bind,
-            // Heterogeneous bulk detail is in the per-account list either way.
             target_person_id: req.bindings[0].person_id,
             comment: &req.comment,
         },
@@ -198,8 +178,6 @@ pub async fn bind(
     Ok(Json(response))
 }
 
-/// `POST /v1/resolution/merge` — declare two persons one human; every account of
-/// the absorbed person is rebound to the survivor.
 pub async fn merge(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -247,8 +225,6 @@ pub async fn merge(
     Ok(Json(outcome))
 }
 
-/// `POST /v1/resolution/detach` — declare that an account belongs to a different
-/// human; the account moves to a freshly minted person.
 pub async fn detach(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -280,9 +256,6 @@ pub async fn detach(
     )
     .await?;
 
-    // Only name the person when the account actually reached it: a refused
-    // write leaves the account where it was, and an id no binding points at
-    // would read as a person that exists.
     if outcome.applied > 0 {
         outcome.new_person_id = Some(new_person_id);
     }
@@ -290,8 +263,6 @@ pub async fn detach(
     Ok(Json(outcome))
 }
 
-/// `POST /v1/resolution/exclude` — mark an account as not a human (bot, CI,
-/// service account). It binds to the reserved excluded person.
 pub async fn exclude(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -325,22 +296,12 @@ pub async fn exclude(
     Ok(Json(outcome))
 }
 
-/// What the operator asked for, as the operations journal will record it.
-/// Grouped so the two person ids in play — the author and the verb's target —
-/// cannot be swapped at a call site without the compiler noticing.
 struct Decision<'a> {
     verb: Verb,
-    /// The verb-level person the journal names: the survivor for a merge, the
-    /// minted person for a detach, the sentinel for an exclude. Named by the
-    /// caller, never derived from the targets — a merge of a person with no
-    /// accounts has an empty target list but still a real survivor.
     target_person_id: Uuid,
     comment: &'a str,
 }
 
-/// Read the targets' current bindings, build the rows the correction appends,
-/// write them once, and journal the call — one write per operation, however
-/// many accounts it names.
 async fn apply_correction(
     state: &AppState,
     tenant: Uuid,
@@ -365,9 +326,6 @@ async fn apply_correction(
         .collect();
     let rows = resolution::build_rows(pairs, operator, verb, chrono::Utc::now().naive_utc());
 
-    // Row i belongs to the target at `written[i]`: outcomes are reported by
-    // position, never by account, so one call naming an account twice cannot
-    // have its results collapse into one.
     let written: Vec<usize> = targets
         .iter()
         .enumerate()
@@ -412,8 +370,6 @@ async fn apply_correction(
 
     let applied = count_items(&items, OUTCOME_APPLIED);
     if applied > 0 {
-        // Spawned: the correction is already durable in `persons`, so the
-        // response must not wait on ClickHouse.
         let config = state.config.clone();
         tokio::spawn(async move { publish_correction(&config).await });
     }
@@ -426,10 +382,6 @@ async fn apply_correction(
     })
 }
 
-/// Publish the corrected log into the snapshot the metrics resolver reads.
-/// Never fails the verb: the runner waits for a busy lock, the lock holder's
-/// quiescence re-check covers rows it raced with, and the next publish is
-/// the catch-up path for everything else.
 async fn publish_correction(config: &crate::config::GearConfig) {
     use crate::sync_runner::{self, SyncRunError};
     match sync_runner::run(config, false).await {
@@ -452,18 +404,6 @@ fn count_items(items: &[ItemResult], wanted: &str) -> usize {
     items.iter().filter(|i| i.outcome == wanted).count()
 }
 
-/// Append the rows, then recover only those the database refused.
-///
-/// The natural key has no account discriminator, so a concurrent operation can
-/// have claimed the same microsecond and `INSERT IGNORE` silently drops the
-/// loser. A short write is diagnosed by asking which of these exact rows the
-/// journal now holds — author and instant included, because a confirmation
-/// writes an operator row over an automatic binding to the same person and
-/// "the account points at this person" cannot tell those two apart. Only the
-/// rows that are missing are re-stamped and retried; the ones that landed must
-/// not be sent again or the history gains duplicates.
-///
-/// Returns, per input row, whether its observation is in the journal.
 async fn write_rows(
     state: &AppState,
     tenant: Uuid,
@@ -521,8 +461,6 @@ async fn present_rows(
         .map_err(|e| internal(&e, "failed to verify the correction"))
 }
 
-/// Record the call in the operations journal. Journalling must never fail the
-/// correction — the binding is already committed and is the source of truth.
 async fn journal(
     state: &AppState,
     tenant: Uuid,
@@ -570,18 +508,12 @@ async fn journal(
     }
 }
 
-/// `operations.operation_type` for operator corrections.
 pub const RESOLUTION_OP: &str = "identity-correction";
 
-/// Per-item outcome vocabulary.
 const OUTCOME_APPLIED: &str = "applied";
 const OUTCOME_ALREADY_DECIDED: &str = "already_decided";
 const OUTCOME_REFUSED: &str = "refused";
 
-/// Detaching or excluding presupposes an account that exists: it must already
-/// have a binding, or a connector must have observed it. (Binding an account
-/// ahead of its first sync is deliberate — pre-registration — but minting a
-/// person for an account nobody has seen is a typo, not a decision.)
 async fn require_known_account(
     state: &AppState,
     tenant: Uuid,
@@ -628,11 +560,6 @@ async fn require_known_person(
         .create())
 }
 
-/// The excluded person is a sentinel, not a person: its first exclusion writes
-/// it into the journal, after which `person_exists` would vouch for it. As a
-/// bind target it becomes an exclude that skips `require_known_account`; as a
-/// merge side it moves every excluded account of the tenant in one call. Only
-/// the exclude verb may name it.
 fn reject_excluded_person(person_id: Uuid, field: &str) -> Result<(), CanonicalError> {
     if person_id == EXCLUDED_PERSON {
         return Err(invalid(
@@ -643,8 +570,6 @@ fn reject_excluded_person(person_id: Uuid, field: &str) -> Result<(), CanonicalE
     Ok(())
 }
 
-/// The needle is bound in length only, not in term count: unlike the person
-/// listings this one never splits `q`, so there is no fan-out to cap.
 fn reject_long_query(needle: &str) -> Result<(), CanonicalError> {
     if needle.chars().count() > listing::MAX_QUERY_CHARS {
         return Err(invalid(
@@ -696,10 +621,6 @@ fn internal(error: &anyhow::Error, message: &str) -> CanonicalError {
     CanonicalError::internal(message).create()
 }
 
-/// The queue cannot be derived: the binding read stopped at its ceiling, so
-/// whether a given account is bound is unknown rather than false. Refusing is
-/// the safe answer — the alternative is a queue of accounts that look unbound
-/// and are not.
 fn bindings_beyond_ceiling() -> CanonicalError {
     tracing::error!(
         cap = resolution_repo::MAX_TENANT_BINDINGS,
@@ -710,12 +631,10 @@ fn bindings_beyond_ceiling() -> CanonicalError {
         .create()
 }
 
-/// Query knobs for the review queue.
 #[derive(Debug, Deserialize)]
 pub struct AttentionParams {
     pub source: Option<String>,
     pub kind: Option<String>,
-    /// Cap on returned items (rates always cover every observed account).
     pub limit: Option<i64>,
 }
 
@@ -781,14 +700,6 @@ impl From<PersonCard> for PersonSummaryResponse {
     }
 }
 
-/// Mark the cards the journal holds nothing but a login-mint for.
-///
-/// A separate read rather than a card attribute: the mark is a fact about the
-/// person's bindings, and the card is assembled from observed values.
-///
-/// # Errors
-///
-/// Returns an error if the read fails.
 pub async fn mark_provisional(
     state: &AppState,
     tenant: Uuid,
@@ -837,8 +748,6 @@ pub struct AttentionResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for AttentionResponse {}
 
-/// `GET /v1/resolution/attention` — what needs an operator decision, derived
-/// from the evidence fold joined with current bindings, plus the match rate.
 pub async fn attention(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -857,10 +766,6 @@ pub async fn attention(
     let (page, items_truncated) = queue_page(review.items, &sources, &kinds, limit);
 
     let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
-    // Over the candidate ids, NOT the hydrated cards' keys: a login-minted
-    // person has no card attributes at all (their journal holds only the
-    // binding row), so the card set misses exactly the persons this flag
-    // exists to mark.
     let candidate_ids: Vec<Uuid> = page
         .iter()
         .flat_map(|i| i.candidates.iter().copied())
@@ -1007,7 +912,6 @@ pub struct AccountSearchParams {
     pub cursor: Option<String>,
 }
 
-/// Where the next page of accounts resumes. Opaque on the wire.
 #[derive(Debug, Serialize, Deserialize)]
 struct AccountPageKey {
     order_label: String,
@@ -1020,13 +924,6 @@ impl super::listing::PagePosition for AccountPageKey {
     const KIND: &'static str = "observed-accounts";
 }
 
-/// `GET /v1/resolution/accounts` — list the observed accounts and say whose
-/// each one is; `?q=` narrows the same list.
-///
-/// The person listing answers "which person is this"; this answers the question
-/// an operator arrives with when they hold an account instead: a git handle
-/// from a review, an address from a ticket. Browsing it is bounded by the page,
-/// so an operator can also just look at what the connectors reported.
 pub async fn search_accounts(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -1116,9 +1013,6 @@ pub async fn search_accounts(
                 email: account.email,
                 username: account.username,
                 display_name: account.description.display_name,
-                // A holder with no card attributes (a login-minted stub) is
-                // still a holder: back-fill an id-only card rather than
-                // presenting a bound account as unbound.
                 person: binding
                     .filter(|b| b.person_id != EXCLUDED_PERSON)
                     .map(|b| person_summary(b.person_id, &cards, &provisional)),
@@ -1215,7 +1109,6 @@ fn account_resume_from(
         .map_err(|rejected| invalid("cursor", rejected.message()))
 }
 
-/// The cursor that resumes after the last row served.
 fn next_account_cursor(
     last: Option<&ListedAccount>,
     tenant: Uuid,
@@ -1240,9 +1133,6 @@ fn next_account_cursor(
     })
 }
 
-/// `GET /v1/resolution/accounts/{source}/{source_id}/{account_id}` — why this
-/// account belongs to this person: the binding in force and every decision
-/// behind it.
 pub async fn account_binding(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -1276,8 +1166,6 @@ pub async fn account_binding(
     .await
     .map_err(|e| internal(&e, "failed to read the account's operations"))?;
 
-    // One hydration for every person the trail names — the people it points at
-    // and the operators who decided — so no consumer is left resolving ids.
     let named: Vec<Uuid> = history
         .iter()
         .flat_map(|h| [h.person_id, h.author_person_id])
@@ -1319,7 +1207,6 @@ pub async fn account_binding(
     }))
 }
 
-/// Read one correction call as the trail shows it, from the payload it stored.
 fn account_operation(
     op: &ops_repo::Operation,
     account: &SourceAccountKey,
@@ -1386,8 +1273,6 @@ pub struct PersonAccountsResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonAccountsResponse {}
 
-/// `GET /v1/resolution/persons/{person_id}/accounts` — the matching table for
-/// one person: every account bound to them, with the values behind each link.
 pub async fn person_accounts(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -1438,15 +1323,8 @@ const KIND_SPEC: ListSpec = ListSpec {
     max_chars: 40,
 };
 
-/// Join folded evidence with current bindings into the review, keeping the
-/// read's own honesty flag: `truncated` means the rates cover a prefix of the
-/// tenant, not all of it.
 async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), CanonicalError> {
     let evidence = read_evidence(state).await?;
-    // The whole tenant rather than the observed accounts by name: this asks
-    // about all of them, and a statement's cost grows faster than the number it
-    // names. Bindings for accounts no connector reports any more come back too;
-    // the review only ever looks up the keys it was given.
     let bindings = resolution_repo::current_bindings_in_tenant(
         &state.db,
         tenant,
@@ -1454,11 +1332,6 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
     )
     .await
     .map_err(|e| internal(&e, "failed to read current bindings"))?;
-    // A prefix of the bindings is not a partial answer, it is a wrong one: an
-    // account whose binding sits past the ceiling reads as unbound, and the queue
-    // would offer an operator a correction that overwrites a binding nobody saw.
-    // The evidence half can be a prefix honestly — it decides which accounts are
-    // examined, not what is true of them.
     if bindings.truncated {
         return Err(bindings_beyond_ceiling());
     }
@@ -1477,9 +1350,6 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
         })
         .collect();
 
-    // The seed's own map, not one derived from the evidence: an address stays
-    // claimed after the account that carried it closes, and the seed still
-    // attaches new accounts to that person. See `review_queue::build`.
     let claimed_addresses = seed_repo::latest_email_to_person(&state.db, tenant)
         .await
         .map_err(|e| internal(&e, "failed to read claimed addresses"))?;
@@ -1490,8 +1360,6 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
     ))
 }
 
-/// One hydration read for a queue page: every distinct candidate id, fetched
-/// and collapsed into cards.
 async fn candidate_cards(
     state: &AppState,
     tenant: Uuid,

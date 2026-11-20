@@ -1,6 +1,3 @@
-//! The alert store the handler tests use: the same rules as `MariaDB`
-//! enforces, kept in a map.
-
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -38,7 +35,6 @@ impl MemoryAlerts {
         Self::default()
     }
 
-    /// A store that keeps this many settled notifications per rule.
     pub(crate) fn keeping(notifications_kept_per_rule: u64) -> Self {
         Self {
             rules: Mutex::default(),
@@ -48,7 +44,6 @@ impl MemoryAlerts {
         }
     }
 
-    /// A store that refuses everything, for the cases about one that is down.
     pub(crate) fn refusing() -> Self {
         Self {
             failing: true,
@@ -87,8 +82,6 @@ impl MemoryAlerts {
         }
     }
 
-    /// Drops the rule's settled notifications past the newest kept count, as
-    /// the SQL store's trim does; one still owed stays.
     fn trim(&self, rule_id: Uuid) {
         let mut held = self.held();
         let mut newest_first: Vec<(chrono::DateTime<Utc>, Uuid)> = held
@@ -111,8 +104,6 @@ impl MemoryAlerts {
     }
 }
 
-/// The spec as `MariaDB` would read it back, so a condition the SQL store
-/// could not read fails here too instead of passing through untouched.
 fn as_a_row_holds_it(spec: RuleSpec) -> Result<RuleSpec, AlertStoreError> {
     let stored = spec.condition.to_stored();
     let condition =

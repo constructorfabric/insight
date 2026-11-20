@@ -24,7 +24,6 @@ fn caller(role: Role) -> Caller {
     }
 }
 
-/// The folder rule written out case by case, to check the function against.
 fn expected_folder(role: Role, owner: Owner, granted: Option<Level>) -> Option<FolderAccess> {
     match (owner, role) {
         (Owner::Unowned, Role::Administrator) => Some(FolderAccess::Ownerless),
@@ -83,8 +82,6 @@ fn folder_by(owner: u128, granted: Option<Level>) -> FolderStanding {
     }
 }
 
-/// A caller's role, a dashboard's owner, grants and carrying folders, and the
-/// access they come to.
 type Case = (
     Role,
     Owner,

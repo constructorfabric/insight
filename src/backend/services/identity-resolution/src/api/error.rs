@@ -1,9 +1,3 @@
-//! Canonical error types for the identity-resolution HTTP surface.
-//!
-//! Binds a GTS resource namespace; the builders (`not_found`, `invalid_argument`,
-//! `aborted`, …) come from `toolkit-canonical-errors` and serialize to an
-//! RFC 9457 `application/problem+json` envelope.
-
 use toolkit_canonical_errors::resource_error;
 
 #[resource_error("gts.cf.insight.identity_resolution.profile.v1~")]
@@ -15,8 +9,6 @@ pub struct PersonsSeedError;
 #[resource_error("gts.cf.insight.identity_resolution.persons_sync.v1~")]
 pub struct PersonsSyncError;
 
-/// Shared admin-gate errors (401 no caller / 403 not admin), used by every
-/// admin-gated endpoint via [`crate::api::gate`].
 #[resource_error("gts.cf.insight.identity_resolution.access.v1~")]
 pub struct AccessError;
 
@@ -32,10 +24,8 @@ pub struct VisibilityError;
 #[resource_error("gts.cf.insight.identity_resolution.subchart.v1~")]
 pub struct SubchartError;
 
-/// Operator identity corrections (bind / merge / detach / exclude).
 #[resource_error("gts.cf.insight.identity_resolution.correction.v1~")]
 pub struct CorrectionError;
 
-/// Person search (`GET /v1/persons`) — the operator picker.
 #[resource_error("gts.cf.insight.identity_resolution.person_search.v1~")]
 pub struct PersonSearchError;

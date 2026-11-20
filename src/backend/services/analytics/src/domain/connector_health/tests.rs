@@ -1,5 +1,3 @@
-//! What the page shows, and the order it shows it in.
-
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -51,8 +49,6 @@ fn summary(name: &str, configured: bool, last: Option<LastSync>) -> ConnectorSum
     }
 }
 
-// ── the mover's vocabulary ─────────────────────────────────────────────────
-
 #[test]
 fn every_documented_status_survives_the_round_trip() {
     for word in [
@@ -82,8 +78,6 @@ fn a_word_outside_the_vocabulary_reads_as_unknown() {
         );
     }
 }
-
-// ── what needs acting on ───────────────────────────────────────────────────
 
 #[test]
 fn a_sync_that_did_not_finish_its_work_needs_attention_first() {
@@ -125,13 +119,9 @@ fn history_without_configuration_reads_as_no_longer_configured() {
 
 #[test]
 fn a_removed_connector_is_not_reported_as_failing() {
-    // A connector taken out of configuration is a decision, not a fault — even
-    // when the last thing it did was fail.
     let row = summary("a", false, Some(sync(SyncStatus::Failed, Some(0))));
     assert_eq!(row.attention(), Attention::NoLongerConfigured);
 }
-
-// ── the order ──────────────────────────────────────────────────────────────
 
 #[test]
 fn rows_are_ordered_worst_first() {
@@ -190,8 +180,6 @@ fn the_order_is_stable_for_rows_that_tie() {
     assert_eq!(order, ["alpha", "mike", "zulu"], "ties break on the name");
 }
 
-// ── the wire ───────────────────────────────────────────────────────────────
-
 #[test]
 fn absence_crosses_the_wire_as_absence() {
     let fact = SyncFact::from(LastSync {
@@ -221,9 +209,6 @@ fn a_reported_zero_crosses_the_wire_as_zero() {
 
 #[test]
 fn the_ordering_stamp_is_not_serialised() {
-    // It exists to order rows, and the mover's update stamp is not something the
-    // page has any use for. Serialising it would invite a client to read it as
-    // the start.
     let json = serde_json::to_string(&SyncFact::from(sync(SyncStatus::Succeeded, Some(0))))
         .expect("serialisable");
     assert!(!json.contains("job_updated_at"), "{json}");
@@ -321,8 +306,6 @@ fn stamps_are_rfc3339_in_utc_with_millis() {
     assert_eq!(super::model::stamp(moment(0)), "2023-11-14T22:13:20.000Z");
 }
 
-// ── the name at the boundary ───────────────────────────────────────────────
-
 #[test]
 fn a_descriptor_style_name_parses() {
     for name in ["jira", "claude-team", "git-gitlab", "a1"] {
@@ -355,8 +338,6 @@ fn anything_that_is_not_a_connector_name_is_refused() {
 fn an_underscore_is_refused_because_the_bronze_mapping_needs_it() {
     assert!(ConnectorName::parse("ai_dev").is_none());
 }
-
-// ── the answer the page receives ───────────────────────────────────────────
 
 #[test]
 fn the_answer_carries_two_clocks_and_the_measured_interval() {
@@ -395,8 +376,6 @@ fn an_empty_ledger_answers_without_a_checked_at() {
 
 #[test]
 fn the_answer_keeps_the_order_it_was_given() {
-    // The service sorts by what needs acting on; the page must not have to
-    // re-derive that, so the order it receives is the order it renders.
     let mut summaries = vec![
         summary("quiet", true, Some(sync(SyncStatus::Succeeded, Some(0)))),
         summary("broken", true, Some(sync(SyncStatus::Failed, Some(0)))),
@@ -434,8 +413,6 @@ fn the_window_says_how_large_it_is() {
 
 #[test]
 fn a_window_asked_for_one_instance_says_which_one() {
-    // Without the echo a caller cannot tell an answer about one installation
-    // from an answer about every installation under the name.
     let response = SyncHistoryResponse::build(
         "example-tracker".to_owned(),
         Some(TENANT.to_owned()),
@@ -462,8 +439,6 @@ fn a_connector_with_no_recorded_sync_answers_an_empty_window() {
     assert_eq!(response.window, 50, "still a window, just an empty one");
 }
 
-// ── the name at the boundary, both ways ────────────────────────────────────
-
 #[test]
 fn a_parsed_name_round_trips_unchanged() {
     let parsed = ConnectorName::parse("claude-team").expect("a valid name");
@@ -471,12 +446,8 @@ fn a_parsed_name_round_trips_unchanged() {
     assert_eq!(parsed.into_string(), "claude-team");
 }
 
-// ── the instance at the boundary ───────────────────────────────────────────
-
 #[test]
 fn the_two_halves_of_an_instance_identity_parse() {
-    // A source id is a connector slug with a suffix; a tenant id is a slug or a
-    // lowercase UUID. Both are the vocabulary the ledger stores.
     assert!(TenantId::parse("00000000-0000-0000-0000-000000000000").is_some());
     assert!(TenantId::parse("acme").is_some());
     assert!(SourceId::parse("claude-team-main").is_some());
@@ -497,12 +468,8 @@ fn an_identity_half_outside_the_vocabulary_is_refused() {
     }
 }
 
-// ── two installations of one connector ─────────────────────────────────────
-
 #[test]
 fn two_instances_of_one_connector_are_two_rows() {
-    // They share a name, so nothing but the identity separates them — and the
-    // page exists to show one failing while the other is fine.
     let first = ConnectorSummary {
         instance: instance("claude-team", "main"),
         configured: true,
@@ -524,8 +491,6 @@ fn two_instances_of_one_connector_are_two_rows() {
 
 #[test]
 fn siblings_that_tie_break_on_the_identity_rather_than_the_name() {
-    // Tied on attention and on activity, they would otherwise be ordered by
-    // whichever the warehouse returned first.
     let mut rows = vec![
         ConnectorSummary {
             instance: instance("claude-team", "second"),
@@ -551,9 +516,6 @@ fn siblings_that_tie_break_on_the_identity_rather_than_the_name() {
 
 #[test]
 fn an_identity_the_ledger_does_not_hold_crosses_the_wire_as_absent() {
-    // History recorded before the ledger carried the identity that no single
-    // instance could be shown to own. The column cannot be NULL, so it holds
-    // the empty string — which must not ship as an instance named "".
     let health = ConnectorHealth::from(ConnectorSummary {
         instance: InstanceKey {
             connector: "departed-tracker".to_owned(),

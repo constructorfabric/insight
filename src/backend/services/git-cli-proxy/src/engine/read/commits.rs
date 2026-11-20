@@ -29,7 +29,6 @@ pub struct CommitRow {
     pub patch_id: Option<String>,
 }
 
-/// Commit identity plus walk-order key, before the expensive per-commit work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitHeader {
     pub sha: String,
@@ -50,47 +49,22 @@ impl CommitHeader {
     }
 }
 
-/// Fields are newline-separated, and the message is always LAST.
-///
-/// Git strips newlines out of an ident, so no name or email can carry one —
-/// verified, not assumed. Every other leading field (`%H`, `%P`, `%aI`,
-/// `%cI`) is newline-free by construction. The message may contain anything,
-/// and `splitn` hands it whatever remains, so it cannot shift a field either.
-///
-/// A printable separator cannot do this. `0x1f` survives inside an ident, so
-/// an author named `A<0x1f>B` would push `B` into the email field and every
-/// later field one place along, forging a row whose author, email and
-/// committer are attacker-chosen.
+// Git strips newlines out of an ident, so no name or email can carry one.
+// Every other leading field (`%H`, `%P`, `%aI`, `%cI`) is newline-free by
+// construction. The message may contain anything, and `splitn` hands it
+// whatever remains, so it cannot shift a field either.
 pub(super) const FIELD: char = '\n';
 
-/// Records are NUL-separated (`git log -z`), and that choice is load-bearing.
-/// A commit message is attacker-controlled — anyone who can push to a synced
-/// repository writes it — so a printable separator lets a crafted message
-/// close its own record and open a forged one, with an attacker-chosen sha,
-/// author and email. git truncates a commit message at the first NUL, so NUL
-/// is the one byte a message provably cannot contain.
+// A commit message is attacker-controlled — anyone who can push to a synced
+// repository writes it — so a printable separator lets a crafted message
+// close its own record and open a forged one, with an attacker-chosen sha,
+// author and email. git truncates a commit message at the first NUL, so NUL
+// is the one byte a message provably cannot contain.
 pub(super) const RECORD: char = '\0';
 
-/// One commit's position in the walk, and just enough to filter on.
-///
-/// The enumeration is deliberately NOT `CommitHeader`: a header carries the
-/// full commit message, which is unbounded, so an enumeration of them is
-/// bounded by nothing. A key is ~100 bytes whatever the message, which is what
-/// makes the whole-history walk affordable to hold and to cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitKey {
-    /// git's `%cI`, carrying the committer's own UTC offset. This is what a
-    /// row reports, because it is what the commit actually says.
     pub committed_date: String,
-    /// The same instant normalised to UTC, and the ONLY thing the walk orders
-    /// by. `%cI` keeps the committer's offset, so `2026-08-01T10:00:00+02:00`
-    /// sorts after `2026-08-01T09:00:00Z` as text while being an hour EARLIER
-    /// — and `since` is applied as an instant. Ordering by text while
-    /// filtering by instant loses commits across an interrupted walk: the
-    /// consumer checkpoints a row that sorted last, resumes from that instant,
-    /// and anything textually later but chronologically earlier is filtered
-    /// away having never been emitted. Normalising makes text order and
-    /// chronological order the same order.
     pub ordinal: String,
     pub sha: String,
     pub parent_count: usize,
@@ -103,10 +77,6 @@ impl CommitKey {
     }
 }
 
-/// `committed_date` rendered as a fixed-width UTC instant, so lexicographic
-/// order IS chronological order. Falls back to the raw value when the date is
-/// unparseable, which keeps such a row in a deterministic position rather than
-/// dropping it.
 pub(crate) fn ordinal_of(committed_date: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(committed_date.trim()).map_or_else(
         |_| committed_date.to_owned(),
@@ -114,29 +84,15 @@ pub(crate) fn ordinal_of(committed_date: &str) -> String {
     )
 }
 
-/// Every commit reachable from any branch, ascending by `(ordinal, sha)` —
-/// the walk order the page tokens depend on, and the only walk that touches
-/// whole history.
-///
-/// The walk is deliberately unfiltered. `git log --since` is a traversal
-/// cutoff, not a predicate: it stops descending a parent chain at the first
-/// commit older than the bound, so a qualifying commit sitting behind an older
-/// parent is never reached at all. Committer dates are not monotonic along
-/// ancestry — merges of long-lived branches, cherry-picks, date-preserving
-/// rebases and clock skew all break it — so the date bound is applied to the
-/// enumerated result instead (see [`retain_keys_since`]), which is what the API
-/// contract promises: every reachable commit at or after `since`.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
+// `git log --since` is a traversal cutoff, not a predicate: it stops
+// descending a parent chain at the first commit older than the bound, so a
+// qualifying commit sitting behind an older parent is never reached at all.
 pub async fn enumerate(
     runner: &GitRunner,
     git_dir: &Path,
     creds: &GitCredentials,
 ) -> Result<Vec<CommitKey>, GitError> {
     let format = format!("--pretty=format:%cI{FIELD}%H{FIELD}%P");
-    // `--branches`, not `--all`: the contract is reachability from a branch.
     let args = vec!["log", "--branches", "--no-color", "-z", &format];
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
@@ -165,10 +121,6 @@ fn parse_keys(text: &str) -> Vec<CommitKey> {
         .collect()
 }
 
-/// Drop keys committed before `since`, comparing ISO-8601 instants rather
-/// than the raw `%cI` strings: those carry the committer's UTC offset, so
-/// `2026-08-01T10:00:00+02:00` sorts after `2026-08-01T09:30:00Z` as text
-/// while being the earlier instant.
 #[must_use]
 pub fn retain_keys_since(keys: Vec<CommitKey>, since: Option<&str>) -> Vec<CommitKey> {
     let Some(bound) = since.and_then(parse_instant) else {
@@ -179,12 +131,6 @@ pub fn retain_keys_since(keys: Vec<CommitKey>, since: Option<&str>) -> Vec<Commi
         .collect()
 }
 
-/// Headers for `shas`, read without walking: `--no-walk` prints exactly the
-/// commits named.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
 pub async fn headers_for(
     runner: &GitRunner,
     git_dir: &Path,
@@ -209,15 +155,8 @@ pub async fn headers_for(
     Ok(headers)
 }
 
-/// Seconds since the epoch for an ISO-8601 timestamp carrying an explicit
-/// offset, in either the extended spelling RFC 3339 requires (`+00:00`, `Z`)
-/// or the basic one it does not (`+0000`). `None` for anything else — an
-/// unparseable bound filters nothing, and an unparseable row is kept rather
-/// than silently dropped.
-///
-/// Both spellings name the same instant, and a caller cannot always choose:
-/// Python's `strftime` renders an offset only as `%z`, without the colon, and
-/// has no directive that inserts one.
+// Python's `strftime` renders an offset only as `%z`, without the colon, and
+// has no directive that inserts one.
 pub(crate) fn parse_instant(raw: &str) -> Option<i64> {
     let raw = raw.trim();
     chrono::DateTime::parse_from_rfc3339(raw)
@@ -226,20 +165,8 @@ pub(crate) fn parse_instant(raw: &str) -> Option<i64> {
         .map(|at| at.timestamp())
 }
 
-/// `%z` accepts an offset without the colon RFC 3339 mandates; `%.f` makes the
-/// fractional seconds optional.
 const BASIC_OFFSET: &str = "%Y-%m-%dT%H:%M:%S%.f%z";
 
-/// Which of `shas` are reachable from the default branch.
-///
-/// One `rev-list` over the default branch, intersected with the page — the
-/// cost is the branch's history, not the page size. An empty or unborn `HEAD`
-/// yields an empty set: a repository with no default branch has no commits on
-/// it, which is a defined answer rather than an error.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
 pub async fn default_branch_membership(
     runner: &GitRunner,
     git_dir: &Path,
@@ -258,11 +185,6 @@ pub async fn default_branch_membership(
     // `--` separates revisions from paths.
     let reference = format!("refs/heads/{default}");
 
-    // A `HEAD` naming a branch that no longer exists is not an error: origin
-    // renamed or deleted its default branch and the mirror has not caught up
-    // yet. Walking it would fail every page of the repository until the entry
-    // happened to be evicted; reporting "no default branch" for one sync is
-    // the smaller wrong answer, and the next fetch repairs the symref.
     if runner
         .run(
             Some(git_dir),
@@ -284,13 +206,6 @@ pub async fn default_branch_membership(
     Ok(intersect_rev_list(&listing, shas))
 }
 
-/// Every sha reachable from the default branch — the index-build shape, run
-/// once per generation under the write lock, where the page-intersected form
-/// above runs per page. Same dangling-`HEAD` tolerance.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
 pub async fn default_branch_commits(
     runner: &GitRunner,
     git_dir: &Path,
@@ -319,8 +234,6 @@ pub async fn default_branch_commits(
     Ok(listing.lines().map(|line| line.trim().to_owned()).collect())
 }
 
-/// The `shas` present in a `rev-list` listing. Streams the listing against the
-/// page so peak memory is page-sized, not history-sized.
 fn intersect_rev_list(listing: &str, shas: &[String]) -> HashSet<String> {
     let wanted: HashSet<&str> = shas.iter().map(String::as_str).collect();
     listing
@@ -331,22 +244,12 @@ fn intersect_rev_list(listing: &str, shas: &[String]) -> HashSet<String> {
         .collect()
 }
 
-/// Canonical patch ids (`git patch-id --stable`) for `shas`, keyed by sha.
-/// Merge commits have no single diff and are absent from the map.
-///
-/// # Errors
-///
-/// [`GitError`] when either side of the pipe fails.
 pub async fn patch_ids(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],
     creds: &GitCredentials,
 ) -> Result<HashMap<String, String>, GitError> {
-    // Batched like the other window readers: the full-diff pass is the single
-    // most expensive subprocess on a page, and one invocation over the whole
-    // window pins every diff of the page against a single read-timeout
-    // budget.
     let mut ids = HashMap::new();
     for batch in shas.chunks(PATCH_ID_BATCH) {
         let mut producer = vec!["log", "--no-walk", "--patch", "--no-color", "--root"];
@@ -360,13 +263,8 @@ pub async fn patch_ids(
     Ok(ids)
 }
 
-/// Commits per patch-id invocation; bounds one subprocess's diff work under
-/// the read budget.
 const PATCH_ID_BATCH: usize = 128;
 
-/// A full object id: 40 hex characters under SHA-1, 64 under SHA-256. Pinning
-/// only the SHA-1 length silently discards every commit in a SHA-256
-/// repository, because each parsed record fails this check and is dropped.
 pub(super) fn is_object_id(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
@@ -378,17 +276,10 @@ fn parse_headers(text: &str) -> Vec<CommitHeader> {
         .collect()
 }
 
-/// Remove control characters from a field an attacker writes, so none reach
-/// bronze.
 pub(super) fn scrub(value: &str) -> String {
     value.chars().filter(|c| !c.is_control()).collect()
 }
 
-/// Order a served window by the key the walk and the page cursor use.
-///
-/// Sorting by the raw `%cI` instead emits a page whose row order disagrees
-/// with the order it was sliced in, as soon as two commits carry different
-/// UTC offsets.
 fn order_window(headers: &mut [CommitHeader]) {
     headers.sort_by_cached_key(|header| (ordinal_of(&header.committed_date), header.sha.clone()));
 }
@@ -429,7 +320,6 @@ fn parse_header(record: &str) -> Option<CommitHeader> {
     })
 }
 
-/// `git patch-id` emits `<patch-id> <commit-sha>` per commit.
 fn parse_patch_ids(text: &str) -> HashMap<String, String> {
     text.lines()
         .filter_map(|line| {
@@ -445,8 +335,6 @@ fn parse_patch_ids(text: &str) -> HashMap<String, String> {
 mod tests {
     use super::*;
 
-    /// A 40-hex object id from a short label, so fixtures stay readable while
-    /// carrying ids the parser will accept.
     fn oid(label: &str) -> String {
         format!("{label:0>40}").replace(|c: char| !c.is_ascii_hexdigit(), "a")
     }
@@ -462,8 +350,6 @@ mod tests {
 
     #[test]
     fn an_ident_carrying_the_field_separator_cannot_shift_a_row() {
-        // `0x1f` survives inside a git ident; it must not move any later
-        // field of the row.
         let hostile = "Ali\u{1f}ce\u{1f}victim@example.com";
         let record = format!(
             "{}{FIELD}{}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00\
@@ -507,8 +393,6 @@ mod tests {
 
     #[test]
     fn a_sha256_repository_is_not_silently_empty() {
-        // A SHA-256 repository's 64-hex ids must parse, or it serves zero
-        // commits and no error.
         let long = "b".repeat(64);
         let record = format!(
             "{long}{FIELD}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00\
@@ -528,9 +412,6 @@ mod tests {
 
     #[test]
     fn a_window_is_ordered_by_instant_not_by_the_offset_it_was_written_in() {
-        // `09:00Z` is later than `10:00+02:00` (= 08:00Z). Sorting the window
-        // by the raw string emits the page in an order the cursor disagrees
-        // with.
         let text = [
             record("c2", "", "2026-08-01T09:00:00+00:00", "later"),
             record("c1", "", "2026-08-01T10:00:00+02:00", "earlier"),
@@ -554,8 +435,6 @@ mod tests {
 
     #[test]
     fn retain_keys_since_bounds_on_the_instant_not_the_text() {
-        // %cI carries the committer's UTC offset, so an earlier instant can
-        // sort LATER as a string. Comparing text would keep the wrong rows.
         let keys = vec![
             at("2026-08-01T09:30:00+00:00"),
             at("2026-08-01T10:00:00+02:00"),
@@ -624,9 +503,6 @@ mod tests {
 
     #[test]
     fn a_crafted_commit_message_cannot_forge_a_record() {
-        // Anyone who can push writes a commit message, so it is untrusted
-        // input: a printable separator inside it must not open a forged record
-        // carrying an attacker-chosen sha and identity.
         let legacy_separator = '\u{1e}';
         let forged = format!(
             "legit subject{legacy_separator}{}{FIELD}{FIELD}2026-01-01T00:00:00+00:00{FIELD}2026-01-01T00:00:00+00:00{FIELD}Forged{FIELD}forged@evil.example{FIELD}Forged{FIELD}forged@evil.example{FIELD}owned",

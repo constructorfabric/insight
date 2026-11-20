@@ -1,16 +1,8 @@
-//! Naming a person from the mirrored identity rows.
-//!
-//! Two shapes over one aggregate: [`named_persons`] for a read model that joins
-//! names onto rows it already reads out of ClickHouse, and [`lookup`] for one
-//! that holds its rows elsewhere and needs names for a page of ids.
-
 use std::collections::HashMap;
 
 use serde::Deserialize;
 use uuid::Uuid;
 
-/// A `person_id → display_name / username` relation for one tenant, taking one
-/// bound tenant parameter.
 pub(crate) fn named_persons() -> String {
     format!("({})", aggregate(""))
 }
@@ -23,10 +15,6 @@ pub(crate) struct PersonName {
     pub(crate) username: String,
 }
 
-/// Names for exactly these people.
-///
-/// A failed lookup names nobody rather than failing the caller's read: the rows
-/// being named are the thing on screen.
 pub(crate) async fn lookup(
     ch: &insight_clickhouse::Client,
     tenant: Uuid,
@@ -35,10 +23,6 @@ pub(crate) async fn lookup(
     lookup_bounded(ch, tenant, ids, |query| query).await
 }
 
-/// The same lookup under the caller's own resource limits.
-///
-/// A read that names rows on a bounded surface has to be bounded too: the
-/// aggregate scans the identity journal, which carries no index on the tenant.
 pub(crate) async fn lookup_bounded(
     ch: &insight_clickhouse::Client,
     tenant: Uuid,
@@ -65,7 +49,6 @@ pub(crate) async fn lookup_bounded(
 
 #[cfg(test)]
 impl PersonName {
-    /// The id is the map key, so a name a caller stands up carries none.
     pub(crate) fn named(display_name: &str, username: &str) -> Self {
         Self {
             person_id: Uuid::nil(),
@@ -85,11 +68,6 @@ fn by_person(found: Vec<PersonName>) -> HashMap<Uuid, PersonName> {
 /// INVARIANT: every selected name coalesces to `''`. A `nullIf` left uncovered
 /// makes the column `Nullable(String)`, which the row type refuses to decode —
 /// and the refusal surfaces only against a real server.
-///
-/// INVARIANT: `person` narrows the rows the aggregate runs over, so it belongs
-/// before the `GROUP BY` — after it, the argMax state is built for the whole
-/// tenant and then discarded. The identity log carries no index on the tenant,
-/// which makes that the difference between a scan and a seek.
 fn aggregate(person: &str) -> String {
     format!(
         "SELECT person_id, \
@@ -129,8 +107,6 @@ mod tests {
 
     #[tokio::test]
     async fn nobody_to_name_asks_the_server_nothing() {
-        // The client points at a closed port: reaching the network here would
-        // fail rather than return empty.
         let names = lookup(&offline_client(), Uuid::now_v7(), &[]).await;
 
         assert!(names.is_empty());
@@ -169,9 +145,6 @@ mod tests {
         assert_eq!(aggregate(" AND person_id IN ?").matches('?').count(), 2);
     }
 
-    /// A `nullIf` the outer `coalesce` does not cover leaves the column
-    /// `Nullable(String)`, and the row type decodes it as `String` — a mismatch
-    /// no offline test sees, because it is raised by the server.
     #[test]
     fn every_name_the_aggregate_selects_is_never_null() {
         let sql: String = named_persons()

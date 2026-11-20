@@ -1,6 +1,3 @@
-//! Granting dashboards and folders, and handing an orphaned one to a current
-//! administrator.
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -52,7 +49,6 @@ struct Paging {
     offset: Option<u64>,
 }
 
-/// Identity, asked with the caller's own authorization.
 struct ForwardedDirectory<'a> {
     identity: &'a IdentityClient,
     authorization: Option<&'a str>,
@@ -221,7 +217,6 @@ pub(crate) fn register_routes(
         .merge(transfer_routes(openapi, state))
 }
 
-/// What a grant route is on.
 #[derive(Debug, Clone, Copy)]
 enum Object {
     Dashboard,
@@ -244,7 +239,6 @@ impl Object {
     }
 }
 
-/// The thing a route's `{id}` names, parsed as its object's id.
 enum Named {
     Dashboard(DefinitionId),
     Folder(FolderId),

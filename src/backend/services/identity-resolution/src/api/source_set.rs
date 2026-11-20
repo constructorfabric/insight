@@ -18,8 +18,6 @@ impl SourceSet {
         &self.0
     }
 
-    /// INVARIANT: the bracketed, quoted list is self-delimiting, so it can
-    /// prefix the needle in a cursor scope without two inputs colliding.
     pub(crate) fn cursor_scope(&self) -> String {
         let quoted: Vec<String> = self.0.iter().map(|s| format!("{s:?}")).collect();
         format!("[{}]", quoted.join(","))

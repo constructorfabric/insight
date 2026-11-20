@@ -1,12 +1,3 @@
-//! Gear configuration.
-//!
-//! Loaded via `GearCtx::config::<GearConfig>()` (toolkit serde path), which
-//! deserializes the YAML under `gears.analytics.config`. The figment
-//! loader was removed in the gears-rust migration — the toolkit host owns
-//! config layering (defaults -> YAML -> env -> CLI). Env overrides are
-//! `APP__gears__analytics__config__<field>` (the prefix changed from the
-//! old `ANALYTICS__*`).
-
 use std::path::PathBuf;
 
 use base64::Engine as _;
@@ -90,55 +81,33 @@ impl Default for McpConfig {
     }
 }
 
-/// Configuration consumed by the analytics gear. Deserialized from
-/// `gears.analytics.config`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct GearConfig {
-    /// HTTP bind address. Retained for compatibility/diagnostics — the
-    /// `api-gateway` system gear owns the actual listener bind, so this is
-    /// no longer consumed by the gear at runtime.
     pub bind_addr: String,
 
-    /// `MariaDB` connection URL.
-    /// Example: `mysql://insight:password@localhost:3306/analytics`
     pub database_url: String,
 
-    /// `ClickHouse` HTTP URL (e.g., `http://localhost:8123`).
     pub clickhouse_url: String,
 
-    /// `ClickHouse` database name (e.g., `insight`).
     pub clickhouse_database: String,
 
-    /// `ClickHouse` username. Optional — omit for no-auth deployments.
     pub clickhouse_user: Option<String>,
 
-    /// `ClickHouse` password.
     pub clickhouse_password: Option<String>,
 
-    /// Identity service base URL (e.g., `http://insight-identity-resolution:8082`).
-    /// Optional — when empty, `person_ids` from `$filter` are used directly against
-    /// `ClickHouse` without alias resolution (MVP mode).
     pub identity_url: String,
 
-    /// Deployment-wide person visibility and peer-population policy.
     pub visibility_policy: VisibilityPolicy,
 
-    /// Redis URL (e.g., `redis://localhost:6379`). Empty disables every
-    /// Redis-backed path; multi-replica deploys configure it so a cache added
-    /// here is coordinated across replicas rather than per-process.
     pub redis_url: String,
 
-    /// Metric read configuration.
     pub metric_catalog: MetricCatalogConfig,
 
-    /// Usage-monitoring configuration.
     pub usage: UsageConfig,
 
-    /// AI-assist configuration.
     pub ai_assist: AiAssistConfig,
 
-    /// Synchronous report generation configuration.
     pub reports: ReportsConfig,
 
     pub mcp: McpConfig,
@@ -170,28 +139,15 @@ impl Default for GearConfig {
     }
 }
 
-/// Per-environment knobs for the metric read path.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MetricCatalogConfig {
-    /// Permit authenticated callers to read tenant-level metric definitions,
-    /// results, evidence, and exports.
-    ///
-    /// Env: `APP__gears__analytics__config__metric_catalog__tenant_metrics_enabled`.
     pub tenant_metrics_enabled: bool,
 
-    /// Enforce the per-tenant observation filter (#1967) on metric reads.
-    /// Defaults to `false`: the ingested `tenant_id` in the bronze/silver/gold
-    /// pipeline is not yet aligned to the JWT tenant, so an exact
-    /// `tenant_id = <session>` match would silently empty every metric read.
-    /// Flip to `true` per environment once the ingest tenant is aligned (#1829).
-    ///
-    /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
+    // SAFETY: tenancy shortcut (#1829, #1967): while false, metric reads are not tenant-scoped.
+    // Keep false until ingested `tenant_id` matches the JWT tenant; enforcing earlier empties every read.
     pub enforce_tenant_scope: bool,
 
-    /// Revalidate managed metric definitions every five minutes after the startup pass.
-    ///
-    /// Env: `APP__gears__analytics__config__metric_catalog__periodic_validation_enabled`.
     pub periodic_validation_enabled: bool,
 }
 
@@ -237,14 +193,9 @@ impl Default for ReportsConfig {
     }
 }
 
-/// Whether this instance records how the product is used.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct UsageConfig {
-    /// Off means the SPA never starts its telemetry SDK and the ingest
-    /// endpoint drops what reaches it anyway.
-    ///
-    /// Env: `APP__gears__analytics__config__usage__enabled`.
     pub enabled: bool,
 }
 
@@ -254,59 +205,35 @@ impl Default for UsageConfig {
     }
 }
 
-/// Whether this instance can explain a metric with an LLM, and how.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AiAssistConfig {
-    /// Off means the SPA renders nothing for the feature and every `/v1/ai/*`
-    /// route answers "not found".
-    ///
-    /// Env: `APP__gears__analytics__config__ai_assist__enabled`.
     pub enabled: bool,
 
-    /// Base64 of the 32 bytes that seal stored Anthropic tokens.
-    ///
-    /// Env: `APP__gears__analytics__config__ai_assist__token_encryption_key`.
     pub token_encryption_key: String,
 
-    /// One Anthropic key for the whole stand. Set means nobody stores their
-    /// own — every explanation is paid for by this key.
-    ///
-    /// Env: `APP__gears__analytics__config__ai_assist__api_key`.
     pub api_key: String,
 
-    /// Restrict asking for an explanation to admins. On by default: the
-    /// common setup is a stand key, and then every call spends the
-    /// deployment's own money.
-    ///
-    /// Env: `APP__gears__analytics__config__ai_assist__admin_only`.
     pub admin_only: bool,
 
-    /// Anthropic model the explain route asks for.
     pub model: String,
 
-    /// Anthropic API base URL.
     pub api_base: String,
 
-    /// Upper bound on one answer, in tokens.
     pub max_output_tokens: u32,
 
-    /// How long one explain call may take before it is abandoned.
     pub request_timeout_secs: u64,
 
-    /// How many explain calls may be in flight in this process at once.
     pub max_concurrent: usize,
 }
 
 impl AiAssistConfig {
-    /// Whether the stand pays for explanations itself.
     #[must_use]
     pub fn has_stand_key(&self) -> bool {
         !self.api_key.trim().is_empty()
     }
 }
 
-/// Key length AES-256-GCM takes.
 pub const KEY_BYTES: usize = 32;
 
 impl Default for AiAssistConfig {
@@ -326,7 +253,6 @@ impl Default for AiAssistConfig {
 }
 
 impl AiAssistConfig {
-    /// The sealing key as raw bytes, or why it cannot be used.
     pub fn encryption_key(&self) -> anyhow::Result<[u8; KEY_BYTES]> {
         let raw = BASE64
             .decode(self.token_encryption_key.trim())

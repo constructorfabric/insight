@@ -1,14 +1,9 @@
-//! Every route that can name a dashboard, walked as an administrator who
-//! neither owns it nor was shared it, and as one it was shared with.
-
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use super::{Answer, Harness, OWNER, STRANGER, VIEWER, administrators, person};
 use crate::store::identity::IdentityClient;
 
-/// Each route that addresses one dashboard, with the body it sends; the
-/// entry routes go through `folder`, one of the caller's own.
 fn addressed(id: &str, folder: &str) -> Vec<(&'static str, String, Option<Value>)> {
     let board = json!({ "title": "Taken", "widgets": [] });
 
@@ -69,7 +64,6 @@ fn addressed(id: &str, folder: &str) -> Vec<(&'static str, String, Option<Value>
     ]
 }
 
-/// A widget id no dashboard here draws.
 const WIDGET: &str = "0192a1b2-0000-7000-8000-0000000000ee";
 
 fn ids(listed: &Answer) -> Vec<String> {

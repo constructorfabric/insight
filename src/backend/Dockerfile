@@ -1,11 +1,3 @@
-# Every Rust service image. Build context: src/backend/.
-#
-#   cd src/backend && docker build --target analytics -t insight-analytics:dev .
-#
-# Targets: analytics, authenticator, identity-resolution, insight-v3-core,
-# git-cli-proxy, previews.
-
-# ─── toolchain ──────────────────────────────────────────────────────────────
 ARG TARGETARCH
 
 FROM --platform=$BUILDPLATFORM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-bookworm@sha256:b75e76d787d5e11dabafa95eecc9fa1b50c38d5e03a38efb99cacb4e02125a76 AS chef-base
@@ -55,17 +47,14 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     rustup target add "${CARGO_BUILD_TARGET}"
 
-# ─── dependency recipe ──────────────────────────────────────────────────────
 FROM chef-base AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# ─── workspace dependencies, cached by recipe hash and target ───────────────
 FROM chef AS cooker
 COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --locked --target "${CARGO_BUILD_TARGET}" --recipe-path recipe.json
 
-# ─── service binaries ───────────────────────────────────────────────────────
 FROM cooker AS build-analytics
 COPY . .
 RUN cargo build --release --locked --bin analytics && \
@@ -96,14 +85,11 @@ COPY . .
 RUN cargo build --release --locked --bin previews && \
     install -D "target/${CARGO_BUILD_TARGET}/release/previews" /build/out/previews
 
-# ─── watchexec, the compose auto-reload wrapper ─────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS watchexec
 
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
 
-# SAFETY: the archive comes from a GitHub release over the network; the build
-# fails unless its SHA-256 matches the pinned value for this version and arch.
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) WX_ARCH=x86_64-unknown-linux-musl; WX_SHA256=2e72e56f722212558ce53d71c13d069f469c8113396da09d8ebf122ce6a655a5 ;; \
@@ -117,11 +103,8 @@ RUN set -eux; \
     tar -xJ -C /tmp -f /tmp/watchexec.tar.xz; \
     install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec
 
-# ─── runtime bases ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
 
-# The base digest is pinned, so the security pocket is only picked up if this
-# stage upgrades explicitly; without it the image ships whatever the pin froze.
 RUN apt-get update && \
     apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends ca-certificates && \
@@ -154,10 +137,6 @@ RUN useradd -U -u 1000 -m appuser && chown -R 1000:1000 /app
 USER 1000
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-
-# ─── images ─────────────────────────────────────────────────────────────────
-# Gears config is baked at /app/config/; compose bind-mounts over it, k8s
-# mounts a ConfigMap at the same path, APP__* env overrides leaf values.
 
 FROM runtime AS analytics
 COPY --from=build-analytics --chown=1000:1000 /build/out/analytics /app/analytics

@@ -1,15 +1,3 @@
-//! Persons-seed operations journal — read-only HTTP surface.
-//!
-//! The seed itself is CLI-only (`identity-resolution seed`, run by the Helm
-//! `CronJob` or a manual Job — see `crate::seed_runner`); the former
-//! `POST /v1/persons-seed` trigger and its in-process queue/worker are gone
-//! (#1690). The GETs remain as the observability window over the
-//! `operations` rows the CLI runs write: status, summary, error per run.
-//!
-//! Admin-gated: the caller is the gateway-JWT
-//! subject (`SecurityContext::subject_id`, verified by the host authn pipeline —
-//! `NGINX_BFF` R1) and must hold an active `admin` role in the tenant.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -26,7 +14,6 @@ use super::error::PersonsSeedError;
 use super::gate::require_admin;
 use crate::infra::db::ops_repo::{self, Operation, OperationStatus, PERSONS_SEED_OP};
 
-/// Default page size / cap for the list endpoint.
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
 
@@ -67,9 +54,6 @@ impl From<Operation> for PersonsSeedOperationResponse {
     }
 }
 
-/// Surface a stored JSON column as a parsed value (not a double-encoded string);
-/// `None` for absent/empty/unparseable.
-/// `pub(crate)`: shared with the persons-sync journal (same wire conventions).
 pub(crate) fn parse_or_null(json: Option<&str>) -> Option<serde_json::Value> {
     let s = json?;
     if s.is_empty() {
@@ -91,20 +75,15 @@ impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     pub status: Option<String>,
-    // Signed so a negative `?limit=` clamps to 1 (parity with the sibling list
-    // routes) rather than failing query deserialization.
     pub limit: Option<i64>,
 }
 
-/// `GET /v1/persons-seed/{id}` — poll one operation.
 pub async fn get_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
-    // Same admin gate as the sibling journal route: the whole persons-seed
-    // surface is admin-only.
     require_admin(&state.db, &ctx).await?;
     let op = ops_repo::get_by_id(&state.db, tenant, id)
         .await
@@ -121,8 +100,6 @@ pub async fn get_persons_seed(
     Ok(Json(PersonsSeedOperationResponse::from(op)))
 }
 
-/// `GET /v1/persons-seed` — list persons-seed operations. Optional `?status=`
-/// (unknown values ignored) and `?limit=` (default 50, capped 500).
 pub async fn list_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -150,8 +127,6 @@ pub async fn list_persons_seed(
     }))
 }
 
-/// Map the `?status=` query to a filter. An unknown/blank value is ignored
-/// (returns all statuses) — not a 400.
 pub(crate) fn status_filter(raw: Option<&str>) -> Option<OperationStatus> {
     match raw {
         Some("queued") => Some(OperationStatus::Queued),

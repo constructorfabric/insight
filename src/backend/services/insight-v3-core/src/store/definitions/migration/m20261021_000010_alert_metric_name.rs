@@ -1,17 +1,6 @@
-//! A notification carries what its metric was called when it was owed, so a
-//! message names the metric as people read it rather than by its id.
-//!
-//! Every row already stored keeps no name: its metric id is the name people
-//! know it by.
-//!
-//! INVARIANT: the step is safe to run again. The column is added with
-//! `IF NOT EXISTS` and nothing is written into it.
-
 use sea_orm::DbErr;
 use sea_orm_migration::prelude::*;
 
-/// The same collation as the table, so a name compares the way the rest of
-/// the row does.
 const ADD_METRIC_NAME: &str = "ALTER TABLE alert_notifications ADD COLUMN IF NOT EXISTS metric_name VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL AFTER metric";
 
 pub struct Migration;

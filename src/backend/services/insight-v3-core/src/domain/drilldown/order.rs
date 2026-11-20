@@ -1,21 +1,14 @@
-//! The order a page's rows travel in, and everything that has to agree with
-//! it: the `ORDER BY`, the columns the cursor replays, and how a replayed key
-//! re-enters the comparison.
-
 use std::fmt::Write as _;
 
 use super::cursor::{CursorError, CursorKey, KeyValue};
 use super::{Column, Sort};
 use crate::domain::query::metric_query::{ColumnKind, FilterBind, RECORD_COLUMN, TWIN_COLUMN};
 
-/// The alias the metric's own query is read under.
 pub(super) const INNER: &str = "__m";
 const FLAG: &str = "__drilldown_flag";
 const KEY: &str = "__drilldown_key";
 const TIE: &str = "__drilldown_tie";
 
-/// Whether a metric's column would collide with what the wrapper writes
-/// beside it.
 pub(super) fn is_reserved(name: &str) -> bool {
     name == FLAG
         || name == KEY
@@ -24,18 +17,11 @@ pub(super) fn is_reserved(name: &str) -> bool {
         || name.starts_with(TIE)
 }
 
-/// INVARIANT: one direction for the whole key. Blank cells are pushed last
-/// by the leading flag, which flips with the direction, rather than by a
-/// second direction, so the next page stays one tuple comparison instead of
-/// a chain of them.
 #[derive(Debug)]
 pub(super) struct OrderKey {
     key: String,
     kind: ColumnKind,
     descending: bool,
-    /// Every column as text - the sorted one too, so two rows its number
-    /// form cannot tell apart still are - then whatever the query carries to
-    /// tell rows apart that the columns cannot.
     ties: Vec<String>,
 }
 
@@ -63,13 +49,10 @@ impl OrderKey {
         format!("{INNER}.`{name}`")
     }
 
-    /// The sorted cell as a number, and null where it holds none.
     fn number(&self) -> String {
         format!("toFloat64OrNull(toString({}))", Self::column(&self.key))
     }
 
-    /// Whether the sorted cell is blank: null, empty, or - for a number -
-    /// not a finite one.
     fn blank_sql(&self) -> String {
         match self.kind {
             ColumnKind::Number => {
@@ -85,8 +68,6 @@ impl OrderKey {
         }
     }
 
-    /// The blank flag as a number the tuple can compare, inverted for a
-    /// downward order so a blank sorts past every filled cell either way.
     fn flag_sql(&self) -> String {
         let blank = self.blank_sql();
 
@@ -97,8 +78,6 @@ impl OrderKey {
         }
     }
 
-    /// The sorted cell in a form with no null in it: the flag has already
-    /// said where a blank goes, so what stands in for it only has to compare.
     fn key_sql(&self) -> String {
         match self.kind {
             ColumnKind::Number => format!("ifNotFinite(ifNull({}, 0), 0)", self.number()),
@@ -112,8 +91,6 @@ impl OrderKey {
         format!("ifNull(toString({}), '')", Self::column(name))
     }
 
-    /// The key's elements as the page carries them out, so the cursor holds
-    /// exactly what the warehouse compared and not a re-spelling of it.
     pub(super) fn projection(&self) -> String {
         let mut sql = format!(
             ", {} AS `{FLAG}`, {} AS `{KEY}`",
@@ -137,9 +114,6 @@ impl OrderKey {
         sql
     }
 
-    /// Refuses a key this order could not have issued. The wrong kind of
-    /// value, or a tail of the wrong length, would reach the warehouse as a
-    /// comparison it refuses - and that refusal would read as ours.
     pub(super) fn check(&self, key: &CursorKey) -> Result<(), CursorError> {
         let fits = match (self.kind, &key.value) {
             (ColumnKind::Number, KeyValue::Number(number)) => number.is_finite(),
@@ -154,10 +128,6 @@ impl OrderKey {
         Ok(())
     }
 
-    /// The rows past the one the cursor holds, in this order.
-    ///
-    /// INVARIANT: bound in the order the tuple names its elements, after
-    /// everything the inner query binds.
     pub(super) fn cursor_predicate(&self, key: &CursorKey, binds: &mut Vec<FilterBind>) -> String {
         let mut elements = vec![self.flag_sql(), self.key_sql()];
         elements.extend(self.ties.iter().map(|tie| Self::tie_sql(tie)));
@@ -178,7 +148,6 @@ impl OrderKey {
         )
     }
 
-    /// The key of a row the page carried out, read off the projected cells.
     pub(super) fn key_of(
         &self,
         row: &serde_json::Map<String, serde_json::Value>,
@@ -215,9 +184,6 @@ impl OrderKey {
     }
 }
 
-/// The row as a reader sees it: the key's working cells and the hidden
-/// columns gone, and each number a number rather than the text the warehouse
-/// writes a wide integer as.
 pub(super) fn presented(
     mut row: serde_json::Map<String, serde_json::Value>,
     columns: &[Column],

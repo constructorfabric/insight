@@ -1,9 +1,3 @@
-//! `visibility` grants store (create / list / revoke).
-//!
-//! ADR-0012. Tenant-scoped; a grant is active while `valid_to IS NULL`; revoke =
-//! soft-delete (set `valid_to`). `viewed_person_id IS NULL` = viewer sees the
-//! whole tenant tree.
-
 // `viewer_person_id` / `viewed_person_id` are the domain's own field names.
 #![expect(clippy::similar_names)]
 
@@ -14,7 +8,6 @@ use uuid::Uuid;
 const COLUMNS: &str = "visibility_id, insight_tenant_id, viewer_person_id, viewed_person_id, \
      valid_from, valid_to, author_person_id, reason, created_at";
 
-/// One `visibility` grant.
 #[expect(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
 #[derive(Debug, Clone)]
 pub struct Visibility {
@@ -56,11 +49,6 @@ fn row_to_visibility(r: &sea_orm::QueryResult) -> anyhow::Result<Visibility> {
     })
 }
 
-/// Fetch one grant by id (tenant-scoped).
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 pub async fn get_by_id(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -85,13 +73,6 @@ pub async fn get_by_id(
         .transpose()
 }
 
-/// List grants for the tenant, optionally filtered by viewer / viewed /
-/// active-only, newest first, capped at `limit`. Ported from
-/// `VisibilityRepository.ListAsync`.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id is not 16 bytes.
 pub async fn list(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -126,12 +107,6 @@ pub async fn list(
     rows.iter().map(row_to_visibility).collect()
 }
 
-/// Insert a grant (`valid_to = NULL`). `valid_from` defaults to now when `None`;
-/// `viewed_person_id = None` grants whole-tree visibility.
-///
-/// # Errors
-///
-/// Returns an error if the insert fails.
 #[expect(clippy::too_many_arguments)] // mirrors the columns of one grant row
 pub async fn insert(
     db: &DatabaseConnection,
@@ -167,19 +142,12 @@ pub async fn insert(
     Ok(())
 }
 
-/// Revoke (soft-delete) an active grant. Returns rows affected (0 if already
-/// revoked).
-///
-/// # Errors
-///
-/// Returns an error if the update fails.
 pub async fn soft_delete(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     visibility_id: Uuid,
     reason: Option<&str>,
 ) -> anyhow::Result<u64> {
-    // Positional binds: reason (SET), tenant_id, visibility_id (WHERE).
     const SQL: &str = r"
         UPDATE visibility
         SET valid_to = UTC_TIMESTAMP(6),

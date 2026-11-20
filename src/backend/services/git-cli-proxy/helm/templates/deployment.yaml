@@ -5,20 +5,11 @@ metadata:
   labels:
     {{- include "insight-git-cli-proxy.labels" . | nindent 4 }}
 spec:
-  {{- /*
-    Exactly one writer, enforced rather than documented. The per-repository
-    locks, the LRU state and the single-flight map all live in ONE process, so
-    a second replica does not share them — it races the first one over the same
-    PVC. ReadWriteOnce does not prevent that: it admits many pods on one node.
-  */}}
   {{- if ne (int .Values.replicaCount) 1 }}
     {{- fail "replicaCount must be 1: cache locking is process-local, so a second replica corrupts the shared volume" }}
   {{- end }}
   replicas: 1
   strategy:
-    # Recreate, not RollingUpdate: the cache volume admits one pod and the
-    # LRU / lock state lives in one process, so the old pod must be gone before the
-    # new one binds the volume.
     type: Recreate
   selector:
     matchLabels:
@@ -28,9 +19,7 @@ spec:
       labels:
         {{- include "insight-git-cli-proxy.selectorLabels" . | nindent 8 }}
       annotations:
-        # Roll the pod when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
         checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -43,8 +32,6 @@ spec:
       {{- end }}
       {{- end }}
       enableServiceLinks: false
-      # git clones can run for minutes; let an in-flight one finish rather
-      # than leaving a half-written temp dir behind.
       terminationGracePeriodSeconds: 120
       securityContext:
         runAsNonRoot: true
@@ -61,7 +48,6 @@ spec:
               mountPath: /app/config/insight.yaml
               subPath: insight.yaml
               readOnly: true
-            # The repository cache: the only large writable path.
             - name: cache
               mountPath: {{ .Values.persistence.mountPath }}
             # The gears host creates server.home_dir at boot and grpc-hub
@@ -80,14 +66,8 @@ spec:
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           envFrom:
-            # The umbrella publishes INSIGHT_LOG_LEVEL and, when an OTLP
-            # endpoint is configured, the OTEL_* emission contract here.
-            # Without it the service's metrics are computed and exported nowhere.
-            # The chart ships only as part of the umbrella, so the ref is
-            # hardcoded, as in the sibling services.
             - configMapRef:
                 name: {{ .Release.Name }}-platform
-            # Carries APP__gears__git_cli_proxy__config__proxy_token.
             - secretRef:
                 name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
           livenessProbe:

@@ -38,17 +38,10 @@ impl From<Bucket> for QueryBucket {
     }
 }
 
-/// The live email → person map every person-entity read resolves through.
 pub(crate) const PERSON_MAP_RELATION: &str = "identity.person_map";
 
-/// The live account → person binding, consulted BEFORE the email map: the
-/// source's own key for the person, so it survives an empty or private
-/// profile email and an address change.
 pub(crate) const ACCOUNT_ASSIGNMENT_RELATION: &str = "identity.account_assignment";
 
-/// The reserved person meaning "not a human" (bots, CI, service accounts).
-/// An account bound to it TERMINATES resolution: the row attributes to
-/// nobody and never falls through to the email map.
 const EXCLUDED_PERSON_ID: &str = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
 /// The median a reader means: the average of the two middle values on an even
@@ -61,22 +54,11 @@ const EXCLUDED_PERSON_ID: &str = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 /// #3362
 const MEDIAN_AGGREGATE: &str = "quantileExactInclusiveIf";
 
-/// `MEDIAN_AGGREGATE` with the `OrNull` combinator, for the arms that must
-/// answer an empty window with null rather than the type's default.
 const MEDIAN_AGGREGATE_OR_NULL: &str = "quantileExactInclusiveIfOrNull";
 
-/// Columns a resolved observation subquery re-exposes to the query above it.
-/// `entity_id` is absent: the subquery replaces it with the canonical person id,
-/// so every outer clause reads unchanged.
 const RESOLVED_OBSERVATION_COLUMNS: &str = "tenant_id, entity_type, source_key, measure_key, metric_date, observed_at, value, \
      subject_key, dimensions";
 
-/// Minimum peer-pool size for percentile disclosure. Below this, quartiles
-/// over a handful of people are noise presented as signal (someone is always
-/// "bottom 25%" of three), and with n=2 the "median" discloses the one
-/// colleague's value. Enforced here, server-side, so every consumer inherits
-/// it: the peer view still reports `n`, but p25/median/p75/min/max come back
-/// NULL and clients render "no peer data".
 pub(crate) const MIN_PEER_N: u32 = 5;
 
 #[derive(Debug)]
@@ -89,8 +71,6 @@ pub struct CompiledQuery {
 pub struct PeriodQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
-    /// The same reading over the comparison window; `None` when none was asked
-    /// for.
     #[serde(default)]
     pub compare_to: Option<f64>,
 }
@@ -100,9 +80,6 @@ pub struct TimeseriesQueryRow {
     pub entity_id: String,
     pub bucket_start: String,
     pub value: Option<f64>,
-    /// Both sides of a ratio, NULL for every other computation. Defaulted
-    /// because `compile_capped_timeseries_query` selects neither column — a
-    /// grouped read answers without them rather than failing to decode.
     #[serde(default)]
     pub numerator: Option<f64>,
     #[serde(default)]
@@ -163,9 +140,6 @@ pub struct RollupQueryRow {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-/// One observed (entity, bin) pair plus the entity's exact value bounds.
-/// The SQL owns bin membership only; the builder derives all bin edges from
-/// the bounds so displayed edges of empty and observed bins cannot drift.
 #[derive(Debug, Deserialize)]
 pub struct HistogramQueryRow {
     pub entity_id: String,
@@ -176,10 +150,6 @@ pub struct HistogramQueryRow {
     pub bin_count: Option<u64>,
 }
 
-/// One observed (dimension tuple, bin) pair plus the tuple's exact value
-/// bounds, pooled over all selected entities' events — the dimensioned
-/// counterpart of [`HistogramQueryRow`], with the dimension value/label
-/// aliases arriving through `extra` like every dimensioned row shape.
 #[derive(Debug, Deserialize)]
 pub struct PooledHistogramQueryRow {
     pub bin_idx: u32,
@@ -197,9 +167,6 @@ pub(crate) fn compile_period_batch_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    // With a comparison window the outer WHERE spans both, so each aggregate —
-    // the primary one included — carries its own window term. Without one the
-    // outer WHERE alone scopes the dates and the SQL is unchanged.
     let mut selects = item_value_selects(defs, &mut params, period_alias, primary_window(req));
     if let Some(compare_to) = req.compare_to {
         selects.push_str(&item_value_selects(
@@ -229,8 +196,6 @@ pub(crate) fn compile_period_batch_query(
     CompiledQuery { sql, params }
 }
 
-/// The window the primary value column answers: `None` — and so no window term
-/// at all — until a comparison window makes the outer WHERE span two ranges.
 fn primary_window(req: &ValidatedMetricResultsRequest) -> Option<DateWindow> {
     req.compare_to.map(|_| DateWindow {
         from: req.from,
@@ -238,13 +203,6 @@ fn primary_window(req: &ValidatedMetricResultsRequest) -> Option<DateWindow> {
     })
 }
 
-/// Which ranges a read scans.
-///
-/// INVARIANT: this is a property of the VIEW, not of the request. Only `period`
-/// and `breakdown` answer the comparison window, and they scope each aggregate
-/// to its own range. Every other view answers over the primary period alone and
-/// its aggregates carry NO window term — widening its scan would silently fold
-/// both ranges into one number.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanScope {
     PrimaryOnly,
@@ -264,14 +222,6 @@ impl ScanScope {
     }
 }
 
-/// The date predicate a read scans: the primary period, and the comparison
-/// window when the view is one that answers it.
-///
-/// INVARIANT: a disjunction, never `min(from)..max(to)`. The envelope form
-/// reads every day BETWEEN two far-apart windows and lets the conditional
-/// aggregates discard it, which is the cost this whole request shape exists to
-/// avoid. A single-range request yields the bare term it always had, so its
-/// compiled SQL is unchanged.
 fn scan_window_predicate(
     req: &ValidatedMetricResultsRequest,
     column: &str,
@@ -300,8 +250,6 @@ fn scan_window_predicate(
     }
 }
 
-/// The SQL term scoping one conditional aggregate to a window, with its bounds
-/// pushed in textual order. Empty for the unwindowed form.
 fn window_term(window: Option<DateWindow>, params: &mut Vec<String>) -> String {
     match window {
         None => String::new(),
@@ -610,11 +558,6 @@ pub(crate) fn compile_breakdown_query(
             ",
             {expr} AS {staged}"
         );
-        // Presence is its own column because the value cannot carry it: a
-        // ratio over a group that IS in the window reads NULL whenever its
-        // denominator is zero, which is indistinguishable from a group the
-        // window never had. A standalone request over that window returns the
-        // first and omits the second, so the projection needs both facts.
         let (Some(window), Some(presence_alias)) = (window, presence_alias) else {
             continue;
         };
@@ -659,9 +602,6 @@ pub(crate) fn compile_breakdown_query(
     CompiledQuery { sql, params }
 }
 
-/// The value column per window a breakdown computes, with the staged name it
-/// is aliased to inside the query and the presence flag beside it.
-///
 /// INVARIANT: a windowed breakdown must NOT alias any aggregate `value`. The
 /// aggregates read a column of that name, and a sibling's argument resolves to
 /// the alias instead of the column — which ClickHouse rejects outright as an
@@ -689,16 +629,12 @@ pub(crate) const PRESENT: &str = "present";
 pub(crate) const PRESENT_COMPARE: &str = "present_compare";
 pub(crate) const VALUE_COMPARE: &str = "value_compare";
 
-/// Whether a group has any row inside one window — the fact a standalone
-/// request over that window expresses by emitting the group or not.
 fn window_presence_expr(window: DateWindow, params: &mut Vec<String>) -> String {
     params.push(window.from.to_string());
     params.push(window.to.to_string());
     "countIf(metric_date >= toDate(?) AND metric_date <= toDate(?)) > 0".to_owned()
 }
 
-/// `metric_where` with its own placeholders bound, so the scanned dates can be
-/// a disjunction whose arity depends on the request.
 fn metric_where_scanned(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
@@ -740,9 +676,6 @@ fn metric_where_scanned(
     format!("{tenant} AND source_key = ? AND entity_type = ? AND {scan} AND {measure_predicate}")
 }
 
-/// Rename the staged columns to their wire names, applying the value transform
-/// on the way — the projection stage `transformed_single` performs for an
-/// uncompared breakdown, over both columns.
 fn projected_breakdown_columns(def: &MetricDefinition, inner: &str) -> String {
     let mut selects = String::new();
     for (staged, wire) in [(STAGED_VALUE, "value"), (STAGED_COMPARE, VALUE_COMPARE)] {
@@ -895,10 +828,6 @@ fn compile_capped_rollup_query(
     CompiledQuery { sql, params }
 }
 
-// The per-group aggregate for single-metric queries (timeseries/breakdown),
-// scoped by metric_where so no source/measure predicates repeat here. The
-// ratio arm keeps its two SELECT placeholders, which metric_params leads
-// with (SELECT binds before WHERE in text order).
 fn grouped_value_expr(def: &MetricDefinition) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. } => "sumIf(value, value IS NOT NULL)".to_owned(),
@@ -929,10 +858,6 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
     }
 }
 
-/// `grouped_value_expr` scoped to one window, pushing its own placeholders in
-/// textual order — the SELECT-list arity now varies per request, so the ratio
-/// arm can no longer lean on `metric_params` leading with a fixed pair.
-/// `window: None` reproduces the unwindowed expression exactly.
 fn grouped_value_expr_within(
     def: &MetricDefinition,
     window: Option<DateWindow>,
@@ -981,17 +906,6 @@ fn grouped_value_expr_within(
     }
 }
 
-// Deterministic fixed-width binning over each entity's exact [min, max]:
-// pure arithmetic over exact aggregates, so identical data always yields
-// identical bins (the adaptive `histogram()` aggregate is merge-order
-// dependent). `least(max_bin, …)` closes the last bin at the maximum; a
-// degenerate range (all values identical) maps everything to bin 0, which
-// the builder renders as one [v, v] bin. Validation guarantees the metric is
-// a median or percentile (single-measure predicate), so
-// metric_where/metric_params fit.
-/// One tenant-wide row: the metric's sum over the rows that resolve to no
-/// person. No person grain and no alias collapse — there is no person whose
-/// identities could be folded.
 pub(crate) fn compile_unattributed_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
@@ -1079,13 +993,6 @@ pub(crate) fn compile_histogram_query(
     CompiledQuery { sql, params }
 }
 
-// The pooled counterpart of `compile_histogram_query`: same deterministic
-// fixed-width binning, but the partition (and the [min, max] bounds) is the
-// dimension tuple instead of the entity — all selected entities' events pool
-// into one distribution per tuple, mirroring how rollup drops the entity
-// grain. Grouping by (value, label) alias pairs matches the breakdown /
-// timeseries dimension shape. Group cardinality is unbounded like an
-// uncapped rollup's, so the query carries the same row limit.
 pub(crate) fn compile_pooled_histogram_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
@@ -1142,12 +1049,6 @@ pub(crate) fn compile_pooled_histogram_query(
     CompiledQuery { sql, params }
 }
 
-// No collapsing here: cohort membership arrives as one row per
-// (tenant, entity_id, cohort_key) — the cohort relation
-// is canonical-grained and drops a person whose several HR emails claim
-// different org units, so nothing here collapses or tie-breaks. Keep it that
-// way: a pool that repairs its own input hides the input being wrong.
-//
 // WORKAROUND: ClickHouse inlines a WITH body once per reference, so a second
 // reference to entity_values re-scans the whole observation window. Both
 // shapes reference it exactly once and extract the target's own value from
@@ -1174,8 +1075,6 @@ fn compile_declared_cohort_peer_batch_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    // The targets and cohort CTEs each scope by tenant/entity_type/cohort_key;
-    // the targets CTE additionally filters person ids, bound between them.
     push_cohort_scope(&mut params, req, cohort_key);
     params.extend(req.entity.entity_ids());
     push_cohort_scope(&mut params, req, cohort_key);
@@ -1199,9 +1098,6 @@ fn compile_declared_cohort_peer_batch_query(
     let carried = peer_carried_selects(defs);
     let stats_selects = per_target_aggregate_selects(defs);
 
-    // Same switch as every other read (#1967): peer pools staying tenant-scoped
-    // while the rest of the query bypasses would answer empty peers, which is
-    // the failure the config flag exists to avoid.
     let tenant = tenant_predicate(req.enforce_tenant_scope);
 
     let sql = format!(
@@ -1276,10 +1172,6 @@ fn compile_tenant_peer_batch_query(
     let population_stat_selects = population_stat_selects(defs);
     let result_selects = tenant_result_selects(defs);
 
-    // INVARIANT: population stats aggregate once over the whole pool and the
-    // requested targets' own values are captured in that same pass (bounded
-    // by MAX_PERSON_IDS tuples), so cost stays one scan and one aggregation
-    // regardless of how many targets the request carries.
     let sql = format!(
         r"
         WITH
@@ -1314,16 +1206,11 @@ fn compile_tenant_peer_batch_query(
     CompiledQuery { sql, params }
 }
 
-// Per-item aggregate selects over the single `peer` reference, grouped by
-// target: the target's own value plus the guarded stats block.
 fn per_target_aggregate_selects(defs: &[&MetricDefinition]) -> String {
     let mut stats_selects = String::new();
     for item_index in 0..defs.len() {
         let value = period_alias(item_index);
         let aliases = peer_aliases(item_index);
-        // INVARIANT: at most one peer row matches the target (the cohort
-        // relation is canonical-grained; entity_values groups by entity_id),
-        // so maxIf returns exactly that row's value — NULL when unobserved.
         let _ = write!(
             stats_selects,
             ",
@@ -1402,9 +1289,6 @@ fn push_peer_stat_selects(selects: &mut String, item_index: usize) {
     let aliases = peer_aliases(item_index);
     let observed = format!("peer.{value} IS NOT NULL");
     let pool = format!("uniqExactIf(peer.entity_id, {observed})");
-    // p25 and p75 are order statistics and keep `quantilesExact`; the peer
-    // median answers the same question as the period one and so reads the same
-    // textbook definition, or a cohort of an even size disagrees with itself.
     let quantiles = format!("quantilesExactIf(0.25, 0.75)(peer.{value}, {observed})");
     let median_expr = format!("{MEDIAN_AGGREGATE}(0.5)(peer.{value}, {observed})");
     let _ = write!(
@@ -1448,10 +1332,6 @@ fn item_value_selects(
 // sumIfOrNull, not sumIf: a plain sumIf yields 0 when the item matches no
 // rows of an entity that has rows for other items, fabricating an
 // observation the peer pool must not see. OrNull pins NULL-on-no-match.
-// (Today an all-NULL-values entity row set cannot occur — the observation
-// macro guards HAVING countIf(value IS NOT NULL) > 0 — but a future custom
-// SQL source could produce one; OrNull excludes it from pools by
-// construction.)
 fn item_value_expr(
     def: &MetricDefinition,
     params: &mut Vec<String>,
@@ -1472,13 +1352,6 @@ fn item_value_expr(
             scale,
             denominator_aggregation,
         } => {
-            // Ratio inputs share one source (enforced at definition load:
-            // "ratio inputs must share one source"), so the numerator's
-            // source_key scopes both halves. The numerator is OrNull: a tool
-            // that reports the denominator but never the numerator measure
-            // must read NULL (unknown split), not a fabricated 0. The
-            // denominator needs no OrNull — both supported aggregations yield
-            // 0 for no rows and nullIf already turns that into NULL.
             params.push(numerator.source_key.clone());
             params.push(numerator.measure_key.clone());
             let numerator_window = window_term(window, params);
@@ -1499,9 +1372,6 @@ fn item_value_expr(
             )
         }
         ComputationSpec::Median { value } => {
-            // OrNull so an entity present in the batch (via another measure)
-            // but with no rows for this measure comes back NULL, not 0 — the
-            // builder never zero-fills medians (honest-null).
             params.push(value.source_key.clone());
             params.push(value.measure_key.clone());
             let window = window_term(window, params);
@@ -1510,8 +1380,6 @@ fn item_value_expr(
             )
         }
         ComputationSpec::Percentile { value, q } => {
-            // Honest-null like Median — same event-grain shape, different point
-            // on the distribution.
             params.push(value.source_key.clone());
             params.push(value.measure_key.clone());
             let window = window_term(window, params);
@@ -1520,8 +1388,6 @@ fn item_value_expr(
             )
         }
         ComputationSpec::Stddev { value } => {
-            // Honest-null like Median; sample stddev, so a single observation
-            // reads NULL (no spread is measurable), never a fabricated 0.
             params.push(value.source_key.clone());
             params.push(value.measure_key.clone());
             let window = window_term(window, params);
@@ -1530,11 +1396,6 @@ fn item_value_expr(
             )
         }
         ComputationSpec::DistinctCount { value } => {
-            // OrNull like sum: an entity present via another measure but with
-            // no rows for this one comes back NULL, not 0, so it never enters
-            // a peer pool as a fabricated observation. The builder zero-fills
-            // distinct counts (0 distinct subjects is a genuine zero) exactly
-            // as it does sums. Counts distinct `subject_key`, not `value`.
             params.push(value.source_key.clone());
             params.push(value.measure_key.clone());
             let window = window_term(window, params);
@@ -1548,8 +1409,6 @@ fn item_value_expr(
     }
 }
 
-/// The alias the metric timeseries gives its observation source, so the ratio
-/// sides can name their columns without colliding with the `value` alias.
 const OBS: &str = "obs_src";
 
 fn ratio_denominator_expr_over(
@@ -1569,8 +1428,6 @@ fn ratio_denominator_expr_over(
     }
 }
 
-// INVARIANT: a distinct-count denominator counts (person, subject) pairs, so a rollup
-// over several people keeps each person's days apart instead of pooling equal dates.
 fn ratio_denominator_expr(
     aggregation: RatioDenominatorAggregation,
     sum_condition: &str,
@@ -1584,11 +1441,6 @@ fn ratio_denominator_expr(
     }
 }
 
-// Applies the definition's post-aggregation transform to a computed value
-// expression. Identity when the definition has none. Callers must pass an
-// expression that is safe to repeat in SQL text (a column or alias
-// reference, never one containing `?` placeholders) — the NULL-guarded
-// clamp references it more than once.
 fn transformed(def: &MetricDefinition, expr: String) -> String {
     match &def.transform {
         Some(transform) => transform.wrap_sql(&expr),
@@ -1596,9 +1448,6 @@ fn transformed(def: &MetricDefinition, expr: String) -> String {
     }
 }
 
-// Wraps a single-metric query in a transform projection stage. The raw
-// aggregate stays in the inner query (its placeholders bind once); the
-// transform references only the `value` alias.
 fn transformed_single(def: &MetricDefinition, inner: String) -> String {
     if def.transform.is_none() {
         return inner;
@@ -1614,8 +1463,6 @@ fn transformed_single(def: &MetricDefinition, inner: String) -> String {
     )
 }
 
-// Batch variant: re-projects each transformed item column by alias, the
-// comparison window's column included.
 fn transformed_batch(defs: &[&MetricDefinition], inner: String, compared: bool) -> String {
     if defs.iter().all(|def| def.transform.is_none()) {
         return inner;
@@ -1642,8 +1489,6 @@ fn transformed_batch(defs: &[&MetricDefinition], inner: String, compared: bool) 
     )
 }
 
-/// Push the `tenant_id`, `entity_type`, `cohort_key` values a cohort CTE's
-/// `WHERE` binds, in that order. Called once per CTE (targets, cohort).
 fn push_cohort_scope(
     params: &mut Vec<String>,
     req: &ValidatedMetricResultsRequest,
@@ -1654,9 +1499,6 @@ fn push_cohort_scope(
     params.push(cohort_key.to_owned());
 }
 
-/// `shared_observation_where` over an explicit scan range: a windowed batch
-/// scans the union of its windows once and lets each conditional aggregate
-/// pick its own out of it.
 fn shared_observation_where_within(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
@@ -1729,8 +1571,6 @@ fn batch_observation_source<'a>(defs: &'a [&MetricDefinition]) -> &'a Observatio
         .observation_source()
 }
 
-/// `FROM` target for a batch. The collapse stage is selective per measure, so
-/// sharing a batch never changes a single measure's semantics.
 fn batch_resolved_observation_from(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
@@ -1767,22 +1607,11 @@ fn single_resolved_observation_from(
     )
 }
 
-// INVARIANT: every observation read leads with the tenant predicate, bound from
-// the request's SecurityContext (never client SQL), so an enforced request
-// scoped to tenant A cannot read tenant B's rows. `tenant_id` is the column the
-// gold observation and cohort contract exposes; the value is the raw tenant
-// UUID, the same representation the metric lineage stamps. The placeholder is
-// first here and its value first in `metric_where_params` — keep the two in
-// lockstep. When enforcement is off (the default until the ingest tenant is
-// aligned, #1829) the term is a tautology that still binds the same one
-// placeholder, so the param order is identical in both modes.
+// SAFETY: tenancy shortcut (#1829, #1967): unenforced, the predicate matches every tenant's rows.
 pub(crate) fn tenant_predicate(enforce: bool) -> &'static str {
     if enforce {
         "tenant_id = ?"
     } else {
-        // Bypass: still consumes the bound tenant param (String = String, so no
-        // type coercion), but `OR 1 = 1` makes it match every row — the
-        // pre-#1967 behavior, without changing placeholder arity.
         "(tenant_id = ? OR 1 = 1)"
     }
 }
@@ -1807,14 +1636,6 @@ fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     }
 }
 
-/// The two sides of a ratio as their own SELECT columns, for the views that
-/// hand a reader the denominator rather than only the quotient. Every other
-/// computation has no sides to name, so the columns come back NULL.
-///
-/// INVARIANT: the returned params are appended to `grouped_value_params` and
-/// the expression is placed directly after the value column — placeholders
-/// bind in the text order of the whole statement, so neither may move without
-/// the other.
 fn ratio_sides_expr(def: &MetricDefinition) -> (String, Vec<String>) {
     let ComputationSpec::Ratio {
         numerator,
@@ -1929,14 +1750,6 @@ fn observation_table(source: &ObservationSource) -> String {
     source.render_from_clause()
 }
 
-/// Whether a read resolves identity while it serves, or reads a relation that
-/// already carries canonical ids.
-///
-/// SAFETY: a custom source is tenant-authored SQL whose contract says
-/// `entity_id` is already the canonical person id. Resolving it would look up an
-/// id that is not an email and silently return nothing. A tenant-entity read is
-/// canonical for every source: tenant evidence repeats its tenant key as the
-/// entity id, so there is no person to resolve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntityResolution {
     QueryTime,
@@ -1957,25 +1770,10 @@ impl EntityResolution {
     }
 }
 
-/// Which people an observation read resolves and returns.
 enum PersonScope<'a> {
-    /// The people the request asked about. Binds their ids (prune), the date
-    /// range, then their ids again (the resolved filter) — the caller's param
-    /// contract.
     Requested(&'a ValidatedMetricResultsRequest),
-    /// Everyone in the peer pool, read from the `cohort` CTE the peer query
-    /// defines above this subquery. Binds no person ids — a peer comparison
-    /// needs the whole pool's values, and narrowing to the requested people
-    /// would answer with a pool of one — only the date range, so the scan is
-    /// bounded here rather than trusting predicate pushdown from above.
     CohortMembers(&'a ValidatedMetricResultsRequest),
-    /// Everyone in the tenant: the whole-population peer pool. Every row that
-    /// resolves to a person joins the pool; only the date range bounds the
-    /// scan.
     TenantWide(&'a ValidatedMetricResultsRequest),
-    /// The tenant's rows that resolve to nobody, except those an account
-    /// binding sends to the excluded person on purpose. Binds only the date
-    /// range, like `TenantWide`.
     Unattributed(&'a ValidatedMetricResultsRequest),
 }
 
@@ -1990,18 +1788,12 @@ impl PersonScope<'_> {
     }
 }
 
-/// An observation read: where to read from, and whether the people were already
-/// narrowed while resolving identity.
 struct ObservationRead {
     from: String,
     resolution: EntityResolution,
 }
 
 impl ObservationRead {
-    /// The entity term for a source that was NOT resolved in the `FROM`. A
-    /// resolved read is already scoped to the requested people by the map
-    /// lookup; a canonical one still needs the filter here, or the read would
-    /// answer with everybody. Pushes its params where the term renders.
     fn entity_scope(
         &self,
         req: &ValidatedMetricResultsRequest,
@@ -2017,8 +1809,6 @@ impl ObservationRead {
                         placeholders(req.entity.len())
                     )
                 }
-                // Tenant evidence repeats its tenant key as the entity id, so
-                // the row-internal equality is the whole scope — no id to bind.
                 ValidatedEntitySelection::Tenant { .. } => {
                     "\n          AND entity_id = tenant_id".to_owned()
                 }
@@ -2027,13 +1817,6 @@ impl ObservationRead {
     }
 }
 
-/// The identity store's form of an observation row's account-binding key.
-///
-/// INVARIANT: identity stores `source_id` as sipHash128 of the connector's raw
-/// `source_id` (see the connectors' `identity_inputs` models) and
-/// `identity.account_assignment` lowercases `account_id` — both expressions
-/// must stay in lockstep with those minting rules, or the lookup silently
-/// matches nothing.
 pub(crate) fn account_source_uuid_expr(alias: &str) -> String {
     format!("toUUID(UUIDNumToString(sipHash128(coalesce({alias}.account_source_id, ''))))")
 }
@@ -2042,22 +1825,6 @@ pub(crate) fn account_id_expr(alias: &str) -> String {
     format!("lower(trimBoth(coalesce({alias}.account_id, '')))")
 }
 
-/// The `FROM` target for an observation read, with identity resolved when the
-/// source needs it.
-///
-/// A subquery, not a join spliced into the caller: every clause above it keeps
-/// reading a bare `entity_id` that now holds the person id, so scoping,
-/// `GROUP BY`, `GROUPING SETS`, window partitions and `ORDER BY` are unchanged.
-///
-/// Account-first, because an account binding survives an empty profile e-mail
-/// and an account bound to the excluded person must TERMINATE resolution — a
-/// bot's rows would otherwise fall through to whichever human its commit
-/// e-mails name.
-///
-/// Two predicates on purpose. The prune is for the scan (`entity_id` leads the
-/// sort key after tenant and source, so the e-mail lookup reads only the
-/// requested parts); the filter above `resolved` is what decides, whatever the
-/// prune let through.
 fn resolved_observation_from(
     source: &ObservationSource,
     person_scope: &PersonScope<'_>,
@@ -2074,11 +1841,6 @@ fn resolved_observation_from(
         };
     }
 
-    // INVARIANT: this read pre-filters observations before the outer aggregates
-    // run, so its dates must cover every range the VIEW answers: the primary
-    // period alone would answer NULL for a comparison window, and both ranges
-    // would make a view that answers only the primary period read rows it must
-    // not see.
     let scan_of = |req: &ValidatedMetricResultsRequest, params: &mut Vec<String>| {
         format!(
             "\n          AND {}",
@@ -2179,13 +1941,6 @@ fn qualified_resolved_columns(alias: &str) -> String {
         .join(", ")
 }
 
-/// Collapses one person's several source identities to the grain the warehouse
-/// relation is keyed at, for the measures whose values must not be summed across
-/// them.
-///
-/// The `GROUP BY` is the relation's own key with the person in place of the
-/// source identity, so dimensions and `subject_key` survive for the aggregates
-/// above and every outer predicate selects the same rows either side of it.
 fn collapsed_observation_from(
     resolved: String,
     collapses: &[(&MetricInput, AliasCollapse)],
@@ -2198,9 +1953,6 @@ fn collapsed_observation_from(
         return resolved;
     }
 
-    // INVARIANT: only flagged measures' rows are grouped; the rest pass through.
-    // Grouping everything would merge an event-grain median's same-day events
-    // whenever a flagged measure shares the batch.
     let mut value_expr = String::from("multiIf(");
     let mut flagged_pairs = Vec::new();
     for (input, collapse) in &flagged {
@@ -2243,8 +1995,6 @@ fn collapsed_observation_from(
 /// quotes alone would let `x\\` swallow the closing quote. `?` last: the driver
 /// binds by scanning the raw query text with no regard for quoting, so a `?`
 /// inside a literal would take a bound parameter and shift every later one.
-/// Keys are `snake_case` by CHECK constraint and by `is_column_key`, so this
-/// guards a future key shape rather than a current one.
 pub(crate) fn sql_string_literal(value: &str) -> String {
     format!(
         "'{}'",
@@ -2255,8 +2005,6 @@ pub(crate) fn sql_string_literal(value: &str) -> String {
     )
 }
 
-/// Every input of a batch with its alias-collapse rule, deduplicated by
-/// (source, measure) so a measure bound twice renders one `multiIf` arm.
 fn batch_alias_collapses<'a>(
     defs: &'a [&MetricDefinition],
 ) -> Vec<(&'a MetricInput, AliasCollapse)> {
@@ -2329,10 +2077,6 @@ fn ranking_dimension_select_group(dimensions: &[String]) -> (String, String, Str
     (select.join(", "), group.join(", "), order.join(", "))
 }
 
-// `indexOf(dimensions.1, key)` locates the matching tuple by its key column in
-// one pass (0 when absent), then positional access into the value (`.2`) and
-// label (`.3`) columns reuses that index — replacing three `arrayFilter`
-// materializations of the tuple array per row with cheap column scans.
 fn dimension_value_expr(dimension: &str) -> String {
     format!(
         r"
@@ -2549,28 +2293,22 @@ mod tests {
         assert_eq!(
             query.params,
             vec![
-                // item exprs, batch order
                 "ai_usage",
                 "accepted_lines",
                 "ai_usage",
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
-                // identity resolution renders in the FROM, ahead of the WHERE:
-                // the people asked about (the email prune), the date range it
-                // narrows to, then the same people for the resolved filter
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
                 "2026-01-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                // shared scope (tenant predicate leads the WHERE)
                 TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
                 "2026-01-31",
-                // deduped (source_key, measure_key) pairs, BTreeSet order
                 "ai_usage",
                 "accepted_edit_actions",
                 "ai_usage",
@@ -2597,9 +2335,6 @@ mod tests {
 
         assert!(query.sql.contains("AS m0"));
         assert!(query.sql.contains("AS m0_compare"));
-        // The scan is a disjunction of the requested ranges. The envelope form
-        // — one range from the earliest `from` to the latest `to` — would read
-        // every day between two far-apart windows.
         assert!(query.sql.contains(
             "(metric_date >= toDate(?) AND metric_date <= toDate(?)) OR (metric_date >= toDate(?) AND metric_date <= toDate(?))"
         ));
@@ -2607,19 +2342,14 @@ mod tests {
         assert_eq!(
             query.params,
             vec![
-                // primary column, scoped to the period
                 "ai_usage",
                 "accepted_lines",
                 "2026-01-01",
                 "2026-01-31",
-                // extra window column
                 "ai_usage",
                 "accepted_lines",
                 "2025-12-01",
                 "2025-12-31",
-                // the identity-resolving read: it filters observations BEFORE
-                // the aggregates, so it scans both ranges and neither the gap
-                // nor the primary period alone
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
@@ -2628,7 +2358,6 @@ mod tests {
                 "2025-12-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                // shared scope, same two ranges
                 TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
@@ -2641,20 +2370,11 @@ mod tests {
         );
     }
 
-    /// One view's compiler, named for the assertion message.
     type UnwidenedCase = (
         &'static str,
         fn(&ValidatedMetricResultsRequest) -> CompiledQuery,
     );
 
-    /// The contract says only `period` and `breakdown` answer the comparison
-    /// window. Every other view's aggregates carry no window term of their own,
-    /// so a widened scan would fold both ranges into one number instead — a
-    /// peer target summing two months, and percentiles built on those.
-    ///
-    /// The check is the strongest available: for those views the compiled SQL
-    /// and its bound parameters must be IDENTICAL with and without
-    /// `compare_to`, down to the identity-resolving subquery.
     #[test]
     fn only_period_and_breakdown_widen_their_scan_for_a_comparison_window() {
         let sum = sum_metric();
@@ -2716,7 +2436,6 @@ mod tests {
             );
         }
 
-        // ...and the two that do answer it must change.
         let period_plain = compile_period_batch_query(&[&sum], &request(), &[]);
         let period_compared = compile_period_batch_query(&[&sum], &windowed_request(), &[]);
         assert_ne!(period_plain.sql, period_compared.sql, "period must widen");
@@ -2732,8 +2451,6 @@ mod tests {
 
     #[test]
     fn an_uncompared_batch_keeps_the_single_range_form() {
-        // The whole change rests on this: a request that asks for no extra
-        // window compiles the SQL it always did.
         let sum = sum_metric();
         let query = compile_period_batch_query(&[&sum], &request(), &[]);
 
@@ -2805,9 +2522,6 @@ mod tests {
 
         assert!(query.sql.contains("AS value"));
         assert!(query.sql.contains("AS value_compare"));
-        // Presence rides its own column: a group's value cannot express it,
-        // because a ratio over a group that IS in the window reads NULL when
-        // its denominator is zero.
         assert!(query.sql.contains("AS present"));
         assert!(query.sql.contains("AS present_compare"));
         assert_eq!(
@@ -2818,24 +2532,19 @@ mod tests {
             2,
             "one presence column per window, the primary included"
         );
-        // The aggregates stage under names that cannot collide with the
-        // observation's own `value` column — see `breakdown_aliases`.
         assert!(query.sql.contains("AS staged_value"));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
         assert_eq!(
             query.params,
             vec![
-                // primary value, then primary presence
                 "2026-01-01",
                 "2026-01-31",
                 "2026-01-01",
                 "2026-01-31",
-                // the extra window's value, then its presence
                 "2025-12-01",
                 "2025-12-31",
                 "2025-12-01",
                 "2025-12-31",
-                // identity-resolving read over both ranges
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
@@ -2844,7 +2553,6 @@ mod tests {
                 "2025-12-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                // metric scope, same two ranges
                 TEST_TENANT_STR,
                 "ai_usage",
                 "person",
@@ -2908,10 +2616,6 @@ mod tests {
 
     #[test]
     fn custom_source_reads_from_the_inline_sql_with_the_tenant_filter_outside() {
-        // A custom source's observation SQL becomes the `FROM` target as a
-        // parenthesized subquery; the tenant predicate (and every other scope
-        // term) is applied by the wrap OUTSIDE it, exactly as for a managed
-        // relation, so a custom metric inherits identical tenant scoping.
         let def = custom_sum_metric();
         let ts = compile_timeseries_query(&def, &request(), QueryBucket::Day, &[], &[], None);
         assert!(ts.sql.contains(&format!("FROM ({CUSTOM_SQL})")));
@@ -2920,7 +2624,6 @@ mod tests {
         assert_eq!(ts.params.first().map(String::as_str), Some(TEST_TENANT_STR));
         assert_eq!(ts.sql.matches('?').count(), ts.params.len());
 
-        // The batch path routes through the same from_clause.
         let batch = compile_period_batch_query(&[&def], &request(), &[]);
         assert!(batch.sql.contains(&format!("FROM ({CUSTOM_SQL})")));
     }
@@ -2937,8 +2640,6 @@ mod tests {
     fn ratio_item_binds_numerator_source_for_both_halves() {
         let ratio = ratio_metric();
         let query = compile_period_batch_query(&[&ratio], &request(), &[]);
-        // Ratio inputs share one source by the definition-load invariant;
-        // both sumIf halves and the pruning pair carry the numerator's key.
         assert_eq!(
             query.params,
             vec![
@@ -2946,8 +2647,6 @@ mod tests {
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
-                // identity resolution renders in the FROM, ahead of the WHERE:
-                // prune, dates, then the resolved filter
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
@@ -2979,8 +2678,6 @@ mod tests {
         assert!(rank.sql.contains("WHERE tenant_id = ?"), "ranking read");
         assert_eq!(tenant_binds(&rank), 1);
 
-        // The peer query reads the contract three times (targets, cohort,
-        // metric_values); each must carry the tenant predicate and its value.
         let peer = compile_peer_batch_query(
             &[&sum],
             &request(),
@@ -2999,9 +2696,6 @@ mod tests {
         let mut req = request();
         req.enforce_tenant_scope = false;
 
-        // With enforcement off, every contract read swaps the exact-match term
-        // for the tautology, so nothing filters by tenant — yet the placeholder
-        // (and its bound value) stays in place, so param arity is unchanged.
         let ts = compile_timeseries_query(&sum, &req, QueryBucket::Day, &[], &[], None);
         assert!(
             ts.sql.contains("(tenant_id = ? OR 1 = 1)"),
@@ -3014,7 +2708,6 @@ mod tests {
         assert_eq!(ts.sql.matches('?').count(), ts.params.len());
         assert_eq!(tenant_binds(&ts), 1);
 
-        // All three peer reads (targets, cohort, metric_values) bypass together.
         let peer = compile_peer_batch_query(
             &[&sum],
             &req,
@@ -3278,23 +2971,18 @@ mod tests {
         assert_eq!(
             query.params,
             vec![
-                // targets CTE (tenant predicate leads every read)
                 TEST_TENANT_STR,
                 "person",
                 "org_unit",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                // cohort CTE
                 TEST_TENANT_STR,
                 "person",
                 "org_unit",
-                // item value selects
                 "ai_usage",
                 "accepted_lines",
-                // the pool read bounds its own dates inside the resolving FROM
                 "2026-01-01",
                 "2026-01-31",
-                // metric_values shared scope
                 TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
@@ -3315,9 +3003,6 @@ mod tests {
         assert!(query.sql.contains("arrayJoin([?, ?]) AS entity_id"));
         assert!(query.sql.contains("CROSS JOIN population_stats"));
         assert!(!query.sql.contains("ON 1 = 1"));
-        // Stats aggregate once over the pool; the targets' own values ride the
-        // same pass as captured tuples, so target count never multiplies the
-        // aggregation state.
         assert!(query.sql.contains(
             "groupArrayIf(tuple(peer.entity_id, peer.m0), \
              peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows"
@@ -3345,8 +3030,6 @@ mod tests {
                 "00000000-0000-0000-0000-00000000000b",
                 "ai_usage",
                 "accepted_lines",
-                // the tenant-wide read binds only the date range: the pool is
-                // every row that resolves to a person
                 "2026-01-01",
                 "2026-01-31",
                 TEST_TENANT_STR,
@@ -3362,10 +3045,6 @@ mod tests {
 
     #[test]
     fn peer_batches_read_the_observation_window_once() {
-        // ClickHouse expands a WITH body once per reference, so a second
-        // reference to entity_values would scan the whole observation window
-        // again. Each shape must reference it exactly once (definition + one
-        // use) and extract the target's own value from that single reference.
         let sum = sum_metric();
         for population in [PeerPopulation::DeclaredCohort, PeerPopulation::Tenant] {
             let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", population, &[]);
@@ -3384,10 +3063,6 @@ mod tests {
 
     #[test]
     fn peer_batch_never_fabricates_zero_observations() {
-        // Honest-null through the runtime: cohort members without observed
-        // values stay NULL and drop out of the pool per metric — absence of
-        // rows cannot be distinguished from "not covered by the source", so
-        // the peer query must not invent zeros for them.
         let (sum, ratio) = (sum_metric(), ratio_metric());
         let query = compile_peer_batch_query(
             &[&sum, &ratio],
@@ -3425,9 +3100,6 @@ mod tests {
             )));
             assert!(query.sql.contains(&format!("AS m{item}_target")));
         }
-        // The two order statistics come from one `quantilesExactIf` per item
-        // (single sort), not two separate `quantileExactIf` calls, and the peer
-        // median reads the same textbook aggregate as every other median view.
         for item in 0..2 {
             assert!(query.sql.contains(&format!(
                 "quantilesExactIf(0.25, 0.75)(peer.m{item}, peer.m{item} IS NOT NULL)"
@@ -3441,9 +3113,6 @@ mod tests {
             !query.sql.contains("quantilesExactIf(0.25, 0.5, 0.75)"),
             "the peer median must not come back as the middle order statistic"
         );
-        // The cohort relation is canonical-grained (one row per person and
-        // cohort_key, contested membership already dropped), so the pool reads
-        // it straight. A collapse here would repair a broken input silently.
         assert!(
             !query.sql.contains("HAVING"),
             "no collapsing: the cohort relation already arrives at person grain"
@@ -3454,7 +3123,6 @@ mod tests {
                 .contains("AND cohort_id IN (SELECT cohort_id FROM targets)"),
             "the pool is exactly the target cohorts' membership"
         );
-        // Honest-null must not depend on server config or column typing.
         assert!(query.sql.contains("SETTINGS join_use_nulls = 1"));
         assert!(query.sql.contains("GROUP BY targets.entity_id"));
     }
@@ -3483,11 +3151,6 @@ mod tests {
 
     #[test]
     fn batched_placeholder_count_matches_params() {
-        // Params are emitted in lockstep with SQL fragments; a drift between
-        // `?` order and the param vector silently binds wrong values. The mix
-        // interleaves a median column (2 params) between sum (2) and ratio
-        // (4) — the real git batch shape — so a per-computation param/`?`
-        // desync surfaces here, not just in single-computation batches.
         let (sum, median, ratio, distinct, percentile) = (
             sum_metric(),
             median_metric(),
@@ -3515,10 +3178,6 @@ mod tests {
 
     #[test]
     fn median_batches_as_a_quantile_ornull_column() {
-        // A median metric joins the period/peer batch as one wide column.
-        // OrNull so an entity present via another measure but with no rows
-        // for this one comes back NULL, not 0 (the builder never zero-fills
-        // medians). Placeholder/param lockstep still holds.
         for query in [
             compile_period_batch_query(&[&median_metric()], &request(), &[]),
             compile_peer_batch_query(
@@ -3564,8 +3223,6 @@ mod tests {
 
     #[test]
     fn percentile_batches_as_a_leveled_quantile_ornull_column() {
-        // A percentile metric is a median at level p/100: same OrNull
-        // honest-null batching, same placeholder/param lockstep.
         for query in [
             compile_period_batch_query(&[&percentile_metric()], &request(), &[]),
             compile_peer_batch_query(
@@ -3610,18 +3267,12 @@ mod tests {
             bd.sql
                 .contains("quantileExactIf(0.75)(value, value IS NOT NULL)")
         );
-        // Histograms bin raw events, so the level never appears there — the
-        // query must still compile with the single-measure predicate shape.
         let hist = compile_histogram_query(&percentile_metric(), &request(), &[]);
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
     }
 
     #[test]
     fn distinct_count_batches_as_a_uniq_ornull_column() {
-        // A distinct-count metric joins the period/peer batch as one wide
-        // column counting distinct subject_key. OrNull so an entity present
-        // via another measure but with no rows here comes back NULL, not 0 —
-        // the builder zero-fills distinct counts like sums. Lockstep holds.
         for query in [
             compile_period_batch_query(&[&distinct_count_metric()], &request(), &[]),
             compile_peer_batch_query(
@@ -3644,10 +3295,6 @@ mod tests {
 
     #[test]
     fn ratio_numerator_never_fabricates_zero() {
-        // A tool that reports the denominator measure but never the numerator
-        // (e.g. a chat source with totals but no DM split) must read NULL,
-        // not 0%: the numerator aggregates OrNull in every query shape, while
-        // the denominator relies on nullIf alone.
         let batched = compile_period_batch_query(&[&ratio_metric()], &request(), &[]);
         let ts = compile_timeseries_query(
             &ratio_metric(),
@@ -3720,7 +3367,6 @@ mod tests {
         assert_eq!(query.sql.matches("JOIN").count(), 2);
         assert!(query.sql.contains("JOIN identity.account_assignment"));
         assert!(query.sql.contains("JOIN identity.person_map"));
-        // Deterministic arithmetic only — never the adaptive aggregate.
         assert!(!query.sql.contains("histogram("));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
     }
@@ -3733,8 +3379,6 @@ mod tests {
             &["source".to_owned()],
             &[],
         );
-        // Bounds and bins partition/group by the dimension aliases — the
-        // entity only scopes which rows enter the pool.
         assert!(
             query
                 .sql
@@ -3753,11 +3397,9 @@ mod tests {
         assert!(!query.sql.contains("PARTITION BY entity_id"));
         assert!(query.sql.contains("JOIN identity.account_assignment"));
         assert!(query.sql.contains("JOIN identity.person_map"));
-        // Same deterministic fixed-width arithmetic as the per-entity shape.
         assert!(query.sql.contains("least(9,"));
         assert!(query.sql.contains("* 10 /"));
         assert!(!query.sql.contains("histogram("));
-        // Unbounded group cardinality rides the shared row limit.
         assert!(query.sql.contains(&format!("LIMIT {}", query_row_limit())));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
     }
@@ -3781,8 +3423,6 @@ mod tests {
             );
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
-        // Histogram (median-only, hence its own def) must bin the transformed
-        // event value under its own alias, never the raw `value` column.
         let mut median = median_metric();
         median.transform = Some(ValueTransform {
             clamp_max: Some(100.0),
@@ -3803,7 +3443,6 @@ mod tests {
             hist.sql
         );
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
-        // The pooled shape bins the same transformed alias.
         let pooled =
             compile_pooled_histogram_query(&median, &request(), &["source".to_owned()], &[]);
         assert!(

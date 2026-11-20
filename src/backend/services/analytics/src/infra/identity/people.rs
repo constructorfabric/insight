@@ -3,7 +3,6 @@ use uuid::Uuid;
 
 use super::IdentityClient;
 
-// INVARIANT: identity serves no more people than this in one page.
 const PAGE_SIZE: usize = 500;
 
 // INVARIANT: the matches are bound into a ClickHouse query, which refuses one

@@ -1,8 +1,3 @@
-//! `/v1/ai/credentials` — the caller's own Anthropic key.
-//!
-//! INVARIANT: no response, log line, or error on this path carries the key.
-//! Callers learn only whether one is stored and its last four characters.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -23,7 +18,6 @@ use crate::domain::ai::crypto;
 use crate::domain::ai::dto::{AiCredentialResponse, ApiToken, PutCredentialRequest};
 use crate::infra::db::entities::ai_credentials;
 
-/// `GET /v1/ai/credentials` — whether the caller has a key stored.
 pub async fn get_credential(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -44,7 +38,6 @@ pub async fn get_credential(
     }))
 }
 
-/// `PUT /v1/ai/credentials` — store or replace the caller's key.
 pub async fn put_credential(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -73,9 +66,6 @@ pub async fn put_credential(
     let hint = crypto::hint(token.as_str());
     let now = Utc::now();
 
-    // One statement, not read-then-write: two saves racing (a double-clicked
-    // Save) would otherwise both find no row and the second would collide on
-    // the primary key.
     let row = ai_credentials::ActiveModel {
         insight_tenant_id: Set(tenant),
         person_id: Set(person),
@@ -110,7 +100,6 @@ pub async fn put_credential(
     }))
 }
 
-/// `DELETE /v1/ai/credentials` — forget the caller's key.
 pub async fn delete_credential(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

@@ -410,8 +410,6 @@ mod tests {
 
     #[test]
     fn histogram_view_deserializes_with_and_without_dimensions() {
-        // Bare `{"view": "histogram"}` must keep parsing exactly as before the
-        // pooled shape existed (dimensions default to empty).
         let bare = serde_json::from_value::<MetricResultsRequest>(json!({
             "entity": { "type": "person", "ids": ["019e27bc-dec0-7626-81a9-c5524662a6a9"] },
             "period": { "from": "2026-01-01", "to": "2026-01-31" },

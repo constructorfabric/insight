@@ -1,36 +1,24 @@
-//! What the model proposed, once it is something this service can act on.
-
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::ChatError;
 use crate::domain::query::metric_query::{MetricQuery, People};
 
-/// Every dataset is already in the prompt, and a long list in an error helps
-/// nobody.
 const DATASETS_NAMED_IN_A_REFUSAL: usize = 12;
 
-/// What a proposal reads, before it is known whether the stand has it.
 #[derive(Debug)]
 enum Reads {
-    /// No query and no metric: a reply that stands on its own.
     Nothing,
     Dataset(String),
-    /// A metric that names no dataset, which nothing here can run.
     SomethingElse,
 }
 
-/// One of the two things the model can propose in reply to a chat message.
 #[derive(Debug)]
 pub(crate) enum Proposal {
-    /// A one-time question. The service runs `query` when there is one and
-    /// answers; nothing is stored. A question about what data exists needs no
-    /// query, and forcing one got an invented query and a junk table with it.
     Answer {
         reply: String,
         query: Option<MetricQuery>,
     },
-    /// A metric/widget/dashboard to store. Any of the three may be absent.
     Create {
         reply: String,
         metric: Option<Proposed>,
@@ -39,24 +27,15 @@ pub(crate) enum Proposal {
     },
 }
 
-/// One definition a create carries.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Proposed {
-    /// The stored definition this replaces; none creates one.
     #[serde(default)]
     pub(crate) id: Option<String>,
-    /// What a reader calls it, and what the other items of the same create
-    /// name it by.
     pub(crate) name: String,
     pub(crate) body: Value,
 }
 
 impl Proposal {
-    /// [`Proposal::parse`], then refuse anything the stand cannot answer.
-    ///
-    /// A proposal that names no dataset, or names one nobody declared, goes
-    /// back through the repair round with the list, so the model corrects it
-    /// in the conversation rather than the reader meeting a refusal.
     pub(super) fn checked(
         reply: &str,
         allowed: &[String],
@@ -83,8 +62,6 @@ impl Proposal {
         }
     }
 
-    /// What this proposal reads, which every metric must answer with a
-    /// dataset the stand declares.
     fn reads(&self) -> Reads {
         let body = match self {
             Self::Answer { query, .. } => {
@@ -111,12 +88,6 @@ impl Proposal {
         }
     }
 
-    /// Strips any prose or code fence around the JSON object and deserializes
-    /// on `intent`.
-    ///
-    /// A query is not compiled here: compiling one over a dataset needs the
-    /// declaration, which the run and the write both read. What this catches
-    /// is a reply that is not a proposal at all.
     pub(super) fn parse(reply: &str, people: &People) -> Result<Self, ChatError> {
         let wire: ProposalWire = serde_json::from_str(extract_json_object(reply))?;
 
@@ -149,16 +120,12 @@ impl Proposal {
     }
 }
 
-/// A proposed metric that can at least be read as one, so the repair round
-/// hears about a malformed body rather than the write path.
 fn readable_metric(proposed: Proposed, _people: &People) -> Result<Proposed, ChatError> {
     let _: MetricQuery = serde_json::from_value(proposed.body.clone())?;
 
     Ok(proposed)
 }
 
-/// Items of one create name each other by name, so two widgets sharing one
-/// would leave a board drawing either.
 fn refuse_shared_names(widgets: &[Proposed]) -> Result<(), ChatError> {
     for (place, widget) in widgets.iter().enumerate() {
         let shared = widgets[..place]
@@ -175,10 +142,6 @@ fn refuse_shared_names(widgets: &[Proposed]) -> Result<(), ChatError> {
     Ok(())
 }
 
-/// The reply as prose, unwrapped when the model encoded it a second time.
-///
-/// Only a value that is entirely one JSON string is unwrapped, so prose that
-/// merely contains a quote is untouched.
 fn as_prose(reply: String) -> String {
     let trimmed = reply.trim();
     if !(trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 1) {

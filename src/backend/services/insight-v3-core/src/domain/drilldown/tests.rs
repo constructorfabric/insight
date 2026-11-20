@@ -33,8 +33,6 @@ fn sort(key: &str, descending: bool) -> Sort {
     }
 }
 
-/// A key over `columns()` ordered by `day`: the flag, the day, then every
-/// column as text.
 fn a_key() -> CursorKey {
     CursorKey {
         flag: false,
@@ -77,9 +75,6 @@ fn the_key_leads_with_the_blank_flag_and_ends_with_every_column_as_text() {
     );
 }
 
-/// A blank cell sits past every filled one whichever way the column runs:
-/// the flag that leads the key is inverted under a downward order. For a
-/// number, a cell that is not a finite number is blank too.
 #[test]
 fn a_number_is_compared_as_a_number_and_a_downward_order_runs_every_element_down() {
     let order = OrderKey::build(&columns(), &sort("total", true), &[]);
@@ -163,8 +158,6 @@ fn a_downward_order_resumes_past_the_cursor_with_the_opposite_comparison() {
     );
 }
 
-/// A key the order did not issue would reach the warehouse as a comparison
-/// it refuses, and that refusal would read as ours. It is the caller's.
 #[test]
 fn a_key_that_does_not_fit_the_order_is_refused_before_it_is_bound() {
     let by_text = OrderKey::build(&columns(), &sort("day", false), &[]);
@@ -298,7 +291,6 @@ fn a_cursor_survives_the_round_trip_and_refuses_what_it_did_not_issue() {
     assert!(matches!(decode(&other_version), Err(CursorError::Version)));
 }
 
-/// Everything one page is bound to, so a case can vary one input.
 struct Bound {
     name: &'static str,
     body: serde_json::Value,
@@ -457,8 +449,6 @@ fn the_wrapper_reads_the_metric_as_a_subquery_and_asks_one_row_past_the_page() {
     assert!(matches!(binds.as_slice(), [FilterBind::Str(repo)] if repo == "app"));
 }
 
-/// The inner query binds first because it is written first: a cursor bound
-/// ahead of a filter would take the filter's value and shift the rest.
 #[test]
 fn a_resumed_page_binds_the_metrics_own_values_before_the_cursors() {
     let inner = grouped_over_a_table();
@@ -479,9 +469,6 @@ fn a_resumed_page_binds_the_metrics_own_values_before_the_cursors() {
     ));
 }
 
-/// Rows a warehouse table cannot tell apart are counted off before the
-/// page is cut, so a hundred and fifty of one kind come back as a hundred
-/// and then fifty, not as a hundred and then nothing.
 #[test]
 fn a_plain_read_over_a_table_numbers_its_twins_in_a_layer_of_its_own() {
     let inner = compiled(json!({

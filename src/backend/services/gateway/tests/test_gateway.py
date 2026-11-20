@@ -1,9 +1,3 @@
-"""Gateway e2e -- the five NGINX_BFF step-05 scenarios, top-to-bottom.
-
-Run: src/backend/services/gateway/tests/run-e2e.sh  (or `pytest` from this dir).
-The compose stack + fail-closed lifecycle live in conftest.py.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -25,9 +19,6 @@ def _b64url_json(segment):
     return json.loads(base64.urlsafe_b64decode(segment))
 
 
-# ── Scenario 1: no cookie -> 401 on every route, canonical problem body ───────
-
-
 def test_no_cookie_401_on_every_route(client):
     for route in ROUTES:
         status, headers, _ = client.request(f"{GW}{route}/x")
@@ -42,9 +33,6 @@ def test_401_body_is_canonical_problem(client):
     assert prob["type"] == UNAUTHENTICATED_TYPE
     assert prob["title"] == "Unauthenticated"
     assert prob["status"] == 401
-
-
-# ── Scenario 2: login -> JWT injected, session cookie stripped, R3 hygiene ────
 
 
 def test_login_injects_verifiable_jwt_and_applies_hygiene(client):
@@ -85,13 +73,9 @@ def test_correlation_ids_are_unique_per_request(client):
 
 
 def test_jwks_served_by_authenticator_not_gateway(client):
-    # JWKS is public and served directly by the authenticator (the key issuer).
     status, _, body = client.request(f"{AUTHENTICATOR}/.well-known/jwks.json")
     assert status == 200, f"got {status}"
     assert "keys" in json.loads(body)
-
-
-# ── Scenario 5: SPA passthrough + internal surface ────────────────────────────
 
 
 def test_spa_passthrough_on_root(client):
@@ -102,9 +86,6 @@ def test_spa_passthrough_on_root(client):
 def test_internal_and_unmatched_api_are_404(client):
     assert client.request(f"{GW}/internal/anything")[0] == 404
     assert client.request(f"{GW}/api/v1/nope")[0] == 404
-
-
-# ── Scenario 3/4: authenticator down -> cache serves hits, cold cookie 503 ────
 
 
 class TestAuthenticatorDown:
@@ -123,18 +104,13 @@ class TestAuthenticatorDown:
         assert prob["context"]["retry_after_seconds"] == 5
 
 
-# ── Scenario 3: revocation takes effect within the cache window ────────────────
-
-
 def test_revocation_within_cache_window(client, session_sid):
-    # Logout is state-changing: it needs the per-session CSRF token (§10.5).
     logout = client.request(
         f"{GW}/auth/logout",
         headers={"Cookie": f"__Host-sid={session_sid}", "X-CSRF-Token": client.csrf_token(session_sid)},
         method="POST",
     )
     assert logout[0] == 200, f"logout got {logout[0]}"
-    # Revocation reaches the gateway once the cached exchange expires (<= max-age).
     deadline = time.monotonic() + AUTHZ_CACHE_MAX_AGE + 5
     status = None
     while time.monotonic() < deadline:
@@ -145,11 +121,8 @@ def test_revocation_within_cache_window(client, session_sid):
     assert status == 401, f"revoked session still {status} after {AUTHZ_CACHE_MAX_AGE + 5}s"
 
 
-# ── Scenario 4: dead upstream -> 502 ──────────────────────────────────────────
-
-
 def test_dead_upstream_5xx(client, echo_down):
-    sid = client.login()  # exchange succeeds (authenticator up); echo is down
+    sid = client.login()
     status, _, _ = client.request(f"{GW}/api/analytics/x", headers={"Cookie": f"__Host-sid={sid}"})
     # Connection refused -> 502; unroutable (killed container) -> 504 at the
     # bounded proxy_connect_timeout. Either is the fail-fast dead-upstream path.

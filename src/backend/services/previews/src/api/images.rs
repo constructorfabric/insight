@@ -1,5 +1,3 @@
-//! Image-tag listing surface.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -25,7 +23,6 @@ pub struct ImageListResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for ImageListResponse {}
 
-/// `GET /v1/images` — the `preview-…` tags available in the registry.
 pub async fn list_images(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

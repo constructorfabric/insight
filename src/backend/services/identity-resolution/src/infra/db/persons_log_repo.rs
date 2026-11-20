@@ -1,12 +1,3 @@
-//! Full-log read of `persons` for the ClickHouse `identity_persons` sync.
-//!
-//! Unlike the resolver queries in [`persons_repo`], this needs no windowing —
-//! the ClickHouse copy carries the raw log verbatim and all "which observation wins"
-//! logic lives on the ClickHouse side (the dbt resolve macro). Plain
-//! entity scan, ordered by `id` so the snapshot is deterministic.
-//!
-//! [`persons_repo`]: super::persons_repo
-
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder};
 use uuid::Uuid;
@@ -14,7 +5,6 @@ use uuid::Uuid;
 use super::entities::persons;
 use crate::domain::sync_service::{PersonsLogReader, PersonsLogRow};
 
-/// [`PersonsLogReader`] over the service's MariaDB pool.
 pub struct MariaDbPersonsLogReader<'a> {
     db: &'a DatabaseConnection,
 }
@@ -58,15 +48,11 @@ fn map_row(m: persons::Model) -> anyhow::Result<PersonsLogRow> {
         value_effective: m.value_effective,
         person_id: uuid16(&m.person_id, "person_id", m.id)?,
         author_person_id: uuid16(&m.author_person_id, "author_person_id", m.id)?,
-        // Nullable since migration 009 — copied verbatim, NULL stays NULL.
         reason: m.reason,
         created_at: m.created_at,
     })
 }
 
-/// BINARY(16) → `Uuid` (canonical big-endian, as written by `Uuid::as_bytes`).
-/// A wrong-length value means a corrupt row — fail the sync loudly rather than
-/// copy garbage.
 fn uuid16(bytes: &[u8], column: &str, row_id: u64) -> anyhow::Result<Uuid> {
     Uuid::from_slice(bytes)
         .map_err(|e| anyhow::anyhow!("persons.{column} of row id={row_id} is not a UUID: {e}"))

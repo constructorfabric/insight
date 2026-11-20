@@ -1,10 +1,3 @@
-//! Metric passports: a generated, human-readable derivation record for every
-//! builtin metric — source, formula, and notes — rendered from the same
-//! `registry.yaml` the reconciler seeds from. The rendered document is
-//! committed as `passports.md` and pinned by [`tests::passports_md_is_in_sync`],
-//! so a metric whose source, formula, or notes change without regenerating the
-//! passport fails the build. Regenerate with `analytics passports > …/passports.md`.
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
@@ -25,8 +18,6 @@ averaged, so the answer need not be a value any observation took. A percentile
 is an order statistic instead, and always answers with one that did.
 ";
 
-/// Render the passport document from the builtin registry. Deterministic:
-/// metrics appear in registry order, one section each.
 pub fn render_passports() -> String {
     let source_refs: HashMap<&str, &str> = builtin_sources()
         .iter()
@@ -57,7 +48,6 @@ pub fn render_passports() -> String {
             .or(metric.description.as_deref())
             .unwrap_or("—");
 
-        // Infallible: writing to a String never errors.
         let _ = write!(
             out,
             "\n## {key} — {label}\n\n\
@@ -157,8 +147,6 @@ fn shape(metric: &MetricSeed) -> String {
     shape
 }
 
-/// Format an `f64` registry constant without a spurious `.0` (100.0 -> "100",
-/// 1.5 -> "1.5"), so the passport reads naturally and stays stable.
 fn fmt_num(value: f64) -> String {
     format!("{value}")
 }
@@ -167,8 +155,6 @@ fn fmt_num(value: f64) -> String {
 mod tests {
     use super::*;
 
-    /// The committed passport document, embedded so the drift test compares
-    /// against the exact bytes on disk.
     const PASSPORTS_MD: &str = include_str!("passports.md");
 
     #[test]
@@ -196,8 +182,6 @@ mod tests {
 
     #[test]
     fn ratio_scale_of_one_is_elided() {
-        // A ratio with scale 1.0 renders as a bare division; a scaled ratio
-        // carries its multiplier.
         let rendered = render_passports();
         assert!(rendered.contains("Formula: commit_count / distinct_count(commit_day)"));
         assert!(rendered.contains("Formula: 100 * (accepted_edit_actions / tool_use_offered)"));

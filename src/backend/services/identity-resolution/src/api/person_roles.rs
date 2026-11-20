@@ -1,10 +1,3 @@
-//! Person-roles junction HTTP surface — grant / list / revoke role assignments.
-//!
-//! Admin-gated (ADR-0014). Revoke refuses to remove the tenant's LAST active
-//! `admin` assignment (lockout protection). As in the roles domain, the
-//! refusal is surfaced as `aborted` (409) — the same mapping the other
-//! data-invariant guards use (contract-suite pinned).
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -28,7 +21,7 @@ use crate::infra::db::roles_repo::ADMIN_ROLE_ID;
 
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
-const MAX_REASON_LEN: usize = 500; // VARCHAR(500)
+const MAX_REASON_LEN: usize = 500;
 
 /// Body of `POST /v1/person-roles` — grant a role to a person.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -98,12 +91,9 @@ pub struct ListParams {
     pub person: Option<Uuid>,
     pub role: Option<Uuid>,
     pub active: Option<bool>,
-    // Signed so a negative `?limit=` clamps to 1 rather than failing query
-    // deserialization.
     pub limit: Option<i64>,
 }
 
-/// `POST /v1/person-roles` — grant a role (admin only).
 pub async fn create_person_role(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -112,8 +102,6 @@ pub async fn create_person_role(
     let tenant = ctx.subject_tenant_id();
     let author = require_admin(&state.db, &ctx).await?;
 
-    // Per-field validation: `invalid_person_id` / `invalid_role_id` /
-    // `invalid_reason`.
     if req.person_id.is_nil() {
         return Err(invalid_field(
             "person_id",
@@ -150,7 +138,6 @@ pub async fn create_person_role(
     })?;
     tracing::info!(%person_role_id, person_id = %req.person_id, role_id = %req.role_id, author_person_id = %author, "person_roles.create");
 
-    // Read back the inserted row (its DB-assigned valid_from / created_at).
     let created = person_roles_repo::get_by_id(&state.db, tenant, person_role_id)
         .await
         .map_err(read_err)?
@@ -164,8 +151,6 @@ pub async fn create_person_role(
     ))
 }
 
-/// `GET /v1/person-roles` — list assignments (admin only). Filters: `?person=`,
-/// `?role=`, `?active=` (default false = all), `?limit=` (default 50, cap 500).
 pub async fn list_person_roles(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -192,8 +177,6 @@ pub async fn list_person_roles(
     }))
 }
 
-/// `DELETE /v1/person-roles/{id}` — revoke an assignment (admin only); refuses
-/// to remove the tenant's last active admin.
 pub async fn delete_person_role(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -207,7 +190,6 @@ pub async fn delete_person_role(
         return Err(reason_too_long());
     }
 
-    // Pre-fetch for audit + initial 404. A revoked row (valid_to set) is 404.
     let existing = match person_roles_repo::get_by_id(&state.db, tenant, id)
         .await
         .map_err(read_err)?
@@ -216,9 +198,6 @@ pub async fn delete_person_role(
         _ => return Err(not_found(id)),
     };
 
-    // The last-admin guard only matters when revoking an `admin` assignment; for
-    // any other role it is a no-op, so skip the tenant-wide FOR UPDATE lock and
-    // do a plain soft-delete (avoids contention with concurrent admin changes).
     let revoked = if existing.role_id == ADMIN_ROLE_ID {
         person_roles_repo::try_soft_delete_protecting_last_admin(
             &state.db,
@@ -239,7 +218,6 @@ pub async fn delete_person_role(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 0 rows: revoked concurrently (404) or the last-admin guard fired.
     let refetched = person_roles_repo::get_by_id(&state.db, tenant, id)
         .await
         .map_err(read_err)?;
@@ -266,12 +244,10 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read assignments").create()
 }
 
-/// `reason`, when present, must be at most 500 chars.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
 }
 
-/// Build a 400 field-violation error (`invalid_argument`).
 fn invalid_field(field: &str, message: &str, code: &str) -> CanonicalError {
     PersonRoleError::invalid_argument()
         .with_field_violation(field, message, code)

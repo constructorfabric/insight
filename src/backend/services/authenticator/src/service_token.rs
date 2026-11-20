@@ -1,25 +1,3 @@
-//! Service tokens (§10 G1, DD-AUTH-05) and the dedicated second listener
-//! (§10 G4, §11.8).
-//!
-//! No-user workloads (background jobs, seeds, the future permissions service)
-//! prove their identity with an RFC 7523 `private_key_jwt` client assertion:
-//! a short-lived JWT signed by the service's private key, verified here against
-//! a gitops-reviewable **registry** of public keys. Out comes a **normal
-//! gateway JWT** (`sub = service:<name>`, `sid = service:<name>`, `roles`
-//! including `"service"`), signed with the same ES256 key and published in the
-//! same JWKS — so a downstream service keeps exactly one verification path for
-//! user and service traffic.
-//!
-//! Service tokens are **always tenant-scoped** (tenant isolation): the request
-//! must name exactly one tenant (`tenant_id=<uuid>`), else it is rejected 400.
-//! There is no cross-tenant service token and no per-service opt-in flag.
-//!
-//! The endpoint lives on its own axum server bound to `token_bind_addr`
-//! (suggested 8093), NOT on the main REST host: the token surface must never
-//! share the browser/gateway port (§11.8). It carries only `POST /internal/token`
-//! and its own `/health`, and is deliberately absent from the public OpenAPI
-//! document. Graceful shutdown rides the toolkit's cancellation token.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -43,41 +21,21 @@ use crate::api::error::ServiceTokenError;
 use crate::config::{AuthenticatorConfig, ServiceTokensConfig};
 use crate::jwt::GatewayClaims;
 
-/// RFC 7523 client-assertion type for `client_credentials` (the only one we accept).
 const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
-/// The role every service token carries, so downstream can authorize
-/// machine callers off a single well-known role (§10 G1).
 const SERVICE_ROLE: &str = "service";
-/// `sub_type` claim value marking a service-principal token.
 const SERVICE_SUBJECT_TYPE: &str = "service";
 
-// ── Service registry (parsed at boot) ─────────────────────────────────────
-
-/// One registry entry, with its public keys pre-parsed into verifiers so a bad
-/// PEM fails the gear at boot rather than on the first token request.
 struct RegistryEntry {
-    /// Verifiers for the service's public key(s) — two during a rotation overlap.
     keys: Vec<DecodingKey>,
-    /// Roles to bake into the issued token (`"service"` is always added).
     roles: Vec<String>,
 }
 
-/// The parsed service registry — name -> public identity. Built from
-/// [`ServiceTokensConfig`]; immutable for the life of the process (reloaded on
-/// a pod roll when the gitops ConfigMap changes).
 pub struct ServiceRegistry {
     entries: HashMap<String, RegistryEntry>,
 }
 
 impl ServiceRegistry {
-    /// Parse every registry entry's public keys (inline `public_keys` and any
-    /// `public_key_paths`, resolved against `public_key_dir`) into ES256
-    /// verifiers, so a bad or missing PEM fails the gear at boot rather than on
-    /// the first token request.
-    ///
-    /// # Errors
-    /// Fails when a key file cannot be read or a PEM is not a valid EC public key.
     pub fn build(cfg: &ServiceTokensConfig) -> anyhow::Result<Self> {
         let key_dir = std::path::Path::new(&cfg.public_key_dir);
         let mut entries = HashMap::with_capacity(cfg.services.len());
@@ -126,15 +84,10 @@ impl ServiceRegistry {
     }
 }
 
-/// Parse an SPKI EC public-key PEM into an ES256 verifier.
 fn parse_ec_public_key(pem: &str) -> anyhow::Result<DecodingKey> {
     DecodingKey::from_ec_pem(pem.as_bytes()).context("parse EC public key PEM")
 }
 
-// ── Assertion verification (pure, unit-tested) ─────────────────────────────
-
-/// The RFC 7523 assertion claim set we read. `iss`/`aud`/`exp` are validated by
-/// `jsonwebtoken` (issuer/audience/expiry); the rest are checked explicitly.
 #[derive(Debug, Deserialize)]
 struct AssertionClaims {
     sub: String,
@@ -143,8 +96,6 @@ struct AssertionClaims {
     iat: u64,
 }
 
-/// A successfully verified assertion: which service signed it, and the `jti`
-/// (for the replay guard) plus `exp` (for the guard TTL).
 #[derive(Debug)]
 struct VerifiedAssertion {
     service: String,
@@ -152,14 +103,6 @@ struct VerifiedAssertion {
     exp: u64,
 }
 
-/// Verify a client assertion against the registry. Returns the reason string
-/// for a 401 on any failure — deliberately coarse so a caller learns nothing
-/// about *why* beyond "the assertion was not accepted".
-///
-/// Checks: `iss` names a registered service; the signature verifies against one
-/// of that service's public keys; `aud` equals the token endpoint URL; `exp`
-/// is in the future; `sub == iss == <service>`; and `exp - iat` is within the
-/// configured cap (RFC 7523 assertions are short-lived and single-use).
 fn verify_assertion(
     registry: &ServiceRegistry,
     expected_aud: &str,
@@ -167,18 +110,12 @@ fn verify_assertion(
     leeway_seconds: u64,
     assertion: &str,
 ) -> Result<VerifiedAssertion, &'static str> {
-    // `iss` picks the key set. Read it from the unverified payload first; the
-    // signature check against that service's registered key is what actually
-    // authenticates — a forged `iss` simply finds keys that won't verify.
     let iss = unverified_claim(assertion, "iss").ok_or("missing_iss")?;
     let entry = registry.get(&iss).ok_or("unknown_service")?;
 
     let mut validation = Validation::new(Algorithm::ES256);
     validation.set_audience(&[expected_aud]);
     validation.set_issuer(&[iss.as_str()]);
-    // `iat`/`jti` presence is enforced by the non-Option fields on
-    // AssertionClaims (deserialization fails without them), so they need not be
-    // repeated here — this list is the reserved-claim presence check.
     validation.set_required_spec_claims(&["iss", "sub", "aud", "exp"]);
     validation.validate_exp = true;
     validation.leeway = leeway_seconds;
@@ -190,7 +127,6 @@ fn verify_assertion(
                 verified = Some(data.claims);
                 break;
             }
-            // A backend failure is not a bad assertion; stop and say so.
             Err(error) if matches!(error.kind(), ErrorKind::Provider(_)) => {
                 return Err("crypto_unavailable");
             }
@@ -212,8 +148,6 @@ fn verify_assertion(
     })
 }
 
-/// Decode a string claim from an (unverified) compact JWT payload — used only
-/// to read `iss` so the right verifier key can be selected.
 fn unverified_claim(jwt: &str, field: &str) -> Option<String> {
     let payload_b64 = jwt.split('.').nth(1)?;
     let bytes = B64.decode(payload_b64).ok()?;
@@ -221,13 +155,6 @@ fn unverified_claim(jwt: &str, field: &str) -> Option<String> {
     value.get(field)?.as_str().map(ToOwned::to_owned)
 }
 
-/// Build the gateway JWT claims for a service token (§10 G1 / §3.8).
-///
-/// `sub` is a stable per-service UUID (RFC 4122 v5 over the service name — a
-/// clean UUID, not a `service:<name>` string), `sub_type = "service"` marks it
-/// so downstream maps it as a service principal, `roles` come from the registry
-/// with `"service"` guaranteed, and `tenant_id` is the requested tenant (service
-/// tokens are tenant-scoped — the handler rejects a request that names none).
 fn build_service_claims(
     cfg: &AuthenticatorConfig,
     service: &str,
@@ -248,8 +175,6 @@ fn build_service_claims(
         tenant_id: tenant_id.to_owned(),
         roles,
         sub_type: SERVICE_SUBJECT_TYPE.to_owned(),
-        // `sid` correlates a service's issuance in audit/trace; service tokens
-        // have no session, so it carries `service:<name>`.
         sid: format!("service:{service}"),
         iss: cfg.gateway_issuer.clone(),
         aud: cfg.jwt_audience.clone(),
@@ -259,9 +184,6 @@ fn build_service_claims(
     }
 }
 
-// ── HTTP layer (the second listener) ───────────────────────────────────────
-
-/// `POST /internal/token` success body (OAuth2 `client_credentials` shape).
 #[derive(Debug, Serialize)]
 struct TokenResponse {
     access_token: String,
@@ -269,7 +191,6 @@ struct TokenResponse {
     expires_in: u64,
 }
 
-/// `POST /internal/token` request body (form-encoded, RFC 7523 shape).
 #[derive(Debug, Default, Deserialize)]
 struct TokenRequest {
     #[serde(default)]
@@ -278,16 +199,11 @@ struct TokenRequest {
     client_assertion_type: Option<String>,
     #[serde(default)]
     client_assertion: Option<String>,
-    /// The single tenant id the token is scoped to (one and only one).
     #[serde(default)]
     tenant_id: Option<String>,
 }
 
-/// Handle a service-token request: validate the grant shape, verify the
-/// assertion, replay-guard its `jti`, apply the tenant-scope policy, then mint
-/// and return a normal gateway JWT.
-// Linear request handler (parse → verify → replay-guard → tenant policy → mint);
-// splitting it would scatter the flow without making it clearer.
+// Pedantic length lint: one linear parse → verify → replay-guard → mint flow.
 #[allow(clippy::too_many_lines)]
 async fn token_handler(
     State(state): State<Arc<AppState>>,
@@ -295,7 +211,6 @@ async fn token_handler(
 ) -> Response {
     let st = &state.cfg.service_tokens;
 
-    // Grant shape (RFC 7523 client_credentials). Malformed = 400.
     if req.grant_type.as_deref() != Some("client_credentials") {
         return bad_request(
             "grant_type",
@@ -314,10 +229,6 @@ async fn token_handler(
         return bad_request("client_assertion", "missing assertion", "MISSING");
     };
 
-    // Tenant isolation: service tokens are always tenant-scoped. A request that
-    // names no tenant is rejected up front (400) — before the assertion is
-    // verified or its jti consumed — so the caller can fix and retry. Where the
-    // service gets its tenant is the service's concern.
     let requested_tenant = req.tenant_id.as_deref().map(str::trim).unwrap_or_default();
     if requested_tenant.is_empty() {
         return bad_request(
@@ -326,8 +237,6 @@ async fn token_handler(
             "TENANT_REQUIRED",
         );
     }
-    // One and only one tenant per token: a comma-joined list is a caller bug —
-    // reject it rather than minting a token with a garbage tenant id.
     if requested_tenant.contains(',') {
         return bad_request(
             "tenant_id",
@@ -336,7 +245,6 @@ async fn token_handler(
         );
     }
 
-    // Verify signature + claims against the registry.
     let verified = match verify_assertion(
         &state.service_registry,
         &st.audience,
@@ -351,8 +259,6 @@ async fn token_handler(
         }
     };
 
-    // Replay guard: a valid assertion is single-use. Guard until it can no
-    // longer be accepted (its own remaining lifetime plus the skew leeway).
     let now = now_secs();
     let guard_ttl = verified.exp.saturating_sub(now) + st.clock_skew_leeway_seconds;
     match state
@@ -374,7 +280,6 @@ async fn token_handler(
         }
     }
 
-    // Registry entry is guaranteed present (verify_assertion matched it).
     let Some(entry) = state.service_registry.get(&verified.service) else {
         return unauthenticated("unknown_service");
     };
@@ -396,7 +301,6 @@ async fn token_handler(
         }
     };
 
-    // Every issuance is audited (§10 G1).
     tracing::info!(
         target: "audit",
         event = "service_token_issued",
@@ -430,14 +334,10 @@ async fn token_handler(
     .into_response()
 }
 
-/// Health of the token listener (liveness of the socket; the gear only binds it
-/// once Redis + keys are up, so a reachable `/health` implies both). Uses the
-/// same `/health` path the main host + k8s probes use, for one convention.
 async fn health_handler() -> Response {
     (StatusCode::OK, "ok").into_response()
 }
 
-/// The token listener's router: exactly the two endpoints it owns.
 fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/internal/token", post(token_handler))
@@ -445,22 +345,6 @@ fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-/// Bind the second listener and spawn its server, shutting down when `cancel`
-/// fires. Returns after the bind so the gear's `start` stays prompt; a bind
-/// failure surfaces at boot (fail closed).
-///
-/// # Errors
-/// Fails when `token_bind_addr` cannot be bound.
-// TODO(#1583): split the public and private surfaces into two containers
-// (sidecar) instead of one process with two listeners. The token endpoint is a
-// hand-rolled axum server here only because the toolkit REST host binds a
-// single address and OperationBuilder/OpenAPI target that one port (§11.8). A
-// clean split — the public gear (/auth/*, /internal/authz, JWKS) in one
-// container and a private service-token gear in a sidecar — would let each run
-// on the toolkit host with OperationBuilder + generated OpenAPI, gain a true
-// separate failure domain, and be network-scoped at the pod boundary rather
-// than per-port. Deferred: not worth a second image + shared-state (registry,
-// signing keys, Redis) wiring until there is a service-token consumer (step 07).
 pub async fn spawn(state: Arc<AppState>, cancel: CancellationToken) -> anyhow::Result<()> {
     let addr = state.cfg.service_tokens.token_bind_addr.clone();
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -521,7 +405,6 @@ mod tests {
         iat: u64,
     }
 
-    /// A fresh P-256 keypair: (PKCS#8 private PEM, SPKI public PEM).
     fn keypair() -> (String, String) {
         let secret = SecretKey::generate();
         let priv_pem = secret.to_pkcs8_pem(LineEnding::LF).unwrap().to_string();
@@ -554,8 +437,6 @@ mod tests {
         encode(&Header::new(Algorithm::ES256), claims, &key).unwrap()
     }
 
-    /// Assertion with `iat = now` and `exp = now + exp_delta` (delta may be
-    /// negative to model an already-expired assertion).
     fn assertion(service: &str, exp_delta: i64) -> Assertion {
         let now = now_secs();
         let exp = i64::try_from(now).unwrap() + exp_delta;
@@ -584,7 +465,6 @@ mod tests {
         let (_priv_pem, pub_pem) = keypair();
         let (attacker_priv, _) = keypair();
         let reg = registry("testclient", &pub_pem);
-        // Signed by a key the registry does not hold.
         let a = sign(&attacker_priv, &assertion("testclient", 30));
         assert_eq!(
             verify_assertion(&reg, AUD, 60, 30, &a).unwrap_err(),
@@ -620,7 +500,6 @@ mod tests {
     fn rejects_expired_assertion() {
         let (priv_pem, pub_pem) = keypair();
         let reg = registry("testclient", &pub_pem);
-        // exp 120 s in the past, well beyond the 5 s leeway.
         let a = sign(&priv_pem, &assertion("testclient", -120));
         assert_eq!(
             verify_assertion(&reg, AUD, 60, 5, &a).unwrap_err(),
@@ -641,7 +520,7 @@ mod tests {
                 aud: AUD.to_owned(),
                 jti: Uuid::now_v7().to_string(),
                 iat: now,
-                exp: now + 3600, // 1 h lifetime, cap is 60 s
+                exp: now + 3600,
             },
         );
         assert_eq!(
@@ -655,7 +534,6 @@ mod tests {
         let (priv_pem, pub_pem) = keypair();
         let reg = registry("testclient", &pub_pem);
         let now = now_secs();
-        // iss is the registered service, but sub disagrees.
         let a = sign(
             &priv_pem,
             &Assertion {
@@ -681,7 +559,6 @@ mod tests {
             ..Default::default()
         };
         let claims = build_service_claims(&cfg, "seeder", &[], "", 1_000);
-        // `sub` is a clean per-service UUIDv5 (deterministic), not `service:<name>`.
         assert_eq!(
             claims.sub,
             Uuid::new_v5(&Uuid::NAMESPACE_URL, b"service:seeder").to_string()

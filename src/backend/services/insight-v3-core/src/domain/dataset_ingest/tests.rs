@@ -16,7 +16,6 @@ struct NoTable {
     sorting_key: String,
 }
 
-/// One record as it reached the dataset's table.
 #[derive(Debug, Deserialize, clickhouse::Row)]
 struct LandedRecord {
     #[serde(with = "clickhouse::serde::uuid")]
@@ -65,7 +64,6 @@ impl Fixture {
         }
     }
 
-    /// Declares a dataset that stands, ready to take records.
     async fn a_ready_dataset(&self) -> R {
         self.mock
             .add(handlers::provide(vec![String::from("Atomic")]));
@@ -144,7 +142,6 @@ async fn a_dataset_still_being_made_takes_no_records() -> R {
 async fn a_record_that_reached_no_table_is_refused_rather_than_accepted() -> R {
     let fixture = Fixture::new();
     fixture.a_ready_dataset().await?;
-    // What a removal winning the race against this write looks like.
     fixture.mock.add(handlers::exception(60));
 
     let refused = fixture

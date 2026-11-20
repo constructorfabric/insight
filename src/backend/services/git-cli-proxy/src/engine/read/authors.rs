@@ -24,32 +24,15 @@ pub struct AuthorRow {
     pub commit_count: u64,
 }
 
-/// Every distinct author of a commit reachable from any branch, ascending by
-/// e-mail.
-///
-/// `since` bounds by committed date. It is applied to the enumerated result and
-/// NOT passed to `git log --since`, for the reason spelled out in
-/// [`super::commits::enumerate`]: `--since` is a traversal cutoff, so an
-/// author whose only qualifying commit sits behind an older parent would never
-/// be reached.
-///
-/// # Errors
-///
-/// [`GitError`] when the git invocation fails.
+// Not `git log --since`: it is a traversal cutoff, so an author whose only
+// qualifying commit sits behind an older parent would never be reached.
 pub async fn read(
     runner: &GitRunner,
     git_dir: &Path,
     creds: &GitCredentials,
     since: Option<&str>,
 ) -> Result<Vec<AuthorRow>, GitError> {
-    // The NAME goes last, so it is the field that absorbs whatever a record
-    // has left over. Git strips newlines out of an ident, so no field here can
-    // carry the separator — but the e-mail is the identity every row is keyed
-    // and grouped on, and it costs nothing to keep it fully delimited rather
-    // than resting that on git's behaviour.
     let format = format!("--pretty=format:%H{FIELD}%cI{FIELD}%ae{FIELD}%an");
-    // `--branches` for the same reason the commit walk uses it: reachability
-    // from a branch is the contract.
     let args = vec!["log", "--branches", "--no-color", "-z", &format];
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
@@ -58,11 +41,6 @@ pub async fn read(
     Ok(fold(&text, since))
 }
 
-/// Collapse the walk to one row per e-mail.
-///
-/// The e-mail is the identity: a person commits under one address with their
-/// name spelled several ways, and the name is carried only so a consumer can
-/// label the row. The most recent commit wins both the name and the sample.
 fn fold(text: &str, since: Option<&str>) -> Vec<AuthorRow> {
     let bound = since.and_then(parse_instant);
     let mut by_email: HashMap<String, AuthorRow> = HashMap::new();
@@ -83,8 +61,6 @@ fn fold(text: &str, since: Option<&str>) -> Vec<AuthorRow> {
         else {
             continue;
         };
-        // An unparseable date is kept, matching retain_keys_since: a row whose
-        // date we cannot read is not evidence that it falls outside the window.
         if bound.is_some_and(|bound| parse_instant(committed_date).is_some_and(|at| at < bound)) {
             continue;
         }
@@ -166,7 +142,6 @@ mod tests {
 
     #[test]
     fn newest_is_decided_by_instant_not_by_text() {
-        // +02:00 sorts after Z as text while being the earlier instant.
         let text = record(SHA_A, "2026-08-01T09:30:00Z", "Ada", "ada@example.com")
             + &record(SHA_B, "2026-08-01T10:00:00+02:00", "Ada", "ada@example.com");
 
@@ -202,9 +177,6 @@ mod tests {
 
     #[test]
     fn an_ident_carrying_the_separator_cannot_shift_another_authors_row() {
-        // The name is attacker-written and goes last, so a separator inside it
-        // is absorbed by the name itself: the row still keys on the real
-        // e-mail, and no forged value becomes an author of its own.
         let text =
             format!("{SHA_A}\n2026-08-01T10:00:00+00:00\neve@example.com\nEve\nfake@example.com\0")
                 + &record(SHA_B, "2026-08-02T10:00:00+00:00", "Bo", "bo@example.com");
@@ -229,8 +201,6 @@ mod tests {
 
     #[test]
     fn an_author_with_no_email_claims_no_row_and_disturbs_no_other() {
-        // Git records an empty ident e-mail as `<>`; the row has no identity to
-        // key on, and dropping it must not shift the record that follows.
         let text = record(SHA_A, "2026-08-01T10:00:00+00:00", "No Address", "")
             + &record(SHA_B, "2026-08-02T10:00:00+00:00", "Bo", "bo@example.com");
 

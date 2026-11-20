@@ -1,30 +1,3 @@
-# Insight Analytics API — gears-rust host config.
-#
-# Usage: analytics --config config/insight.yaml
-#        analytics --config config/insight.yaml migrate
-#
-# Auth is ENABLED on the api-gateway host (NGINX_BFF R1): the upstream
-# `cf-gears-oidc-authn-plugin` verifies the ES256 gateway JWT (signature / iss /
-# aud / exp) against the authenticator's JWKS — resolved via OIDC discovery
-# (`{issuer}/.well-known/openid-configuration` -> `jwks_uri`) — and maps the
-# signed claims straight into the request SecurityContext via `claim_mapping`
-# (sub -> subject_id, tenant_id -> subject_tenant_id, sub_type -> subject_type,
-# roles -> token_scopes). No bespoke wrapper, no `X-Tenant-ID` selector: the
-# single signed `tenant_id` claim is the sole tenant authority. A request
-# without a valid gateway JWT carrying a `tenant_id` gets 401.
-#
-# Env overrides (scalar leaves only; prefix `APP__gears__<gear>__config__…`):
-#   APP__gears__analytics__config__database_url
-#   APP__gears__analytics__config__clickhouse_url
-#   APP__gears__analytics__config__clickhouse_database
-#   APP__gears__analytics__config__clickhouse_user
-#   APP__gears__analytics__config__clickhouse_password
-#   APP__gears__analytics__config__identity_url
-#   APP__gears__analytics__config__redis_url
-# The oidc-authn-plugin's verification config is nested/list-shaped
-# (jwt.trusted_issuers, expected_audience, http_client.custom_ca_certificate_paths)
-# and so is supplied by the deployment's config layer (compose bind-mount / Helm
-# configmap render), NOT by APP__ env vars.
 
 server:
   home_dir: "~/.insight"
@@ -41,8 +14,6 @@ gears:
       # or two bucket layouts collide in one series.
       metrics:
         prefix: "host"
-      # analytics is addressed directly (the platform gateway proxies
-      # `/analytics` → here), so no prefix_path is set.
       bind_addr: "0.0.0.0:8081"
       enable_docs: true
       cors_enabled: true
@@ -50,8 +21,6 @@ gears:
         title: "Insight Analytics API"
         version: "0.1.0"
         description: "Read-only query service over predefined ClickHouse metrics"
-      # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT and
-      # maps its claims into the SecurityContext (R1). No auth_disabled path.
       auth_disabled: false
 
   service-discovery:
@@ -65,30 +34,18 @@ gears:
     config:
       vendor: "hyperspot"
 
-  # Downstream gateway-JWT verification (NGINX_BFF R1). Verifies the ES256
-  # gateway JWT against the authenticator's JWKS (resolved via OIDC discovery on
-  # the issuer) and maps its claims into the SecurityContext. The deployment
-  # supplies the real issuer + self-signed CA (dev/e2e) via the config layer;
-  # the placeholders below (`.invalid`, never resolvable) fail closed.
   oidc-authn-plugin:
     config:
       vendor: "hyperspot"
       priority: 50
       jwt:
-        # ES256 only — the gateway JWT is ECDSA P-256 (smaller signature, fast
-        # verify). `none` is always rejected by the plugin.
         supported_algorithms: ["ES256"]
         clock_skew_leeway: 60s
         require_audience: true
         expected_audience:
           - "internal-services"
-        # Ordered allowlist; `issuer` = the token `iss` (authenticator
-        # gateway_issuer). `discovery_url` omitted → `{issuer}` is used, i.e.
-        # `{issuer}/.well-known/openid-configuration`. Overridden per deploy.
         trusted_issuers:
           - issuer: "https://gateway.invalid"
-        # Signed claims → SecurityContext. `tenant_id` is REQUIRED (a token
-        # without it is rejected — "no tenant, no auth", no Nil fallback).
         claim_mapping:
           subject_id: "sub"
           subject_tenant_id: "tenant_id"
@@ -97,9 +54,6 @@ gears:
         required_claims: []
       http_client:
         request_timeout: 5s
-        # Dev/e2e self-signed CA (for the authenticator's TLS discovery front)
-        # is injected per deploy:
-        #   custom_ca_certificate_paths: ["/certs/ca.pem"]
       # Client-credentials exchange is UNUSED by analytics (no outbound S2S
       # calls) but the block is required config. `discovery_url` must resolve to
       # a trusted issuer; it is never fetched unless an exchange is performed.
@@ -123,9 +77,6 @@ gears:
     config:
       vendor: "hyperspot"
 
-  # Zero-config: derives the tenant from the SecurityContext at request time.
-  # The oidc-authn-plugin sets that context's tenant from the gateway JWT's
-  # single signed `tenant_id` claim (mapped to `subject_tenant_id`).
   single-tenant-tr-plugin:
     config:
       vendor: "hyperspot"
@@ -133,21 +84,13 @@ gears:
 
   analytics:
     config:
-      # HTTP bind is owned by api-gateway above; retained for diagnostics only.
       bind_addr: "0.0.0.0:8081"
-      # Connection strings are injected per-deployment via env overrides
-      # (APP__gears__analytics__config__*) from the umbrella Secret /
-      # compose. Left empty here so no credential is committed and the
-      # runnable `-c` path can't silently point at a shared default.
       database_url: ""
       clickhouse_url: ""
       clickhouse_database: "insight"
-      # clickhouse_user / clickhouse_password: omit for no-auth ClickHouse.
       identity_url: ""
       visibility_policy: "org_chart"
       redis_url: ""
       metric_catalog:
         tenant_metrics_enabled: false
-        # Per-tenant observation filter on metric reads. Off until the ingest
-        # tenant is aligned with the session tenant.
         enforce_tenant_scope: false

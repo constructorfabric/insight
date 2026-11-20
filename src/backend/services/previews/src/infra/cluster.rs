@@ -1,8 +1,3 @@
-//! Kubernetes I/O for the experiment trio: create, delete, list — always in
-//! the one configured namespace. Every call is timeout-bounded, and 404/409
-//! are outcomes, not errors (same conventions as the gears-rust k8s
-//! precedent).
-
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -18,32 +13,25 @@ use crate::domain::objects::EXPERIMENT_LABEL;
 
 const K8S_API_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The one namespace this service operates in, with a client scoped to it.
 #[derive(Clone)]
 pub struct Cluster {
     client: Client,
     namespace: String,
 }
 
-/// Why a create did not happen.
 #[derive(Debug)]
 pub enum CreateError {
-    /// An object of that name already exists (409 on the first object).
     AlreadyExists,
     Failed(anyhow::Error),
 }
 
-/// What a delete found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteOutcome {
     Deleted,
-    /// None of the trio existed.
     NotFound,
 }
 
 impl Cluster {
-    /// In-cluster (or kubeconfig) client. Fails boot when no Kubernetes
-    /// environment is reachable — this service is nothing without one.
     pub async fn connect(namespace: String) -> anyhow::Result<Self> {
         let client = Client::try_default().await.context("kube client init")?;
         Ok(Self { client, namespace })
@@ -56,8 +44,6 @@ impl Cluster {
         Api::namespaced(self.client.clone(), &self.namespace)
     }
 
-    /// Every experiment Deployment in the namespace (label-selected); the
-    /// Deployment carries the annotations and readiness the API serves.
     pub async fn list_experiment_deployments(&self) -> anyhow::Result<Vec<Deployment>> {
         let params = ListParams::default().labels(EXPERIMENT_LABEL);
         let list = tokio::time::timeout(K8S_API_TIMEOUT, self.api::<Deployment>().list(&params))
@@ -67,9 +53,6 @@ impl Cluster {
         Ok(list.items)
     }
 
-    /// Create the trio in order. A 409 on the Deployment means the experiment
-    /// exists; a failure later rolls the already-created objects back
-    /// (best-effort) so a half-experiment never lingers.
     pub async fn create_trio(
         &self,
         deployment: Deployment,
@@ -82,10 +65,6 @@ impl Cluster {
             Created::Failed(e) => return Err(CreateError::Failed(e)),
         }
 
-        // A 409 on a follow-up object is leftover state from a broken past
-        // delete, not a second live experiment (the Deployment create above
-        // was the existence check) — replacing it would need a read-modify
-        // cycle, so surface it and roll back instead.
         for step in [
             self.create_one(&service).await,
             self.create_one(&route).await,
@@ -130,8 +109,6 @@ impl Cluster {
         }
     }
 
-    /// Delete the trio by resource name (`preview-<experiment>`); each 404 is
-    /// tolerated, and all three missing reports [`DeleteOutcome::NotFound`].
     pub async fn delete_trio(&self, resource_name: &str) -> anyhow::Result<DeleteOutcome> {
         let deployment = self.delete_one::<Deployment>(resource_name).await?;
         let service = self.delete_one::<Service>(resource_name).await?;

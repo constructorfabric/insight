@@ -26,7 +26,6 @@ struct Harness {
     definitions: Arc<MemoryDefinitions>,
 }
 
-/// A pinned list as the route answers it: each pin by id, named after it.
 fn listed(ids: &[&str]) -> Value {
     let pins: Vec<Value> = ids
         .iter()
@@ -106,7 +105,6 @@ impl Harness {
         Answer { status, body }
     }
 
-    /// Stores a dashboard under an id the case chooses, named after it.
     async fn dashboard(&self, id: &str) {
         let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
 

@@ -42,7 +42,6 @@ fn verifier() -> TokenVerifier {
     TokenVerifier::new(&SecretString::from(TEST_TOKEN.to_owned()))
 }
 
-/// A dataset that stands, ready to take records into `table`.
 async fn a_ready_dataset(url: &str, table: &str) -> crate::api::Datasets {
     let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
     let name = crate::domain::definition::DefinitionId::parse("synthetic_events")
@@ -90,7 +89,6 @@ fn state(mock: &Mock, datasets: crate::api::Datasets) -> Arc<AppState> {
     ))
 }
 
-/// The service with one dataset standing, which is what a sender writes into.
 async fn app(mock: &Mock) -> Router {
     let datasets = a_ready_dataset(mock.url(), "ds_synthetic_events_1").await;
 

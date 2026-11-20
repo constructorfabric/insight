@@ -1,5 +1,3 @@
-//! Shared `?limit=` and `?cursor=` handling for the list endpoints.
-
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde::Serialize;
@@ -8,45 +6,25 @@ use uuid::Uuid;
 
 use crate::domain::resolution::EXCLUDED_PERSON;
 
-/// Cursor envelope version. Bumped when the envelope itself changes; two key
-/// shapes of the same version are told apart by [`PagePosition::KIND`].
 const CURSOR_VERSION: u8 = 1;
 
-/// Ceiling on a presented cursor. A position is a label and a few identifiers;
-/// anything longer is not one of ours, and refusing it by length keeps a
-/// hand-made token from reaching the JSON parser at all.
 const MAX_CURSOR_BYTES: usize = 4 * 1024;
 
-/// A page position that can be handed to a client and read back.
-///
-/// INVARIANT: `KIND` names the shape, and a cursor is only decoded into the
-/// shape it was issued for. The version alone cannot do that — two listings mint
-/// same-version tokens, and one field name in common would be enough for one
-/// endpoint's token to deserialize as the other's and resume at a position that
-/// listing never ordered.
 pub(crate) trait PagePosition: Serialize + DeserializeOwned {
     const KIND: &'static str;
 }
 
-/// Clamp `?limit=` to `[1, max]`; negatives → 1, absent → `default` — a
-/// nonsense value never 400s the request.
 pub(crate) fn clamp_limit(limit: Option<i64>, default: u64, max: u64) -> u64 {
     limit.map_or(default, |l| u64::try_from(l).unwrap_or(1).clamp(1, max))
 }
 
-/// Why a presented cursor cannot be walked.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum CursorRejected {
-    /// Not a token this service issued (or one issued by an older shape).
     Malformed,
-    /// Issued for a different query. Walking it here would resume at a
-    /// position the new filter never ordered, silently skipping or repeating
-    /// rows — the caller must start the narrowed list from its first page.
     ForeignQuery,
 }
 
 impl CursorRejected {
-    /// The message the 400 carries. One wording per endpoint would drift.
     pub(crate) const fn message(&self) -> &'static str {
         match self {
             Self::Malformed => "not a cursor this service issued",
@@ -57,14 +35,6 @@ impl CursorRejected {
     }
 }
 
-/// The position of the last row served, bound to the listing, the tenant and the
-/// query that ordered it.
-///
-/// INVARIANT: `q` is the caller-visible query the page was ordered under. It
-/// travels inside the token rather than as a hash so a mismatch can say which
-/// half is wrong, and so the endpoints need no shared secret. `t` pins the tenant
-/// the position was ordered within: two tenants browse under the same blank
-/// query, and one tenant's position means nothing in another's list.
 #[derive(Debug, Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope<K> {
@@ -75,11 +45,6 @@ struct Envelope<K> {
     k: K,
 }
 
-/// Issue the cursor for `key`, ordered for `tenant` under `query`.
-///
-/// # Errors
-/// Fails only if the key cannot be serialized — a bug in the key type, which
-/// the caller surfaces as an internal error rather than as a missing page.
 pub(crate) fn encode_cursor<K: PagePosition>(
     tenant: Uuid,
     query: &str,
@@ -95,7 +60,6 @@ pub(crate) fn encode_cursor<K: PagePosition>(
     Ok(B64.encode(serde_json::to_vec(&envelope)?))
 }
 
-/// Read the position out of a cursor presented for `tenant` and `query`.
 pub(crate) fn decode_cursor<K: PagePosition>(
     cursor: &str,
     tenant: Uuid,
@@ -119,13 +83,9 @@ pub(crate) fn decode_cursor<K: PagePosition>(
     Ok(envelope.k)
 }
 
-/// A typed query, not a batch filter.
 pub(crate) const MAX_TERMS: usize = 8;
-/// A ceiling on what each LIKE probe of the journal scan compares against.
 pub(crate) const MAX_QUERY_CHARS: usize = 200;
 
-/// Terms of `q`, capped in count and length. The refusal is returned as text,
-/// so each surface reports it under its own error domain.
 pub(crate) fn search_terms(q: &str) -> Result<Vec<String>, String> {
     if q.chars().count() > MAX_QUERY_CHARS {
         return Err(format!("at most {MAX_QUERY_CHARS} characters are accepted"));
@@ -161,7 +121,6 @@ pub(crate) fn person_terms_name_nobody(
         || person_ids.windows(2).any(|ids| ids[0] != ids[1])
 }
 
-/// The position a cursor carries, or nothing when none was presented.
 pub(crate) fn resume_from<K: PagePosition>(
     cursor: Option<&str>,
     tenant: Uuid,
@@ -173,8 +132,6 @@ pub(crate) fn resume_from<K: PagePosition>(
     decode_cursor::<K>(cursor, tenant, query).map(Some)
 }
 
-/// One page out of `limit + 1` rows: the extra row means another page exists
-/// and is never served, so the cursor is minted from the last row that is.
 pub(crate) fn cut_to_page<Row, K: PagePosition>(
     mut rows: Vec<Row>,
     limit: u64,
@@ -214,8 +171,6 @@ mod tests {
         const KIND: &'static str = "test-key";
     }
 
-    /// A second shape whose fields are a superset of the first's — the shape
-    /// pair a version number cannot tell apart.
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     struct OtherKey {
         label: String,
@@ -299,9 +254,6 @@ mod tests {
 
     #[test]
     fn a_position_ordered_for_another_tenant_is_not_a_position_here() -> R {
-        // Every tenant browses under the same blank query, so the query alone
-        // separates nothing: resuming a neighbour's position would skip whoever
-        // sorts before it and report the list as complete.
         let cursor = encode_cursor(TENANT, "", &key())?;
 
         assert_eq!(
@@ -313,8 +265,6 @@ mod tests {
 
     #[test]
     fn a_cursor_is_only_read_back_as_the_shape_it_was_issued_for() -> R {
-        // The fields line up, so serde would accept it. The shape tag is what
-        // refuses it — one listing's position is not another's.
         let cursor = encode_cursor(
             TENANT,
             "iva",

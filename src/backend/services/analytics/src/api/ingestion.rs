@@ -1,23 +1,3 @@
-//! Ingestion intensity — the admin ops read over `insight.bronze_insert_events`.
-//!
-//! Answers "how hard is ingestion working, and which connector is doing it" at
-//! two grains: 15-minute buckets for trend, 1-second buckets for a live
-//! close-up. Infrastructure-wide by construction: bronze rows carry no tenant,
-//! so unlike every other analytics surface this read is not tenant-scoped —
-//! which is exactly why it is admin-gated rather than license-gated.
-//!
-//! The underlying view is `merge(REGEXP('^bronze_'), '.*')`, so its table set
-//! resolves per query and a newly deployed connector appears here with no
-//! rebuild. It performs no dedup on purpose: duplicate physical rows ARE the
-//! signal this surface measures.
-//!
-//! Semantics the UI must state, not hide: `extracted_at` is
-//! `_airbyte_extracted_at`, stamped by the SOURCE at extraction time. The
-//! destination buffers and flushes in batches, so rows can land in ClickHouse
-//! up to ~1h after the timestamp they are bucketed by. This is EXTRACTION
-//! intensity; true insert times would need `system.part_log`, which is
-//! disabled on the clusters.
-
 use std::sync::{Arc, LazyLock};
 
 use axum::Json;
@@ -32,35 +12,14 @@ use toolkit_canonical_errors::CanonicalError;
 use super::error::IngestionError;
 use super::{ADMIN_ONLY, AppState, require_admin};
 
-/// The gold ops view, owned by `src/ingestion/gold/bronze_insert_events.sql`.
-/// The service holds SELECT here and never CREATE.
 const VIEW: &str = "insight.bronze_insert_events";
 
-/// Group cap. Past this a chart cannot be read anyway, and an unbounded
-/// GROUP BY over every bronze database is not a shape to hand a browser.
-/// The response reports when it clipped rather than lying by omission.
 const MAX_POINTS: usize = 50_000;
 
-/// Concurrent reads of this surface, and how long a caller waits for a slot.
-///
-/// Bounding one aggregation does not bound how many run at once, and every one
-/// of them scans across every bronze database — the widest read the service
-/// makes. The ceiling is lower than the drilldown's for that reason.
 const MAX_CONCURRENT_READS: usize = 4;
 const ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 static READ_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_READS));
 
-/// Settings that bound the aggregation itself.
-///
-/// `LIMIT` is applied AFTER grouping, so on its own it caps what is returned
-/// and not what is built: the window bounds the bucket count, but the band
-/// count is whatever the bronze databases happen to hold. `break` stops the
-/// aggregation from taking on new keys instead of failing the query, which
-/// turns an over-wide read into a short answer — and a short answer is only
-/// honest because it is reported as `truncated`.
-///
-/// The shared client already applies `max_execution_time`, `max_threads` and
-/// `max_memory_usage`; this is the cardinality bound those do not express.
 pub(crate) fn aggregation_settings() -> [(&'static str, String); 2] {
     [
         ("max_rows_to_group_by", MAX_POINTS.to_string()),
@@ -109,8 +68,6 @@ impl Grain {
         }
     }
 
-    /// Widest answerable window. A second-grain month would group 2.6M buckets
-    /// before the cap could clip anything.
     pub(crate) fn max_span(self) -> Duration {
         match self {
             Self::FifteenMinutes => Duration::days(400),
@@ -118,7 +75,6 @@ impl Grain {
         }
     }
 
-    /// Span used when the caller pins neither bound.
     fn default_span(self) -> Duration {
         match self {
             Self::FifteenMinutes => Duration::days(1),
@@ -144,8 +100,6 @@ impl Series {
     const STREAM: &'static str = "stream";
     const TOTAL: &'static str = "total";
 
-    /// Defaults to the grouping the scope implies: org-wide reads band by
-    /// connector, a scoped read bands by the stream inside it.
     pub(crate) fn parse(raw: Option<&str>, scoped: bool) -> Result<Self, CanonicalError> {
         let default = if scoped {
             Self::STREAM
@@ -164,7 +118,6 @@ impl Series {
         }
     }
 
-    /// The key column. `Total` collapses to one band whose name says so.
     fn key_expr(self) -> &'static str {
         match self {
             Self::Connector => "connector",
@@ -174,13 +127,6 @@ impl Series {
     }
 }
 
-/// A `source_database` value, e.g. `bronze_bamboohr`. Filtering on this column
-/// maps to `merge()`'s `_database` virtual column and prunes non-matching
-/// tables before any data is read, so it is the cheap way to scope.
-///
-/// Validated as a strict slug rather than escaped: the value is interpolated
-/// into a `merge()` scan, and a permissive filter there is the whole attack
-/// surface of this endpoint.
 fn parse_scope(raw: Option<&str>) -> Result<Option<String>, CanonicalError> {
     let Some(scope) = raw.filter(|s| !s.is_empty()) else {
         return Ok(None);
@@ -200,8 +146,6 @@ fn parse_scope(raw: Option<&str>) -> Result<Option<String>, CanonicalError> {
     Ok(Some(scope.to_owned()))
 }
 
-/// The resolved read window. Both bounds are always concrete by the time this
-/// exists, so the response can echo what was actually read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Window {
     pub(crate) from: DateTime<Utc>,
@@ -209,8 +153,6 @@ pub(crate) struct Window {
 }
 
 impl Window {
-    /// `to` defaults to now, `from` to one default span before it. RFC 3339
-    /// only — the one caller is the SPA, and `Date.toISOString()` emits it.
     pub(crate) fn resolve(
         from: Option<&str>,
         to: Option<&str>,
@@ -311,8 +253,6 @@ pub(crate) fn intensity_sql(grain: Grain, series: Series, scoped: bool) -> Strin
     } else {
         ""
     };
-    // The cap is fetched with one extra row so a full page is distinguishable
-    // from a clipped one without a second COUNT over the merge() scan.
     let limit = MAX_POINTS + 1;
     // `toString(DateTime64)` formats in the SERVER's timezone. The column is
     // timezone-less, the struct calls the result UTC and the chart appends a
@@ -329,12 +269,6 @@ pub(crate) fn intensity_sql(grain: Grain, series: Series, scoped: bool) -> Strin
     )
 }
 
-/// Everything the read needs, resolved from the query string in one place.
-///
-/// Each parser is closed and tested on its own, but the ORDER and the wiring
-/// between them are their own contract: `series` takes its default from whether
-/// a scope survived parsing, and the window's ceiling depends on the grain. A
-/// handler cannot assert that without a warehouse behind it, so it lives here.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct IntensityPlan {
     pub(crate) grain: Grain,
@@ -344,9 +278,6 @@ pub(crate) struct IntensityPlan {
 }
 
 impl IntensityPlan {
-    /// Refusals come in the order a caller can act on: what the read is
-    /// bucketed by, then what it is scoped to, then how it is banded, then the
-    /// window — each one already decided by the time the next is read.
     pub(crate) fn resolve(
         query: &IngestionIntensityQuery,
         now: DateTime<Utc>,
@@ -399,9 +330,6 @@ pub async fn get_ingestion_intensity(
         .fetch_all::<IngestionPoint>()
         .await
         .map_err(read_error)?;
-    // At or above the cap the aggregation may have stopped taking new keys, so
-    // the answer is short. Erring toward saying so is the safe direction: the
-    // alternative is presenting a partial chart as a complete one.
     let truncated = points.len() >= MAX_POINTS;
     points.truncate(MAX_POINTS);
 

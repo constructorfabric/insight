@@ -1,8 +1,3 @@
-//! The definition store the tests use.
-//!
-//! It keeps definitions in a map, so a test that stores one and reads it back
-//! asserts on behaviour rather than on a database's wire protocol.
-
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
@@ -35,14 +30,12 @@ struct KeptFolder {
     updated_at: DateTime<Utc>,
 }
 
-/// One dashboard's place in one folder.
 #[derive(Debug, Clone, Copy)]
 struct KeptEntry {
     placed_by: Option<PersonId>,
     carries: bool,
 }
 
-/// The tags one dashboard carries, all of one owner's scope.
 #[derive(Debug, Clone)]
 struct Tagged {
     scope: Owner,
@@ -52,7 +45,6 @@ struct Tagged {
 #[derive(Debug, Default, Clone)]
 struct Stored {
     definitions: BTreeMap<Key, StoredDefinition>,
-    /// Dashboards with an owner; any other is ownerless.
     owners: BTreeMap<String, PersonId>,
     dashboard_grants: BTreeMap<(String, Grantee), Grant>,
     folders: BTreeMap<FolderId, KeptFolder>,
@@ -62,7 +54,6 @@ struct Stored {
     pinned: BTreeMap<PersonId, Vec<String>>,
 }
 
-/// The strongest of these grants reaching `caller`.
 fn reaching<'g>(
     grants: impl Iterator<Item = (&'g Grantee, &'g Grant)>,
     caller: Caller,
@@ -143,15 +134,12 @@ impl Stored {
         })
     }
 
-    /// The same rule the store's predicate is.
     fn visible(&self, dashboard: &str, caller: Caller) -> bool {
         self.standing(dashboard, caller)
             .and_then(|standing| access(caller, &standing))
             .is_some()
     }
 
-    /// Whether `person` may make a carrying entry of the dashboard by its
-    /// owner and grants alone, as the store's demotion reads it.
     fn qualifies(&self, dashboard: &str, person: PersonId) -> bool {
         if self.owners.get(dashboard) == Some(&person) {
             return true;
@@ -166,14 +154,10 @@ impl Stored {
             })
     }
 
-    /// Whether an entry `person` places now carries, as the store's insert
-    /// reads it: an ownerless dashboard's always does.
     fn may_carry(&self, dashboard: &str, person: PersonId) -> bool {
         self.owner_of(dashboard) == Owner::Unowned || self.qualifies(dashboard, person)
     }
 
-    /// Stops each carrying entry of an owned dashboard whose placer no
-    /// longer qualifies from carrying.
     fn demote(&mut self, dashboard: &str) {
         if self.owner_of(dashboard) == Owner::Unowned {
             return;
@@ -252,7 +236,6 @@ impl Stored {
         self.definitions.remove(&key).is_some()
     }
 
-    /// The same rule the store's folder clauses are.
     fn in_folder(&self, dashboard: &str, caller: Caller, filter: FolderFilter) -> bool {
         let mut holding = self
             .entries
@@ -267,8 +250,6 @@ impl Stored {
         }
     }
 
-    /// Copies each owned folder entry of `from` the placer may arrange to
-    /// `to`, carrying.
     fn carry_entries(&mut self, from: &str, to: &str, placer: Caller) {
         let kept: Vec<FolderId> = self
             .entries
@@ -304,7 +285,6 @@ impl Stored {
             })
     }
 
-    /// Ordered by name, then id, as the store's page is.
     fn matching(&self, kind: DefinitionKind, needle: &str) -> Vec<LibraryEntry> {
         let needle = needle.to_lowercase();
         let mut matched: Vec<LibraryEntry> = self
@@ -342,8 +322,6 @@ fn paged(matched: Vec<LibraryEntry>, page: Page) -> LibraryPage {
 #[derive(Debug, Default)]
 pub(crate) struct MemoryDefinitions {
     stored: Mutex<Stored>,
-    /// Set to fail every write, and every look at who may see a dashboard,
-    /// for the cases about a store that is down.
     failing: bool,
 }
 
@@ -352,7 +330,6 @@ impl MemoryDefinitions {
         Self::default()
     }
 
-    /// A store that refuses every write, for the cases about one that is down.
     pub(crate) fn refusing() -> Self {
         Self {
             failing: true,
@@ -364,10 +341,6 @@ impl MemoryDefinitions {
         (kind.table(), id.as_str().to_owned())
     }
 
-    /// Stores `body` under `id`, labelled by the id itself, whatever it held.
-    ///
-    /// For a test that needs a definition in place without saying how it got
-    /// there.
     #[expect(
         clippy::unused_async,
         clippy::unused_async_trait_impl,
@@ -386,7 +359,6 @@ impl MemoryDefinitions {
         Ok(())
     }
 
-    /// Stores a dashboard under `id`, labelled by the id, as `owner`'s.
     pub(crate) async fn seed_owned(
         &self,
         id: &DefinitionId,
@@ -399,7 +371,6 @@ impl MemoryDefinitions {
         Ok(())
     }
 
-    /// Grants the dashboard to `viewer` as a viewer, as `owner` would.
     pub(crate) async fn seed_viewer(
         &self,
         dashboard: &DefinitionId,
@@ -423,7 +394,6 @@ impl MemoryDefinitions {
         Ok(())
     }
 
-    /// A folder no one owns, as one from before ownership is.
     pub(crate) fn seed_ownerless_folder(&self, name: &str) -> FolderId {
         let id = FolderId::new();
         let name = FolderName::parse(name).unwrap_or_else(|error| panic!("{error}"));
@@ -439,8 +409,6 @@ impl MemoryDefinitions {
         id
     }
 
-    /// An entry as the migration copies a legacy folder: carrying, placed by
-    /// no one.
     pub(crate) fn seed_entry(&self, folder: FolderId, dashboard: &DefinitionId) {
         self.lock().entries.insert(
             (folder, dashboard.as_str().to_owned()),
@@ -451,8 +419,6 @@ impl MemoryDefinitions {
         );
     }
 
-    /// Whether the dashboard's entry in the folder carries, or none without
-    /// one.
     pub(crate) fn carries(&self, folder: FolderId, dashboard: &DefinitionId) -> Option<bool> {
         self.lock()
             .entries
@@ -601,7 +567,6 @@ impl Definitions for MemoryDefinitions {
 
     async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError> {
         self.writable()?;
-        // INVARIANT: all or nothing, as the real transaction is.
         let mut stored = self.lock();
         let mut applied = stored.clone();
 

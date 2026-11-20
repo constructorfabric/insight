@@ -1,5 +1,3 @@
-//! Rules and computation: everything decidable without reaching another system.
-
 pub(crate) mod access;
 pub(crate) mod alerts;
 pub(crate) mod assistant;

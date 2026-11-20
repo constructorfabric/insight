@@ -37,8 +37,6 @@ struct PeopleSearch<'a> {
     rostered: &'a [Uuid],
 }
 
-// INVARIANT: binds follow the placeholders — the window, then a search's
-// tenant, needle twice and roster hits, then the identity join's tenant.
 fn people_query(
     ch: &insight_clickhouse::Client,
     binds: &WindowBinds,
@@ -86,7 +84,6 @@ fn people_sql(order: Order<PeopleSort>, search: Option<&PeopleSearch<'_>>) -> St
     )
 }
 
-/// Excludes the two events already counted as visits.
 fn actions_sql(visitors: &str, order: Order<ActionsSort>) -> String {
     let order = order.clause("");
     format!(

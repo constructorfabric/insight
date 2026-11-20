@@ -7,17 +7,9 @@ use thiserror::Error;
 
 const DEFAULT_CLICKHOUSE_DATABASE: &str = "insight";
 const DEFAULT_IDENTITY_DATABASE: &str = "identity";
-/// Datasets keep their records apart from the warehouse the rest of Insight
-/// builds, so nothing this service creates or drops can reach a table someone
-/// else owns.
 const DEFAULT_DATASETS_DATABASE: &str = "insight_datasets";
-/// How many of a dataset's latest records a reader is shown at once.
-/// The most one page of records may hold, however many a reader asks for.
 const DEFAULT_DATASET_PREVIEW_ROWS: u64 = 200;
-/// The widest preview an installation may ask for: the payloads are whole
-/// records, so the bound is on what one response may carry, not on taste.
 const MAX_DATASET_PREVIEW_ROWS: u64 = 500;
-/// The longest an installation may let an abandoned attempt hold a dataset.
 const MAX_DATASET_LEASE_SECS: i64 = 3600;
 pub(crate) const MIN_INGEST_TOKEN_BYTES: usize = 32;
 pub(crate) const MAX_INGEST_TOKEN_BYTES: usize = 1024;
@@ -29,8 +21,6 @@ const DEFAULT_DELIVERY_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_DELIVERY_CONCURRENCY: usize = 4;
 const MAX_DESTINATION_NAME_CHARS: usize = 128;
 
-/// The MCP server's own listener, off unless a deployment asks for it.
-///
 /// It binds a second port because the gears api-gateway authenticates the REST
 /// router against its own audience, which an MCP access token does not carry.
 #[derive(Debug, Clone, Deserialize)]
@@ -39,16 +29,7 @@ pub(crate) struct McpConfig {
     pub(crate) enabled: bool,
     pub(crate) bind_addr: String,
     pub(crate) public_url: String,
-    /// Where to fetch the signing keys, when the advertised origin is not
-    /// reachable from in here.
-    ///
-    /// The public URL is the client's view: the audience its token carries and
-    /// the resource it discovers. It is not always routable from inside this
-    /// process — on a local stand it is `localhost`, which names this container
-    /// and not the gateway. Blank derives it from the public URL, which is what
-    /// a deployment whose origin routes internally wants.
     pub(crate) jwks_url: String,
-    /// Permits an `http` origin on a private network, for a stand without TLS.
     pub(crate) allow_insecure_private_network: bool,
 }
 
@@ -64,25 +45,21 @@ impl Default for McpConfig {
     }
 }
 
-/// Where a notification may be sent: a name administrators refer to, the
-/// provider behind it, and what that provider needs to accept a message.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "provider", rename_all = "lowercase")]
 pub(crate) enum DestinationConfig {
-    /// A Discord channel, through an incoming webhook.
-    Discord { webhook_url: SecretString },
-    /// A Telegram chat, through a bot.
+    Discord {
+        webhook_url: SecretString,
+    },
     Telegram {
         bot_token: SecretString,
         #[serde(deserialize_with = "text_or_number")]
         chat_id: String,
     },
-    /// A Slack channel, through a bot.
     Slack {
         bot_token: SecretString,
         channel: String,
     },
-    /// A Zulip stream topic, through a bot.
     Zulip {
         site_url: String,
         bot_email: String,
@@ -102,7 +79,6 @@ impl DestinationConfig {
         }
     }
 
-    /// The first thing wrong with this destination, if anything is.
     fn check(&self, name: &str) -> Result<(), ConfigError> {
         let field = |field: &'static str| ConfigError::AlertDestinationField {
             name: name.to_owned(),
@@ -159,9 +135,6 @@ impl DestinationConfig {
     }
 }
 
-/// A value written as text that an environment variable delivers as a
-/// number when it is all digits: a Telegram chat id is a number or
-/// `@channel`.
 fn text_or_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -176,8 +149,6 @@ fn text_or_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<S
     })
 }
 
-/// A credential travels in the address, so the address is not sent in the
-/// clear. Loopback is the one exception, for a stand's mock provider.
 fn is_https_url(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
         return false;
@@ -212,36 +183,22 @@ impl DestinationProvider {
     }
 }
 
-/// Metric alerts: off unless a deployment names the Redis their schedule
-/// lives in.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub(crate) struct AlertsConfig {
     pub(crate) enabled: bool,
-    /// The Redis the check schedule and its workers coordinate through.
     pub(crate) redis_url: String,
-    /// Its password, when kept apart from the URL: joined to it
-    /// percent-encoded at start-up, so whoever assembles the environment never
-    /// encodes it by hand. Refused when the URL already carries credentials.
     pub(crate) redis_password: Option<SecretString>,
     pub(crate) destinations: BTreeMap<String, DestinationConfig>,
     pub(crate) min_interval_secs: u32,
     pub(crate) max_interval_secs: u32,
     pub(crate) max_rules: u64,
-    /// How many checks of different rules run at once.
     pub(crate) evaluation_concurrency: usize,
-    /// How long a worker may hold a check before a worker that has died is
-    /// taken to be gone and another picks the check up. A live worker keeps
-    /// its hold for as long as the check runs.
     pub(crate) evaluation_lock_secs: u64,
     pub(crate) notifications_kept_per_rule: u64,
-    /// How many times a notification is sent for before it is given up on.
     pub(crate) delivery_attempts: u32,
-    /// The wait before the second attempt; each later wait doubles.
     pub(crate) delivery_backoff_secs: u64,
-    /// How long one provider call may take.
     pub(crate) delivery_timeout_secs: u64,
-    /// How many notifications are sent at once.
     pub(crate) delivery_concurrency: usize,
 }
 
@@ -293,23 +250,14 @@ impl AlertsConfig {
 pub(crate) struct GearConfig {
     pub(crate) clickhouse_url: String,
     pub(crate) clickhouse_database: String,
-    /// The database identity materialises into.
     pub(crate) identity_database: String,
-    /// The database the datasets' own tables live in.
     pub(crate) datasets_database: String,
-    /// How many of a dataset's latest records its page shows.
     pub(crate) dataset_preview_rows: u64,
-    /// How long an abandoned create or removal holds its dataset.
     pub(crate) dataset_lease_secs: i64,
-    /// Topology of the warehouse: whether the tables this service creates
-    /// must replicate. The name is the chart's shared contract and unused
-    /// here: no statement this service emits carries `ON CLUSTER`.
     pub(crate) clickhouse_cluster_mode: bool,
     pub(crate) clickhouse_cluster_name: String,
     pub(crate) clickhouse_user: Option<String>,
     pub(crate) clickhouse_password: Option<SecretString>,
-    /// The read-only principal the assistant's query path connects as. Blank
-    /// on a stand without one, and the query path then uses the pair above.
     pub(crate) clickhouse_query_user: Option<String>,
     pub(crate) clickhouse_query_password: Option<SecretString>,
     pub(crate) ingest_token: SecretString,
@@ -347,8 +295,6 @@ impl Default for GearConfig {
     }
 }
 
-/// The stores a migration writes. Deliberately not [`ValidatedConfig`]: a
-/// migration that cannot serve a request should still run.
 pub(crate) struct StoreConfig {
     clickhouse: insight_clickhouse::Client,
     datasets_database: String,
@@ -390,9 +336,6 @@ pub(crate) struct ValidatedConfig {
     alerts: AlertsConfig,
 }
 
-// SAFETY: `database_url` embeds the MariaDB password, so a `?config` in any
-// log line must render a marker rather than the value. The secrets beside it
-// redact themselves; a plain String does not.
 impl fmt::Debug for GearConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const REDACTED: &str = "<redacted>";
@@ -420,8 +363,6 @@ impl fmt::Debug for GearConfig {
     }
 }
 
-/// The alerts section with its Redis credentials redacted: the URL may carry
-/// a password, and the password is one.
 struct RedactedAlerts<'a>(&'a AlertsConfig);
 
 impl fmt::Debug for RedactedAlerts<'_> {
@@ -475,13 +416,6 @@ impl fmt::Debug for ValidatedConfig {
 }
 
 impl ValidatedConfig {
-    /// The two stores a migration writes, and nothing else.
-    ///
-    /// `migrate` creates the raw-data tables in `ClickHouse` and the
-    /// definition tables in MariaDB. It never resolves a person, answers a
-    /// chat or serves MCP, so holding it to `identity_url`, the chat token or
-    /// the MCP origin makes a migration fail for want of a setting it will
-    /// not read — as it did on every runner that had no identity service.
     pub(crate) fn stores_from_app_config(
         app: &toolkit::bootstrap::AppConfig,
     ) -> Result<StoreConfig, ConfigLoadError> {
@@ -555,13 +489,10 @@ impl ValidatedConfig {
         &self.identity_url
     }
 
-    /// The database gold materialises into, which the catalogue calls the
-    /// gold layer.
     pub(crate) fn clickhouse_database(&self) -> &str {
         &self.clickhouse_database
     }
 
-    /// The database holding the names people are known by.
     pub(crate) fn identity_database(&self) -> &str {
         &self.identity_database
     }
@@ -578,8 +509,6 @@ impl ValidatedConfig {
         crate::domain::datasets::Lease::of_seconds(self.dataset_lease_secs)
     }
 
-    /// A client connected to the database the datasets' tables live in, which
-    /// is the only database this service creates or drops a table in.
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
         let mut config =
             insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database)
@@ -596,7 +525,6 @@ impl ValidatedConfig {
 }
 
 impl GearConfig {
-    /// Whether the warehouse replicates, as the DDL this service emits reads it.
     fn topology(&self) -> insight_clickhouse::Topology {
         insight_clickhouse::Topology::new(
             self.clickhouse_cluster_mode,
@@ -604,8 +532,6 @@ impl GearConfig {
         )
     }
 
-    /// What a migration needs: the warehouse it creates tables in, and the
-    /// definition store it migrates.
     pub(crate) fn validate_stores(self) -> Result<StoreConfig, ConfigError> {
         require_non_empty("clickhouse_url", &self.clickhouse_url)?;
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
@@ -722,9 +648,6 @@ impl IngestToken {
     }
 }
 
-/// The datasets database is interpolated into SQL as a name and is the one
-/// place this service creates and drops tables, so it has to be a plain
-/// identifier and it has to be a database of its own.
 fn validate_datasets_database(datasets: &str, warehouse: &str) -> Result<(), ConfigError> {
     let is_identifier = !datasets.is_empty()
         && datasets
@@ -761,9 +684,6 @@ fn validate_mcp(mcp: &McpConfig) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// The section as the service runs with it: a password kept apart from the
-/// Redis URL has joined it, and a section that validates but cannot notify
-/// anyone has said so.
 fn validate_alerts(mut alerts: AlertsConfig) -> Result<AlertsConfig, ConfigError> {
     if !alerts.enabled {
         return Ok(alerts);
@@ -802,9 +722,6 @@ fn validate_alerts(mut alerts: AlertsConfig) -> Result<AlertsConfig, ConfigError
     Ok(alerts)
 }
 
-/// The URL the schedule connects with. A password kept apart from it joins it
-/// percent-encoded, which the client decodes again, so no character of the
-/// password is read as URL syntax on the way.
 fn redis_url_with_password(
     url: &str,
     password: Option<SecretString>,
@@ -827,10 +744,9 @@ fn redis_url_with_password(
     Ok(parsed.into())
 }
 
-/// A destination is named in rules and in a queue key, so it is a plain
-/// identifier. Lowercase, because every environment key is lowercased before
-/// this configuration is read, and a name written otherwise would be served
-/// under a spelling nobody configured.
+/// Lowercase, because every environment key is lowercased before this
+/// configuration is read, and a name written otherwise would be served under a
+/// spelling nobody configured.
 fn is_destination_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= MAX_DESTINATION_NAME_CHARS

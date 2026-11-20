@@ -1,5 +1,3 @@
-//! Metric, widget and dashboard definition HTTP endpoints.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,11 +28,8 @@ use crate::domain::kinds::widget::drawn_metric;
 use crate::domain::surfaces::{CustomError, Surfaces};
 use crate::domain::violation::Violation;
 
-/// How long a listing waits for its owners' names before answering without.
 const OWNER_NAMES_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// The query string on a list: what to look for, in a name or in a body, and
-/// which page of the matches to answer with.
 #[derive(Debug, Default, Deserialize)]
 struct Search {
     #[serde(default)]
@@ -92,9 +87,6 @@ impl ApiErrors for DefinitionApiError {
     }
 }
 
-// `.anonymous()`: these routes trust the gateway to authenticate the
-// `__Host-sid` session cookie before forwarding. Must stay off the network
-// (see docker-compose.yml's loopback port binding).
 pub(crate) fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -272,11 +264,6 @@ fn register_kind(
         .merge(dependents)
 }
 
-/// A stored definition as a reader is given it.
-///
-/// The body is what was written; the clock is not in it, because a metric
-/// over a dataset may inherit one, and a reader deciding whether to window a
-/// card cannot tell from the body alone.
 #[derive(Debug, Serialize)]
 struct DefinitionResponse {
     id: String,
@@ -293,17 +280,13 @@ struct DashboardMeta {
     owner_person_id: Option<String>,
     owner_name: Option<String>,
     access: &'static str,
-    /// Who beyond its owner sees it: `private`, `people` or `everyone`.
     visibility: &'static str,
-    /// Whether an entry the caller adds now carries a folder's audience.
     carries: bool,
-    /// The folders the caller sees that hold it.
     folders: Vec<serde_json::Value>,
     tags: serde_json::Value,
     updated_at: String,
 }
 
-/// An owner as the wire carries it: the person's id, or null for none.
 pub(crate) fn owner_json(owner: Owner) -> Option<String> {
     owner.person().map(|person| person.to_string())
 }
@@ -314,8 +297,6 @@ fn owner_name_json(owner: Owner, names: &HashMap<PersonId, String>) -> Option<St
         .and_then(|person| names.get(&person).cloned())
 }
 
-/// One identity read for every owner on the page. A listing without names is
-/// still worth showing, so a slow or failed read answers none.
 async fn owner_names(
     state: &AppState,
     authorization: Option<&str>,
@@ -424,10 +405,6 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
     }
 }
 
-/// Every way the dataset cannot answer the metric, reported together.
-///
-/// A metric wrong in several places is answered once, with each place named
-/// as the submitted body shapes it, so an editor can mark all of them.
 fn unanswerable(violations: &[Violation]) -> CanonicalError {
     let Some((first, rest)) = violations.split_first() else {
         return DefinitionApiError::invalid_field(
@@ -483,8 +460,6 @@ fn unidentified() -> CanonicalError {
         .create()
 }
 
-/// Who may read this kind: anyone signed in reads the dashboards they see,
-/// and only an administrator the library.
 async fn reader(
     state: &AppState,
     headers: &axum::http::HeaderMap,
@@ -498,8 +473,6 @@ async fn reader(
     }
 }
 
-/// Every definition that names this one, so a reader sees what a removal would
-/// break before they ask for one.
 fn register_dependents(
     openapi: &dyn OpenApiRegistry,
     state: &Arc<AppState>,
@@ -575,13 +548,9 @@ fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalE
         .create()
 }
 
-/// What names a definition, as a reader is shown it.
 #[derive(Debug, Serialize)]
 struct Dependents {
-    /// Each holder the caller may see, as the kind it is, its id and the
-    /// name it has.
     holders: Vec<Holder>,
-    /// How many more holders are dashboards the caller may not see.
     hidden: u64,
 }
 
@@ -592,8 +561,6 @@ struct Holder {
     name: String,
 }
 
-/// Every definition that names this one, so a reader sees what a removal would
-/// break before they ask for one.
 async fn definition_dependents(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
@@ -669,7 +636,6 @@ async fn get_definition(
     .into_response())
 }
 
-/// What a listing filter that cannot be read says, named by its parameter.
 pub(crate) fn query_error(error: &QueryError) -> CanonicalError {
     let field = match error {
         QueryError::Folder(_) => "folder",
@@ -681,7 +647,6 @@ pub(crate) fn query_error(error: &QueryError) -> CanonicalError {
     DefinitionApiError::invalid_field(field, error.to_string())
 }
 
-/// One page of what the caller may list of this kind, as the wire shows it.
 async fn listed_page(
     state: &AppState,
     surfaces: &Surfaces<'_>,
@@ -763,9 +728,6 @@ pub(crate) fn listed_json(items: &[Listed]) -> serde_json::Value {
     )
 }
 
-/// Metrics or widgets as the catalogue shows them: each with its body and
-/// when it last changed, and a widget with the name of the metric it draws -
-/// null for one that no longer exists. `metric_names` is present for widgets.
 fn library_json(
     items: &[LibraryEntry],
     metric_names: Option<&HashMap<String, String>>,
@@ -794,8 +756,6 @@ fn library_json(
     )
 }
 
-/// Dashboards as a listing shows them: with their owner, how the caller sees
-/// each, when it last changed and who its grants reach.
 pub(crate) fn dashboards_json(
     items: &[ListedDashboard],
     names: Option<&HashMap<PersonId, String>>,

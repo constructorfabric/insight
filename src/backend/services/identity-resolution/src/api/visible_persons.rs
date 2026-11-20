@@ -20,13 +20,8 @@ use crate::domain::person_card;
 use crate::infra::db::person_listing::{self, PersonListRow, VisibleTo};
 use crate::infra::db::{persons_repo, subchart_repo};
 
-// One bound parameter per person id, so the request bounds the query. Equal to
-// the analytics metric-results cap on purpose: that endpoint forwards a whole
-// cleared request here, so a smaller cap would reject a request analytics
-// already accepted.
 pub(super) const MAX_PERSON_IDS: usize = 1000;
 
-/// Browsed rather than narrowed, so the page is larger than the picker's.
 const ROSTER_DEFAULT_LIMIT: u64 = 50;
 const ROSTER_MAX_LIMIT: u64 = 500;
 
@@ -48,13 +43,10 @@ impl toolkit::api::api_dto::ResponseApiDto for VisiblePersonsResponse {}
 #[derive(Debug, Deserialize)]
 pub struct RosterParams {
     pub q: Option<String>,
-    // Signed so a nonsense `?limit=` clamps rather than failing deserialization,
-    // matching the other listings.
     pub limit: Option<i64>,
     pub cursor: Option<String>,
 }
 
-/// Where the next roster page resumes. Opaque on the wire; the shape is ours.
 #[derive(Debug, Serialize, Deserialize)]
 struct PageKey {
     order_key: String,
@@ -62,8 +54,6 @@ struct PageKey {
 }
 
 impl PagePosition for PageKey {
-    // INVARIANT: distinct from the picker's — a position ordered over one set
-    // must not resume a listing that ordered another.
     const KIND: &'static str = "visible-persons";
 }
 
@@ -76,13 +66,6 @@ pub struct VisiblePersonsPageResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for VisiblePersonsPageResponse {}
 
-/// Self-scoped and not admin-gated, like the POST: it enumerates only what the
-/// caller's visible set already contains.
-///
-/// Lists the ROSTER, not the journal: only persons a connector claims as an
-/// account holder. So this answers for a narrower set than the POST confirms —
-/// deliberately, and in the safe direction (a person listed here is a person
-/// that filter would confirm, never the reverse).
 pub async fn list_visible_persons(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -104,9 +87,6 @@ pub async fn list_visible_persons(
         tenant,
         &terms,
         &[],
-        // The roster is who the organisation IS. An address a commit carried
-        // becomes a person in the journal without anyone here holding it, and
-        // listing those alongside the members reads as a directory of strangers.
         person_listing::Restrict {
             listed: person_listing::Listed::AccountHolders,
             visible_to: Some(VisibleTo {
@@ -163,12 +143,6 @@ pub async fn filter_visible_persons(
 
     let requested = dedup_person_ids(&req.person_ids)?;
 
-    // A wildcard grant covers everyone IN THE TENANT, not everyone whose UUID
-    // the caller can type: the echo is intersected with the tenant's persons
-    // log, or a wildcard holder in tenant A could get tenant B's ids confirmed
-    // as visible — and analytics treats this answer as authorization. Not an
-    // existence oracle beyond what the grant already implies: a wildcard
-    // holder may see every person the tenant has.
     let policy = state.config.visibility_policy;
     let whole_tenant = policy.is_flat()
         || subchart_repo::has_wildcard_grant(&state.db, tenant, caller)

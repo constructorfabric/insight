@@ -14,11 +14,6 @@ pub struct BranchRow {
 
 const FIELD: char = '\u{1f}';
 
-/// Every branch head with its tip date, marking the one `HEAD` points at.
-///
-/// # Errors
-///
-/// [`GitError`] when a git invocation fails.
 pub async fn read(
     runner: &GitRunner,
     git_dir: &Path,
@@ -40,8 +35,6 @@ pub async fn read(
     Ok(parse(&listing, default.as_deref()))
 }
 
-/// The remote's default branch, from the mirrored `HEAD` symref. `None` when
-/// the clone recorded no symref (an empty repository).
 pub(super) async fn default_branch(
     runner: &GitRunner,
     git_dir: &Path,
@@ -54,8 +47,6 @@ pub(super) async fn default_branch(
             let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
             Ok((!name.is_empty()).then_some(name))
         }
-        // An unborn HEAD is not an error for us: the repo simply has no
-        // default branch to report.
         Err(GitError::Failed(_)) => Ok(None),
         Err(other) => Err(other),
     }

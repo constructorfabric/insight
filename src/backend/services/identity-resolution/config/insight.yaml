@@ -1,19 +1,3 @@
-# Insight Identity Resolution — gears-rust host config.
-#
-# Usage: identity-resolution --config config/insight.yaml
-#
-# Auth is ENABLED on the api-gateway host (NGINX_BFF R1): the upstream
-# `cf-gears-oidc-authn-plugin` verifies the ES256 gateway JWT against the
-# authenticator's JWKS (resolved via OIDC discovery on the issuer) and maps its
-# claims into the SecurityContext (sub -> subject_id, tenant_id ->
-# subject_tenant_id, sub_type -> subject_type, roles -> token_scopes). Same
-# authenticated system-gear set as the analytics host. A request without a valid
-# gateway JWT carrying a `tenant_id` gets 401 — no auth_disabled path.
-#
-# The plugin's verification config (jwt.trusted_issuers, expected_audience,
-# http_client.custom_ca_certificate_paths) is nested/list-shaped and supplied by
-# the deployment's config layer (compose bind-mount / Helm), not APP__ env.
-
 server:
   home_dir: "~/.insight"
 
@@ -29,7 +13,6 @@ gears:
       # or two bucket layouts collide in one series.
       metrics:
         prefix: "host"
-      # Consumers reach identity at <host>:8082.
       bind_addr: "0.0.0.0:8082"
       enable_docs: true
       cors_enabled: true
@@ -37,8 +20,6 @@ gears:
         title: "Insight Identity Resolution API"
         version: "0.1.0"
         description: "Identity Resolution read API (Rust port)"
-      # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT and
-      # maps its claims into the SecurityContext (R1). No auth_disabled path.
       auth_disabled: false
 
   service-discovery:
@@ -52,11 +33,6 @@ gears:
     config:
       vendor: "hyperspot"
 
-  # Downstream gateway-JWT verification (NGINX_BFF R1). Verifies the ES256
-  # gateway JWT against the authenticator's JWKS (resolved via OIDC discovery on
-  # the issuer) and maps its claims into the SecurityContext. The deployment
-  # supplies the real issuer + self-signed CA (dev/e2e) via the config layer;
-  # the placeholders below (`.invalid`, never resolvable) fail closed.
   oidc-authn-plugin:
     config:
       vendor: "hyperspot"
@@ -77,8 +53,6 @@ gears:
         required_claims: []
       http_client:
         request_timeout: 5s
-        # Dev/e2e self-signed CA injected per deploy:
-        #   custom_ca_certificate_paths: ["/certs/ca.pem"]
       # Client-credentials exchange is unused here but required config;
       # discovery_url must name a trusted issuer, never fetched.
       s2s_oauth:
@@ -108,30 +82,13 @@ gears:
 
   identity-resolution:
     config:
-      # MariaDB connection URL. Injected per-deployment via env override
-      # APP__gears__identity_resolution__config__database_url. Left empty
-      # here so no credential is committed.
       database_url: ""
-      # Source instance whose org_chart edges drive the parent/supervisor +
-      # subordinates tree on the lookup endpoints.
       org_chart_source_type: "bamboohr"
-      # Kill switch for the recursive subordinates walk. Set to false to skip
-      # the (potentially large, N+1) subtree expansion on POST /v1/profiles.
       expand_subordinates: true
-      # Hard cap on org-tree recursion depth (cycle-safe).
       max_depth: 16
-      # ClickHouse (persons-seed input: identity.identity_inputs). URL/creds are
-      # injected per-deployment via env overrides
-      # APP__gears__identity_resolution__config__clickhouse_*. Empty here so no
-      # endpoint/credential is committed.
       clickhouse_url: ""
       clickhouse_database: "identity"
       clickhouse_user: ""
       clickhouse_password: ""
-      # Warehouse topology (epic #2010): whether the relations this service
-      # creates replicate. The name is the chart's shared contract and unused
-      # here: no statement this service emits carries ON CLUSTER. Injected
-      # per-deployment via APP__gears__identity_resolution__config__clickhouse_cluster_*;
-      # a standalone single node here.
       clickhouse_cluster_mode: false
       clickhouse_cluster_name: ""

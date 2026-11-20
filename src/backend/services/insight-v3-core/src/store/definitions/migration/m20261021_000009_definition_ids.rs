@@ -1,17 +1,3 @@
-//! Metrics, widgets and dashboards are keyed by an id, and carry a name
-//! beside it that two of them may share.
-//!
-//! The column that was the name becomes the id, keeping the primary key and
-//! every foreign key that points at it, and the new name starts as the old
-//! one. An older name already satisfies the id rule, so every reference to
-//! one - in a body, a pin, a tag link or an alert - already holds a valid id,
-//! and nothing else is rewritten.
-//!
-//! INVARIANT: every step is safe to run again. The rename runs only while
-//! the table has a `name` and no `id`, the column and the index are added
-//! with `IF NOT EXISTS`, the fill touches only rows with no name, and
-//! dropping a default that is already gone changes nothing.
-
 use sea_orm::{ConnectionTrait as _, DbBackend, DbErr, FromQueryResult, Statement};
 use sea_orm_migration::prelude::*;
 
@@ -23,8 +9,6 @@ const STRICT_MODES: [&str; 2] = ["STRICT_TRANS_TABLES", "STRICT_ALL_TABLES"];
 
 const RENAME_KEY: &str = "ALTER TABLE {table} RENAME COLUMN name TO id";
 
-/// The same collation as the tables themselves, so a name compares and
-/// sorts the way the rest of the row does.
 const ADD_NAME: &str = "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS name VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' AFTER id";
 
 const FILL_NAME: &str = "UPDATE {table} SET name = id WHERE name = ''";
@@ -92,9 +76,6 @@ fn is_strict(mode: &str) -> bool {
     })
 }
 
-/// Moves one table from a name key to an id key with a name beside it.
-///
-/// `table` is one of [`TABLES`], or a scratch table a live test made.
 pub(crate) async fn key_by_id(manager: &SchemaManager<'_>, table: &str) -> Result<(), DbErr> {
     let named = manager.has_column(table, "name").await?;
     let keyed = manager.has_column(table, "id").await?;

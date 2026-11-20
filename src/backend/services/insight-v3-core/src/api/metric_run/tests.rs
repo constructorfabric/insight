@@ -18,15 +18,11 @@ use crate::store::definitions::memory::MemoryDefinitions;
 type R = Result<(), Box<dyn std::error::Error>>;
 
 struct TestHarness {
-    /// Held, not read: the stores this harness does not exercise are built
-    /// against its address, so it has to outlive them.
     _clickhouse: Mock,
     router: Router,
     definitions: Arc<dyn Definitions>,
 }
 
-/// The one dataset every run here reads: a record with a moment, a day and a
-/// number in it.
 fn a_ready_dataset(url: &str) -> crate::api::Datasets {
     crate::api::Datasets::holding(
         url,

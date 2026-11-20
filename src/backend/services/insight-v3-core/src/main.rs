@@ -90,8 +90,6 @@ async fn main() -> Result<()> {
             init_subcommand_logging();
             gear::run_migrate(&config).await
         }
-        // No logging subscriber on this path: stdout stays pure JSON for the
-        // drift gate to read.
         Commands::Openapi => {
             let document = api::openapi_document()?;
             print!("{}", insight_openapi::canonical_json(&document)?);
@@ -100,7 +98,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Plain stdout logging for `migrate`, which runs outside the bootstrap server.
 fn init_subcommand_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(

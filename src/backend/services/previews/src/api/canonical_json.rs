@@ -1,8 +1,3 @@
-//! `CanonicalJson<T>` — drop-in replacement for Axum's `Json<T>` that converts
-//! every `JsonRejection` into the canonical RFC 9457 `application/problem+json`
-//! envelope. Ported from the analytics gear so body-parse failures on this
-//! service emit the same error shape as every other endpoint (DNA REST/API §7).
-
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
@@ -17,8 +12,6 @@ const INVALID_ARGUMENT_TYPE: &str =
 const UNSUPPORTED_MEDIA_TYPE_TYPE: &str =
     "gts://gts.cf.core.errors.err.v1~cf.core.err.unsupported_media_type.v1~";
 
-/// Drop-in replacement for `axum::Json<T>` whose rejection emits the canonical
-/// RFC 9457 envelope. `T: DeserializeOwned + Send`.
 #[derive(Debug, Clone)]
 pub struct CanonicalJson<T>(pub T);
 
@@ -57,7 +50,6 @@ fn json_rejection_to_response(rej: &JsonRejection) -> Response {
     }
 }
 
-/// 400 `invalid_argument` for body deserialization failures.
 fn invalid_body_response(description: &'static str) -> Response {
     Problem {
         problem_type: INVALID_ARGUMENT_TYPE.to_owned(),
@@ -77,7 +69,6 @@ fn invalid_body_response(description: &'static str) -> Response {
     .into_response()
 }
 
-/// 415 `unsupported_media_type` for a missing/wrong `Content-Type`.
 fn unsupported_media_type_response() -> Response {
     Problem {
         problem_type: UNSUPPORTED_MEDIA_TYPE_TYPE.to_owned(),

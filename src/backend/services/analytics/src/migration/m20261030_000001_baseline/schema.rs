@@ -1,6 +1,3 @@
-//! The schema the squashed history leaves behind, as the statements that build
-//! it from nothing.
-//!
 //! Every statement converges when re-run: the DDL is not transactional, so a
 //! baseline interrupted part-way is finished by the next `migrate`.
 
@@ -222,8 +219,6 @@ pub const STATEMENTS: &[&str] = &[
         CONSTRAINT chk_metric_definition_tags_tag_shape CHECK (tag REGEXP BINARY '^[a-z][a-z0-9_]*$'),
         CONSTRAINT chk_metric_definition_tags_display_order_nonnegative CHECK (display_order >= 0)
     )",
-    // An edit to what a source or measure claims about its evidence unchecks the
-    // source, so the next sweep re-probes it.
     // WORKAROUND: MariaDB stores `IF NOT EXISTS` in a trigger's definition, so a
     // trigger converges by drop-and-create instead.
     "DROP TRIGGER IF EXISTS trg_metric_sources_evidence_ref_invalidate",

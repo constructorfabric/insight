@@ -1,9 +1,3 @@
-//! A condition judged over what a metric answered.
-//!
-//! Each test on a row is true, false, or unknown; groups combine those the
-//! way Kleene logic does, so an unknown cell decides nothing it cannot. The
-//! quantifier then folds the rows' verdicts into the check's outcome.
-
 use std::cmp::Ordering;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -14,7 +8,6 @@ use super::{Comparison, Condition, DateTest, Leaf, Node, NumberTest, Quantifier,
 use crate::domain::alerts::scalar::{Number, Outcome, UnknownReason};
 use crate::domain::query::metric_query::RunResult;
 
-/// What one test, group or row came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict {
     True,
@@ -28,7 +21,6 @@ impl Verdict {
     }
 }
 
-/// The columns a condition reads, by their place in the result.
 struct Positions<'a> {
     names: Vec<&'a str>,
     at: Vec<usize>,
@@ -44,13 +36,6 @@ impl Positions<'_> {
     }
 }
 
-/// The outcome of a condition over a run's rows, checked at `evaluated_at`.
-///
-/// `groups` are the metric's `group_by` columns and `context` the columns
-/// the rule asks to carry, both shown in the witness beside the columns the
-/// condition reads. `imposed_limit` is where the run stops without the
-/// metric having asked to: a run that reached it may have left rows out, and
-/// each of those counts as unknown.
 pub(crate) fn evaluate(
     result: &RunResult,
     condition: &Condition,
@@ -92,8 +77,6 @@ pub(crate) fn evaluate(
     Outcome::Valid { breached, witness }
 }
 
-/// Whether the rows' verdicts breach the quantifier, or why that cannot be
-/// told. `cut` says rows past these may exist, each of them unknown.
 fn fold(quantifier: Quantifier, verdicts: &[Verdict], cut: bool) -> Result<bool, UnknownReason> {
     let passed = verdicts
         .iter()
@@ -283,8 +266,6 @@ fn date(test: DateTest, cell: &Value, at: DateTime<Utc>) -> Verdict {
     holds.map_or(Verdict::Unknown(UnknownReason::Incomparable), Verdict::of)
 }
 
-/// A timestamp as the warehouse writes one, read as UTC: RFC 3339, or
-/// `YYYY-MM-DD HH:MM:SS[.fff]`, or a bare date at midnight.
 fn moment(text: &str) -> Option<DateTime<Utc>> {
     if let Ok(moment) = DateTime::parse_from_rfc3339(text) {
         return Some(moment.to_utc());

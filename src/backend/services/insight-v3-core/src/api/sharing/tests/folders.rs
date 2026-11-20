@@ -1,6 +1,3 @@
-//! Folders as shareable containers: carrying and filing entries, folder
-//! grants, and orphaned folders.
-
 use axum::http::StatusCode;
 use serde_json::json;
 

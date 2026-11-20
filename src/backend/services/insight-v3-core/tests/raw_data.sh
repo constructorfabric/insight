@@ -42,16 +42,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The definition store and the identity service the config demands at startup.
-# CI hands us a MariaDB (see scripts/ci/components.py); a local run falls back
-# to the compose stand's, and identity is only dialed by a request that needs a
-# person resolved — no live service is required to boot.
 database_url="${INTEGRATION_TESTS_MARIADB_URL:-mysql://insight:insight@127.0.0.1:3306/insight_v3}"
 identity_url="${INTEGRATION_TESTS_IDENTITY_URL:-http://127.0.0.1:$identity_port}"
 
-# Declaring a dataset is admin-only and the role is read from identity, which
-# by design refuses rather than permits when it cannot be reached. The stub is
-# that service for the length of this test.
 python3 "$service_dir/tests/identity-stub.py" "$identity_port" &
 identity_pid=$!
 for _ in $(seq 1 50); do
@@ -88,8 +81,6 @@ clickhouse_query() {
     "$clickhouse_url/?database=$clickhouse_database"
 }
 
-# A dataset's records are kept apart from the warehouse the rest of Insight
-# reads, in a database this service owns.
 datasets_query() {
   curl "${clickhouse_curl[@]}" \
     --data-binary "$1" \
@@ -150,8 +141,6 @@ status="$(curl --silent --connect-timeout 2 --max-time 10 \
   "http://127.0.0.1:$port/v1/datasets/$dataset_name")"
 expect_equal "403" "$status" "declaring a dataset with no caller"
 
-# The ingest token admits a record, never a declaration: the two credentials
-# answer for different things.
 status="$(curl --silent --connect-timeout 2 --max-time 10 \
   --output /dev/null --write-out '%{http_code}' \
   --request PUT \
@@ -161,8 +150,6 @@ status="$(curl --silent --connect-timeout 2 --max-time 10 \
   "http://127.0.0.1:$port/v1/datasets/$dataset_name")"
 expect_equal "403" "$status" "declaring a dataset with the ingest token alone"
 
-# Twice: declaring a name that stands replaces its declaration where it lies,
-# so the records and the table they are in are left alone.
 for _ in 1 2; do
   status="$(curl --silent --connect-timeout 2 --max-time 10 \
     --output /dev/null --write-out '%{http_code}' \
@@ -175,9 +162,6 @@ for _ in 1 2; do
   dataset_declared="true"
 done
 
-# The table is named for the attempt that made it, so the name is discovered
-# rather than assumed - and there is exactly one, which is what proves the
-# replacement above made no second table.
 physical_table="$(datasets_query "SELECT name FROM system.tables
 WHERE database = currentDatabase() AND name LIKE 'ds_${dataset_name}_%'
 ORDER BY name
@@ -216,7 +200,6 @@ status="$(curl --silent --connect-timeout 2 --max-time 10 \
   "http://127.0.0.1:$port/v1/raw-data")"
 expect_equal "401" "$status" "raw-data insertion with an incorrect token"
 
-# A record only lands in a dataset somebody declared.
 status="$(curl --silent --connect-timeout 2 --max-time 10 \
   --output /dev/null --write-out '%{http_code}' \
   --header 'content-type: application/json' \
@@ -249,7 +232,6 @@ FROM $physical_table
 WHERE table_name = '$dataset_name'")"
 expect_equal $'4\t1\t1\t1\t1' "$stored" "the records the dataset holds"
 
-# What the dataset's page reads: the same records, through the API.
 preview="$(curl --fail --silent --connect-timeout 2 --max-time 10 \
   --header "authorization: Bearer live-test-administrator" \
   "http://127.0.0.1:$port/v1/datasets/$dataset_name/records")"

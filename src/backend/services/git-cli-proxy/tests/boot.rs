@@ -1,10 +1,3 @@
-//! End-to-end tests against the built binary (routegen `tests/cli.rs`
-//! precedent — llvm-cov instruments spawned binaries, so `main.rs` and the
-//! gear wiring count). Proves what unit tests cannot: the host boots with the
-//! minimal system-gear set, `/healthz` stays public, `/v1` is bearer-guarded,
-//! an invalid config refuses to start, and a real repository is cloned and
-//! served over HTTP.
-
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -123,13 +116,9 @@ async fn wait_healthy(port: u16) -> R {
     }
 }
 
-/// A fixture origin with partial-clone enabled, as a real vendor offers.
 fn fixture_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("origin");
     std::fs::create_dir_all(&origin)?;
-    // Explicit, distinct commit dates: the walk orders by (committed
-    // instant, sha), so same-second commits would order by sha and
-    // make the assertions depend on hash values.
     let script = "git init -q -b main . && \
          git config uploadpack.allowFilter true && \
          git config uploadpack.allowAnySHA1InWant true && \
@@ -160,7 +149,6 @@ fn fixture_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
-/// A default branch plus a side branch that was never merged into it.
 fn branching_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("branching");
     std::fs::create_dir_all(&origin)?;
@@ -196,8 +184,6 @@ fn branching_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
-/// A history where one commit copies a file verbatim while modifying the
-/// original — the shape `-C` detects and `-M` alone reports as an addition.
 fn copying_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("copying");
     std::fs::create_dir_all(&origin)?;
@@ -231,8 +217,6 @@ fn copying_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
-/// A superproject holding a submodule. The gitlink's object id is a commit in
-/// the inner repository, which the outer origin has never heard of.
 fn submodule_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let inner = root.join("inner");
     let outer = root.join("outer");
@@ -281,9 +265,6 @@ fn submodule_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", outer.display()))
 }
 
-/// An origin whose filenames exercise every spelling git C-quotes: a quote, a
-/// backslash, a tab, a non-ASCII byte, a space, and a path holding the ` b/`
-/// sequence that a `diff --git` header cannot resolve on its own.
 fn awkward_paths_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("awkward");
     std::fs::create_dir_all(&origin)?;
@@ -321,10 +302,6 @@ fn awkward_paths_origin(root: &Path) -> Result<String, Box<dyn std::error::Error
     Ok(format!("file://{}", origin.display()))
 }
 
-/// A history whose committer dates run BACKWARDS along ancestry — routine after
-/// a rebase, a cherry-pick, or a clock-skewed contributor. `git log --since` is
-/// a traversal cutoff, so any walk narrowed to a cursor date prunes the older
-/// parents and never reaches the commits behind them.
 fn skewed_origin(root: &Path, name: &str) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join(name);
     std::fs::create_dir_all(&origin)?;
@@ -361,7 +338,6 @@ fn skewed_origin(root: &Path, name: &str) -> Result<String, Box<dyn std::error::
     Ok(format!("file://{}", origin.display()))
 }
 
-/// Poll an endpoint until the cold clone finishes (the connector's 429 loop).
 async fn get_json(
     port: u16,
     path: &str,
@@ -447,8 +423,6 @@ async fn non_http_origins_are_refused_in_the_shipped_configuration() -> R {
     let client = reqwest::Client::new();
     let base = format!("http://127.0.0.1:{}", server.port);
 
-    // The fixture origin is a real, reachable repository — only its transport
-    // is refused, so a 400 here cannot be a false pass from an unreachable URL.
     for origin in [repo.as_str(), "ext::sh -c id", "/etc/passwd"] {
         let response = client
             .get(format!("{base}/v1/branches"))
@@ -537,7 +511,6 @@ async fn paginates_commits_with_a_snapshot_bound_cursor() -> R {
     wait_healthy(server.port).await?;
     let repo = fixture_origin(&server.dir)?;
 
-    // Warm the cache first so the paging requests do not race the clone.
     get_json(server.port, "/v1/commits", &repo).await?;
 
     let client = reqwest::Client::new();
@@ -683,9 +656,6 @@ async fn a_commit_only_on_a_side_branch_is_not_in_the_default_branch() -> R {
 async fn since_returns_every_reachable_commit_at_or_after_it() -> R {
     let server = spawn_server("sincefilter", TOKEN)?;
     wait_healthy(server.port).await?;
-    // Ancestry: 08-03 (root) <- 08-01 <- 08-02. `git log --since` stops
-    // descending at the first commit older than the bound, so asking for
-    // >= 08-02 would reach only the tip and prune the 08-03 root behind it.
     let repo = skewed_origin(&server.dir, "sincefilter")?;
 
     let client = reqwest::Client::new();
@@ -727,7 +697,6 @@ async fn since_returns_every_reachable_commit_at_or_after_it() -> R {
     Ok(())
 }
 
-/// A branch that exists only to be deleted, plus a tag pinning its tip.
 fn taggable_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("taggable");
     std::fs::create_dir_all(&origin)?;
@@ -797,8 +766,6 @@ async fn a_deleted_branch_stops_being_enumerated_even_when_a_tag_pins_it() -> R 
         "the commit is reachable while the branch lives"
     );
 
-    // Delete the branch at origin. The tag still pins its tip — and a mirror
-    // refspec prunes refs/heads only, so `--all` would keep enumerating it.
     run_in(&server.dir.join("taggable"), "git branch -qD doomed")?;
 
     let client = reqwest::Client::new();
@@ -864,8 +831,6 @@ async fn a_fetch_that_changed_nothing_keeps_live_page_tokens_valid() -> R {
         .ok_or("a truncated page must carry a cursor")?
         .to_owned();
 
-    // Force a refresh against an origin that has not moved — what a second
-    // stream of the same sync does routinely once the window lapses.
     let _ = page(None, "0").await?;
 
     let continued = page(Some(token), "300").await?;
@@ -879,9 +844,6 @@ async fn a_fetch_that_changed_nothing_keeps_live_page_tokens_valid() -> R {
 
 #[tokio::test]
 async fn file_changes_cover_every_branch_not_just_the_default() -> R {
-    // The CDK gitlab connector collects commits for all branches but file
-    // changes only for the default branch's head. The proxy must not inherit
-    // that: a side-branch commit has file rows like any other.
     let server = spawn_server("branchfiles", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = branching_origin(&server.dir)?;
@@ -912,9 +874,6 @@ async fn file_changes_cover_every_branch_not_just_the_default() -> R {
     Ok(())
 }
 
-/// Two commits whose TEXT order is the reverse of their chronological order:
-/// `%cI` keeps the committer's offset, so `10:00+02:00` (08:00Z) renders after
-/// `09:00Z` as text while being an hour earlier.
 fn mixed_timezone_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("timezones");
     std::fs::create_dir_all(&origin)?;
@@ -975,7 +934,6 @@ async fn an_interrupted_sync_resumes_without_losing_a_commit() -> R {
         }
     };
 
-    // One page, then the sync dies — exactly what a 429 or a restart does.
     let first = ask(vec![
         ("repo".to_owned(), repo.clone()),
         ("page_size".to_owned(), "1".to_owned()),
@@ -993,7 +951,6 @@ async fn an_interrupted_sync_resumes_without_losing_a_commit() -> R {
             .to_owned(),
     ];
 
-    // The connector resumes from the cursor it checkpointed.
     let resumed = ask(vec![
         ("repo".to_owned(), repo.clone()),
         ("since".to_owned(), checkpoint.clone()),
@@ -1043,8 +1000,6 @@ async fn a_page_token_from_another_repository_is_refused() -> R {
         .as_str()
         .ok_or("a truncated page must carry a cursor")?;
 
-    // Both repositories are warm at generation 1, so nothing but the entry
-    // binding stands between this token and the wrong repository's history.
     let replayed = client
         .get(format!("{base}/v1/commits"))
         .query(&[
@@ -1133,7 +1088,6 @@ async fn branches_honour_page_size_and_paginate_by_name() -> R {
     wait_healthy(server.port).await?;
     let repo = fixture_origin(&server.dir)?;
 
-    // Six branches: enough that an unpaginated response is visibly wrong.
     let script = ["b1", "b2", "b3", "b4", "b5"]
         .map(|name| format!("git branch {name}"))
         .join(" && ");
@@ -1266,8 +1220,6 @@ async fn a_file_row_carries_the_name_git_has_on_disk() -> R {
         );
     }
 
-    // The patch text is keyed by the same name, or it silently detaches from
-    // the row it belongs to.
     for row in rows {
         let name = row["filename"].as_str().unwrap_or_default();
         assert!(
@@ -1280,10 +1232,6 @@ async fn a_file_row_carries_the_name_git_has_on_disk() -> R {
 
 #[tokio::test]
 async fn a_submodule_does_not_force_a_repository_out_of_the_blobless_cache() -> R {
-    // The gitlink id belongs to the submodule. Requesting it from the
-    // superproject's origin fails with "not our ref", which this service reads
-    // as an origin refusing promisor wants and answers with a permanent full
-    // clone of the whole repository.
     let server = spawn_server("submodule", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = submodule_origin(&server.dir)?;
@@ -1311,8 +1259,6 @@ async fn a_submodule_does_not_force_a_repository_out_of_the_blobless_cache() -> 
 
 #[tokio::test]
 async fn a_copied_file_reports_the_status_the_contract_lists() -> R {
-    // The contract lists `copied`; git emits a `C` status only under `-C`,
-    // never under `-M` alone, where the row would come back as `added`.
     let server = spawn_server("copying", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = copying_origin(&server.dir)?;
@@ -1337,10 +1283,6 @@ async fn a_copied_file_reports_the_status_the_contract_lists() -> R {
 
 #[tokio::test]
 async fn a_deleted_index_changes_nothing_a_caller_can_see() -> R {
-    // The index is a cache of the two whole-history walks, and the walks stay
-    // as the fallback. Deleting it mid-flight must leave the response
-    // byte-identical — otherwise a failed index build would silently change
-    // what bronze receives.
     let server = spawn_server("index-fallback", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = fixture_origin(&server.dir)?;
@@ -1382,10 +1324,6 @@ async fn a_deleted_index_changes_nothing_a_caller_can_see() -> R {
 
 #[tokio::test]
 async fn the_index_is_what_a_page_actually_reads() -> R {
-    // The fallback test proves deleting the index changes nothing; this one
-    // proves the index is not dead weight. A row removed from a VALID index
-    // must disappear from the response — if it did not, every page would be
-    // silently paying the whole-history walk the index exists to remove.
     let server = spawn_server("index-live", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = fixture_origin(&server.dir)?;
@@ -1408,8 +1346,6 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
             {
                 continue;
             }
-            // Drop one ROW and restate the trailer: the count is what lets
-            // the reader tell a deliberate edit from crash truncation.
             let text = std::fs::read_to_string(file.path())?;
             let mut lines: Vec<&str> = text.lines().collect();
             let trailer = lines.pop().ok_or("index must have a trailer")?;
@@ -1431,9 +1367,6 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
         "a clipped index must clip the response, or the index is not being read"
     );
 
-    // Crash truncation — a dropped tail with a now-wrong trailer — must NOT
-    // clip the response: the reader detects it, drops the file, and the live
-    // walk serves the full history.
     for entry in std::fs::read_dir(server.dir.join("data").join("repos"))? {
         let info = entry?.path().join("repo.git").join("info");
         let Ok(files) = std::fs::read_dir(&info) else {

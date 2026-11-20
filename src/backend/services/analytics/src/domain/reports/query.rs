@@ -44,8 +44,6 @@ pub(crate) enum ReportQueryError {
     InvalidResultShape,
 }
 
-/// What one metric's query answered: its values, or that a relation it reads
-/// has not been built yet.
 #[derive(Debug)]
 pub(crate) enum ReportMetricRead {
     Values(ReportMetricValues),
@@ -81,8 +79,6 @@ impl ReportQueryRunner for ClickHouseReportQueryRunner<'_> {
         .await
         {
             Ok(rows) => rows,
-            // The one classifier, shared with every other read, so a message
-            // can never map to two different classes.
             Err(error) if matches!(error.class(), ErrorClass::RelationMissing) => {
                 return Ok(ReportMetricRead::NotReady(
                     NotReadyReason::SourceRelationMissing,

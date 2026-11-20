@@ -32,7 +32,6 @@ INGESTION = [
     "ingestion.templates.enabled=true",
     "--set",
     "ingestion.toolboxImage=ghcr.io/example/insight-toolbox:0.0.0-test",
-    # The umbrella refuses to render an enabled seed CronJob without a tenant.
     "--set",
     f"global.tenantDefaultId={TENANT}",
 ]
@@ -63,7 +62,6 @@ def _seed_step_image(docs: list[dict]) -> str:
 
 def _identity_deployment_image(docs: list[dict]) -> str:
     deployment = _named(docs, "Deployment", "-identity-resolution")
-    # `migrate` runs as a hook Job, so the app container is the only one here.
     (container,) = deployment["spec"]["template"]["spec"]["containers"]
     return container["image"]
 
@@ -93,9 +91,6 @@ def test_the_gold_step_excludes_what_the_staging_step_built(docs) -> None:
     assert excludes == ["tag:{{inputs.parameters.data_source}} identity_inputs"]
 
 
-# ── dbt-run: the selector guard, executed ────────────────────────────────────
-
-
 def _dbt_run_script(docs: list[dict]) -> str:
     template = _named(docs, "WorkflowTemplate", "dbt-run")["spec"]["templates"][0]
     return template["script"]["source"]
@@ -107,10 +102,6 @@ def _run_script(
     """Execute the rendered script with a stub `dbt` on PATH."""
     stub = tmp_path / "bin"
     stub.mkdir()
-    # The stub distinguishes the two resolutions, which is the whole point:
-    # `ls --select X` answers with the selection, `ls --select X --exclude Y`
-    # with what survives it. A stub blind to --exclude cannot reproduce the
-    # roster-only failure at all.
     (stub / "dbt").write_text(
         "#!/usr/bin/env bash\n"
         'case "$*" in\n'
@@ -123,10 +114,6 @@ def _run_script(
     )
     (stub / "dbt").chmod(0o755)
 
-    # Two calls cannot run outside the toolbox image and are adjusted: the
-    # profiles.yml writer is dropped (it needs a real adapter), and the
-    # /ingestion/scripts prefix is rewritten to this repo's checkout so the
-    # lifecycle emitter runs for real. Everything the guard does is verbatim.
     scripts_dir = Path(__file__).resolve().parents[6] / "src" / "ingestion" / "scripts"
     runnable = (
         script.replace("cd /ingestion/dbt", f"cd {tmp_path}")
@@ -161,7 +148,7 @@ def test_a_selection_an_earlier_step_covered_is_not_an_error(docs, tmp_path) -> 
         tmp_path,
         _dbt_run_script(docs),
         selected="model.ingestion.github_directory__org_members",
-        remaining="",  # the exclusion covers every model the selector matched
+        remaining="",
         select="tag:github-directory+",
         exclude="tag:github-directory identity_inputs",
     )

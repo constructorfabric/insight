@@ -1,6 +1,3 @@
-//! The widgets a dashboard draws, reached through the dashboard so that
-//! whoever sees it can draw it without reading the library.
-
 use serde_json::Value;
 
 use super::{CustomError, Surfaces, not_found};
@@ -8,29 +5,21 @@ use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::kinds;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
 
-/// One widget a dashboard draws, as its reader is given it.
 #[derive(Debug)]
 pub(crate) struct DrawnWidget {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) body: Value,
-    /// The clock of the metric it draws, which decides whether it follows
-    /// the board's window.
     pub(crate) clock: Option<EffectiveClock>,
 }
 
-/// Which metric of a drawn widget a reader asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reading {
-    /// The metric it draws.
     Drawn,
-    /// Its detail, or the metric it draws when it names none.
     Drilled,
 }
 
 impl Surfaces<'_> {
-    /// Every widget a dashboard the caller sees draws, each once and in its
-    /// order. One it names that is no longer stored is left out.
     pub(crate) async fn drawn_widgets(
         &self,
         dashboard: &DefinitionId,
@@ -63,8 +52,6 @@ impl Surfaces<'_> {
         Ok(drawn)
     }
 
-    /// The metric a reader of a dashboard the caller sees asks one of its
-    /// widgets for. A widget the dashboard does not draw is not found.
     pub(crate) async fn drawn_metric(
         &self,
         dashboard: &DefinitionId,

@@ -1,12 +1,3 @@
-//! ClickHouse reader for `identity.identity_inputs` — the raw observation
-//! stream that feeds the persons-seed. Concrete `IdentityInputsReader` over the
-//! shared `insight-clickhouse` client. Verified against a live dev ClickHouse
-//! (the persons-seed reads its whole input through this).
-//!
-//! NOTE: this materializes the filtered input into a `Vec` rather than
-//! streaming row-by-row. Fine at current
-//! deployment sizes; row-streaming is deferred to the hardening pass (#1753).
-
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -16,56 +7,15 @@ use sea_orm::prelude::DateTime;
 use serde::Deserialize;
 use uuid::Uuid;
 
-/// A full input scan can outrun the client's 30s default; the seed run as a
-/// whole is bounded by `SEED_TIMEOUT`, so give the read generous headroom.
 const READ_TIMEOUT: Duration = Duration::from_mins(5);
 
 use crate::domain::seed::IdentityInputRow;
 use crate::domain::seed_service::IdentityInputsReader;
 
-/// Verbatim shape from `ClickHouseIdentityInputsReader`: rows ordered so the
-/// FIRST per account is the latest (`_synced_at DESC`), which is exactly what
-/// `build_profiles` expects. `insight_source_id` is `toString`-ed and reparsed
-/// — wrapped in `ifNull` because the column is `Nullable(String)` in the dbt
-/// table (`toString` of a Nullable stays Nullable, which the strict decoder
-/// rejects against the non-null `String` field); a NULL becomes `''` and fails
-/// the UUID reparse, failing the seed.
-///
-/// HOTFIX(#1550) — TEMPORARY. This is
-/// the ANCHOR of the hotfix: every piece of code whose behavior exists only
-/// because of it carries the literal tag `HOTFIX(#1550)` — grep for it to
-/// find the full blast radius when unwinding the hotfix. The dbt
-/// producer writes `insight_tenant_id` *hashed* — sipHash128 of whatever raw
-/// string the connector was configured with (`identity_inputs_from_history.sql`,
-/// documented there as a TEMPORARY cross-source join key) — so the stored tenant
-/// never equals the caller's tenant and persons-seed silently read 0 rows. There
-/// is no reliable representation to match against (connector configs are
-/// free-form strings), so the tenant filter is DROPPED for now: Insight
-/// deployments are single-tenant, all `identity_inputs` rows belong to the
-/// deployment, and the seed writes its output under the caller's tenant
-/// regardless of what the rows carry (`run_seed` binds the request tenant,
-/// never the row's).
-///
-/// MULTI-TENANT PREREQUISITE: the tenant filter MUST come back before any
-/// multi-tenant deployment — without it every tenant's seed would read (and
-/// re-file under itself) all other tenants' rows. Restoring it requires the
-/// producer side to be fixed first (dbt resolves real tenant UUIDs instead of
-/// hashing free-form connector strings), then reinstate
-/// `WHERE insight_tenant_id = ?` here.
-///
-/// The text columns have mixed nullability in `identity_inputs` (e.g.
-/// `insight_source_type` is `String`, `source_account_id` is `Nullable(String)`),
-/// and the clickhouse decoder is strict in both directions — so most are coerced
-/// to a non-null `String` with `ifNull(col, '')` and decoded uniformly.
-/// `source_account_id` is the exception: it is decoded as `Option<String>` and a
-/// NULL fails the read rather than silently minting a `''` pseudo-account.
-/// Crucially the aliases DIFFER from the source column names (`val`, `op_type`,
-/// …): a same-name `ifNull(value,'') AS value` would shadow the `value`
-/// referenced in `WHERE` and can trip a ClickHouse "Cyclic aliases" error.
-/// `is_delete` is derived from
-/// `operation_type`. DELETE rows are closure signals that arrive with an
-/// empty `value` by the write contract, so the non-empty filter applies to
-/// UPSERT rows only — value-filtering DELETEs would drop every tombstone.
+/// `toString` of a `Nullable` column stays `Nullable`, which the strict decoder rejects
+/// against a `String` field, hence `ifNull`. Aliases differ from the column names: a
+/// same-name `ifNull(value, '') AS value` shadows the `value` in `WHERE` and can trip
+/// ClickHouse's "Cyclic aliases" error.
 const STREAM_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')  AS source_type,
@@ -98,7 +48,6 @@ struct InputRow {
     op_type: String,
 }
 
-/// Reads `identity_inputs` from ClickHouse via the shared client.
 pub struct ClickHouseIdentityInputsReader {
     client: Client,
 }
@@ -109,7 +58,6 @@ impl ClickHouseIdentityInputsReader {
         Self { client }
     }
 
-    /// Build a reader from connection settings (empty user → no auth).
     #[must_use]
     pub fn connect(url: &str, database: &str, user: &str, password: &str) -> Self {
         let mut config = Config::new(url, database).with_query_timeout(READ_TIMEOUT);
@@ -123,9 +71,8 @@ impl ClickHouseIdentityInputsReader {
 #[async_trait]
 impl IdentityInputsReader for ClickHouseIdentityInputsReader {
     async fn stream(&self, tenant_id: Uuid) -> anyhow::Result<Vec<IdentityInputRow>> {
-        // tenant_id is intentionally unused while the HOTFIX(#1550) drops the
-        // tenant filter — kept so the `IdentityInputsReader` trait stays
-        // stable for when the filter comes back.
+        // SAFETY: tenancy shortcut (#1550): reads every tenant's rows, because the producer hashes tenant
+        // ids and there is nothing to filter on yet. Single-tenant deployments only.
         let _ = tenant_id;
         let rows: Vec<InputRow> = self.client.query(STREAM_SQL).fetch_all().await?;
         rows.into_iter().map(map_row).collect()
@@ -153,8 +100,6 @@ fn map_row(r: InputRow) -> anyhow::Result<IdentityInputRow> {
     })
 }
 
-/// Parse a `ClickHouse` `toString(DateTime[64])` value: `"2026-07-16 12:34:56"`
-/// or `"…56.123456"`. Tries the fractional form first, then the plain form.
 fn parse_ch_datetime(s: &str) -> anyhow::Result<DateTime> {
     DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
         .or_else(|_| DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))

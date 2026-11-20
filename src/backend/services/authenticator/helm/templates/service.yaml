@@ -11,16 +11,11 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    # Service-token listener (§10 G4). Second port on the same Service; scoped
-    # separately by NetworkPolicy (token-port ingress from app service pods).
     - port: {{ .Values.service.tokenPort }}
       targetPort: token
       protocol: TCP
       name: token
     {{- if .Values.tlsDiscovery.enabled }}
-    # TLS discovery front (NGINX_BFF R1): the authn-tls sidecar terminates HTTPS
-    # here so downstream verifiers resolve the JWKS over https. The token `iss`
-    # is `https://<fullname>:<port>`.
     - port: {{ .Values.tlsDiscovery.port }}
       targetPort: tls
       protocol: TCP

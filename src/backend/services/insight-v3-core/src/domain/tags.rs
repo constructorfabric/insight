@@ -12,7 +12,6 @@ const MAX_NAME_CHARS: usize = 32;
 
 pub(crate) const MAX_TAGS_PER_DASHBOARD: usize = 10;
 
-/// Per owner, the ownerless scope included.
 pub(crate) const MAX_TAGS: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,14 +127,10 @@ impl From<sea_orm::DbErr> for TagError {
 
 #[async_trait]
 pub(crate) trait Tags: Send + Sync + fmt::Debug {
-    /// The names of the tags on dashboards the caller sees, each counting
-    /// those dashboards; one name held in several scopes is one entry.
     async fn list_tags(&self, caller: Caller) -> Result<Vec<TagSummary>, TagError>;
 
     async fn tags_of(&self, dashboard: &DefinitionId) -> Result<Vec<TagName>, TagError>;
 
-    /// Replaces the dashboard's tags with tags of `scope`, its owner's,
-    /// making any that scope does not hold yet.
     async fn set_tags(
         &self,
         dashboard: &DefinitionId,
@@ -144,8 +139,6 @@ pub(crate) trait Tags: Send + Sync + fmt::Debug {
     ) -> Result<(), TagError>;
 }
 
-/// Sets the tags of a dashboard the caller may change, in its owner's scope
-/// even when an editor sets them.
 pub(crate) async fn retag(
     store: &dyn DefinitionStore,
     caller: Caller,

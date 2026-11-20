@@ -1,18 +1,3 @@
-//! End-to-end 401 contract for the session-cookie surface: every `.anonymous().exposed()`
-//! route that requires a session answers 401 both without a cookie and with a
-//! cookie that resolves to no session.
-//!
-//! `#[ignore]` by default (needs the stack up; `run-e2e.sh` drives it):
-//!
-//! ```text
-//! AUTH_BASE=http://localhost:8083 \
-//!   cargo test -p authenticator --test e2e_unauthorized -- --ignored --nocapture
-//! ```
-//!
-//! Covers the 401 responses declared in the OpenAPI spec for /auth/me,
-//! /auth/csrf, and the /auth/sessions family; /auth/refresh and
-//! /internal/authz 401s are exercised by `e2e_refresh` and `e2e_login_loop`.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;

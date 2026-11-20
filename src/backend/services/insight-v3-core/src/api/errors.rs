@@ -1,11 +1,3 @@
-//! What the HTTP layer answers with, for the failures more than one endpoint
-//! can hit.
-//!
-//! Each endpoint group answers under its own resource type, so the refusal
-//! has to be built from that group's error type — but which failures are the
-//! caller's, which are ours, and which are worth logging is one policy, and
-//! it lives here.
-
 use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::definition::{DefinitionError, DefinitionKind, DefinitionStoreError};
@@ -16,24 +8,17 @@ use crate::domain::surfaces::CustomError;
 #[cfg(test)]
 mod tests;
 
-/// One endpoint group, as the errors it answers with.
 pub(crate) trait ApiErrors {
-    /// A value the caller can correct, named by the field carrying it.
     fn invalid_field(field: &str, detail: String) -> CanonicalError;
 
-    /// A wait the server gave up on, which the caller may retry.
     fn timed_out(detail: &str) -> CanonicalError;
 
-    /// A name another definition already holds.
     fn name_taken(name: &str) -> CanonicalError;
 
-    /// A named thing that is not there.
     fn missing(resource: &str, detail: String) -> CanonicalError;
 
-    /// A body or a result past a size limit, named by the field carrying it.
     fn oversized(field: &str, detail: &str) -> CanonicalError;
 
-    /// A window the caller wrote that cannot be read as one.
     fn window_error(error: &WindowError) -> CanonicalError {
         let field = match error {
             WindowError::Range(_) | WindowError::Maximum(_) | WindowError::Overflow => "range",
@@ -42,8 +27,6 @@ pub(crate) trait ApiErrors {
         Self::invalid_field(field, error.to_string())
     }
 
-    /// A metric read that did not answer: the wait and the size are the
-    /// caller's to see, what the warehouse said is ours.
     fn run_error(error: MetricRunError) -> CanonicalError {
         match error {
             MetricRunError::Timeout => Self::timed_out("metric query timed out"),
@@ -61,7 +44,6 @@ pub(crate) trait ApiErrors {
         }
     }
 
-    /// Whatever reading a stored metric can fail with, as the caller sees it.
     fn custom_error(error: CustomError) -> CanonicalError {
         match error {
             CustomError::NotFound { kind, id } => {
@@ -88,18 +70,14 @@ pub(crate) trait ApiErrors {
         }
     }
 
-    /// A name the store cannot hold.
     fn definition_error(error: DefinitionError) -> CanonicalError {
         Self::invalid_field("name", error.to_string())
     }
 
-    /// An id in a path that cannot be one, which names nothing.
     fn malformed_id(kind: DefinitionKind, raw: &str) -> CanonicalError {
         Self::missing(raw, format!("{} `{raw}` was not found", kind.singular()))
     }
 
-    /// A body axum would not read.
-    ///
     /// INVARIANT: an extractor rejects before the handler runs, so a write
     /// takes its body as a `Result` and answers this only once the caller has
     /// proved they may write at all. Otherwise an unauthorized caller learns
@@ -117,10 +95,6 @@ pub(crate) trait ApiErrors {
         }
     }
 
-    /// A dataset store that did not answer.
-    ///
-    /// Same policy as the definitions below: only the wait is the caller's to
-    /// see, and a refusal the caller can act on keeps its own shape.
     fn dataset_store_error(error: crate::domain::datasets::DatasetStoreError) -> CanonicalError {
         use crate::domain::datasets::DatasetStoreError;
 
@@ -145,13 +119,8 @@ pub(crate) trait ApiErrors {
         }
     }
 
-    /// A definition store that did not answer.
-    ///
-    /// Only the wait is the caller's to see: what the database said is ours,
-    /// and saying it back would describe our schema to whoever asked.
     fn definition_store_error(error: DefinitionStoreError) -> CanonicalError {
         match error {
-            // Waiting for a connection is the store being busy, not broken.
             DefinitionStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
                 tracing::warn!(error = ?source, "definition store connection timed out");
                 Self::timed_out("definition store timed out")

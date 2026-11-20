@@ -3,11 +3,6 @@ use crate::infra::metrics::ErrorClass;
 
 use super::dto::{MetricResultViewDto, MetricViewErrorCode};
 
-/// Why a view carries no values: the data is not there yet, or the read failed.
-///
-/// The two are answered differently and must not be collapsed — a missing
-/// relation is "no data yet", everything else is a failure the caller is told
-/// about.
 #[derive(Debug, Clone)]
 pub enum ViewAbsence {
     NotReady(NotReadyReason),
@@ -15,7 +10,6 @@ pub enum ViewAbsence {
 }
 
 impl ViewAbsence {
-    /// Read a `ClickHouse` error message (submit or fetch failure).
     pub fn from_query_error(message: &str) -> Self {
         match ErrorClass::classify(message) {
             ErrorClass::RelationMissing => Self::NotReady(NotReadyReason::SourceRelationMissing),
@@ -51,10 +45,6 @@ impl From<ViewFailure> for ViewAbsence {
     }
 }
 
-/// One view's failed computation: a stable code plus the underlying
-/// description. `detail` is shown to admins only; everyone else gets the
-/// code's generic message, so ClickHouse internals never reach a regular
-/// caller.
 #[derive(Debug, Clone)]
 pub struct ViewFailure {
     pub code: MetricViewErrorCode,
@@ -76,9 +66,6 @@ impl ViewFailure {
         }
     }
 
-    /// A failure raised while assembling rows into a view (demux, ranking,
-    /// dimension shape) — already logged with full detail at its site, so the
-    /// admin message stays at the summary level.
     pub fn from_assembly_error(context: &str) -> Self {
         Self {
             code: MetricViewErrorCode::ResultParseFailed,
@@ -121,8 +108,6 @@ mod tests {
         }
     }
 
-    /// An absent table (60) or an absent database (81) is "no data yet", not a
-    /// failure — a fresh install has neither.
     #[test]
     fn an_absent_relation_is_not_ready_rather_than_failed() {
         for message in [
@@ -140,9 +125,6 @@ mod tests {
         }
     }
 
-    /// Code 47 means the relation is there and the deployed code disagrees with
-    /// its columns. Answering that with an empty view would hide the one defect
-    /// the schema channel exists to catch.
     #[test]
     fn a_column_the_relation_does_not_have_still_fails() {
         let absence = ViewAbsence::from_query_error(
@@ -175,8 +157,6 @@ mod tests {
         assert_eq!(code_of(&absence), Some(MetricViewErrorCode::QueryFailed));
     }
 
-    /// A failure that merely quotes an absent relation reports its own code, so
-    /// it must not be mistaken for one.
     #[test]
     fn a_longer_code_or_a_quoted_absence_does_not_read_as_not_ready() {
         for message in [

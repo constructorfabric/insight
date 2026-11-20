@@ -1,6 +1,3 @@
-//! The chat client: turns a message into either a one-time answer or a set
-//! of metric/widget/dashboard definitions to store.
-
 mod anthropic;
 mod conversation;
 mod prompt;
@@ -33,8 +30,6 @@ pub(crate) struct Turn {
     pub(crate) content: String,
 }
 
-/// What is already stored, by id and name, so the model can draw it and
-/// replace it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Catalogue {
     built: Vec<(DefinitionKind, Vec<Listed>)>,
@@ -54,31 +49,19 @@ impl Catalogue {
     }
 }
 
-/// One question, and everything the model needs to answer it.
 #[derive(Debug)]
 pub(crate) struct Ask<'a> {
     pub(crate) message: &'a str,
-    /// The turns before this one; the service keeps no session.
     pub(crate) turns: &'a [Turn],
-    /// The declared datasets, as a reader is told them.
     pub(crate) datasets: &'a str,
     pub(crate) catalogue: &'a Catalogue,
-    /// Every dataset a metric may read.
     pub(crate) allowed: &'a [String],
     pub(crate) schemas: &'a dyn Schemas,
-    /// Where a person's name is resolved from.
     pub(crate) people: &'a People,
 }
 
-/// What a dataset declares, asked for by name.
-///
-/// The prompt already names every dataset and its fields; this is what the
-/// model asks when it wants one spelled out again mid-conversation.
 #[async_trait::async_trait]
 pub(crate) trait Schemas: Send + Sync + std::fmt::Debug {
-    /// The named datasets, rendered for the model. A name it cannot resolve is
-    /// reported as such rather than omitted, or the model reads silence as
-    /// "no fields" and invents them.
     async fn describe(&self, datasets: &[String]) -> String;
 }
 
@@ -111,8 +94,6 @@ pub(crate) enum ChatError {
 }
 
 impl ChatError {
-    /// What the repair round tells the model. `Display` on the JSON variant
-    /// names a category; the serde message names the offending field.
     pub(super) fn feedback(&self) -> String {
         match self {
             Self::Json(error) => error.to_string(),
@@ -131,11 +112,6 @@ impl ChatError {
     }
 }
 
-/// Proposes an answer or a creation from a chat message.
-///
-/// There is one backend that answers: the model. A blank key gives
-/// [`ChatError::NoKey`] rather than a reply of our own invention, so a stand
-/// that never got a key says so instead of looking answered.
 #[derive(Debug, Clone)]
 pub(crate) struct ChatClient {
     backend: ChatBackend,
@@ -173,16 +149,12 @@ impl ChatClient {
         }
     }
 
-    /// A client with nothing to call: every ask is [`ChatError::NoKey`].
     pub(crate) fn keyless() -> Self {
         Self {
             backend: ChatBackend::Keyless,
         }
     }
 
-    /// Always answers with a fixed [`Proposal`] built by `build`, making no
-    /// network call — lets a test drive `handle_chat` with a proposal shape
-    /// of its own choosing.
     #[cfg(test)]
     pub(crate) fn scripted(build: fn() -> Proposal) -> Self {
         Self {
@@ -190,10 +162,6 @@ impl ChatClient {
         }
     }
 
-    /// # Errors
-    ///
-    /// Returns [`ChatError`] describing what the upstream did, or why the
-    /// reply could not be turned into a [`Proposal`].
     pub(crate) async fn propose(&self, ask: &Ask<'_>) -> Result<Proposal, ChatError> {
         match &self.backend {
             ChatBackend::Keyless => Err(ChatError::NoKey),

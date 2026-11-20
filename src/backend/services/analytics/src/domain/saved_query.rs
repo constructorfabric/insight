@@ -1,11 +1,3 @@
-//! Saved-query domain model — the `presentation.queries` entity (#1965).
-//!
-//! A saved query is a single `SELECT`/`WITH` over the read-only contract,
-//! authored by an analyst and tenant-scoped. It is stored as service-DB
-//! metadata (like [`super::metric`]); the `sql` is validated by the query gate
-//! on write and on run. Only `/run` reaches ClickHouse, executing as
-//! `presentation_ro`.
-
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -85,7 +77,6 @@ pub struct RunResponse {
     pub not_ready: Option<crate::domain::not_ready::NotReadyReason>,
 }
 
-/// Deserialize a field that can be absent, null, or a value.
 #[allow(clippy::option_option)] // intentional: triple-state for PATCH semantics
 fn deserialize_optional_nullable<'de, D>(
     deserializer: D,
@@ -108,8 +99,6 @@ impl toolkit::api::api_dto::RequestApiDto for RunSavedQueryRequest {}
 mod tests {
     use super::{RunSavedQueryRequest, UpdateSavedQueryRequest};
 
-    /// The run body is optional and its `period` defaults to absent: `{}` and an
-    /// omitted `period` both parse to `None`; a value parses through.
     #[test]
     fn run_request_period_is_optional() -> Result<(), Box<dyn std::error::Error>> {
         let empty: RunSavedQueryRequest = serde_json::from_str("{}")?;
@@ -120,8 +109,6 @@ mod tests {
         Ok(())
     }
 
-    /// The triple-state `description` deserializer: absent → unchanged (`None`),
-    /// explicit `null` → clear (`Some(None)`), value → set (`Some(Some(..))`).
     #[test]
     fn description_absent_null_and_value_are_distinct() -> Result<(), Box<dyn std::error::Error>> {
         let absent: UpdateSavedQueryRequest = serde_json::from_str("{}")?;

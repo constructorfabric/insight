@@ -23,8 +23,6 @@ CHART = Path(__file__).resolve().parents[1]
 RELEASE = "insight"
 
 
-# The policy is opt-in, and enabling it without naming a namespace refuses to
-# render — so every render that is about the policy turns it on AND names one.
 ALLOWED_NAMESPACE = {
     "networkPolicy__enabled": "true",
     "networkPolicy__allowedNamespaceLabels[0]__key": "kubernetes.io/metadata.name",
@@ -131,8 +129,6 @@ def test_cache_volume_is_single_writer():
     """One writer, enforced in three places that are one decision."""
     docs = render()
     pvc = one(docs, "PersistentVolumeClaim")
-    # ReadWriteOnce admits many pods on ONE node, which is not what the
-    # process-local locking needs; ReadWriteOncePod is the accurate promise.
     assert pvc["spec"]["accessModes"] == ["ReadWriteOncePod"]
 
     deployment = one(docs, "Deployment")
@@ -177,8 +173,6 @@ def test_token_never_reaches_the_configmap():
         ref["secretRef"]["name"] for ref in container["envFrom"] if "secretRef" in ref
     ]
     assert secrets == ["cfg"], "the token arrives from the Secret, nowhere else"
-    # Other envFrom sources are allowed (the platform ConfigMap carries the
-    # emission contract) but must never be a second source of the token.
     assert not any(
         "token" in str(ref.get("configMapRef", {})).lower() for ref in container["envFrom"]
     )
@@ -277,16 +271,10 @@ def render_fails(**overrides: str) -> str:
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
-        # The volume filling up is enforced by kubelet as a pod eviction, so
-        # the app budget has to leave headroom rather than track the volume.
         ({"cache__diskBudgetBytes": "49000000000"}, "at most 90%"),
         ({"cache__diskBudgetBytes": "20000000000"}, "under 50%"),
-        # Admission reserves the per-repo cap before a clone; a cap over the
-        # watermark can never be admitted, even on an empty cache.
         ({"cache__maxRepoBytes": "99000000000"}, "exceeds 85%"),
         ({"cache__maxRepoBytes": "40000000000"}, "exceeds 85%"),
-        # An unparseable size would make the guard vacuous, so it is refused
-        # rather than read as zero.
         ({"persistence__size": "50Gigs"}, "unsupported unit"),
         ({"persistence__size": "big"}, "not a Kubernetes quantity"),
     ],

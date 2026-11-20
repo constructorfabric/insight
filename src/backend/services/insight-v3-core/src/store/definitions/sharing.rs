@@ -19,19 +19,14 @@ const GRANTS_OF: &str = "SELECT grantee, level, granted_by, created_at FROM {tab
 WHERE {key} = ?
 ORDER BY created_at, grantee";
 
-/// Granting again sets the level; who granted it first and when stay.
 const GRANT: &str = "INSERT INTO {table} ({key}, grantee, level, granted_by, created_at)
 VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6))
 ON DUPLICATE KEY UPDATE level = ?";
 
 const WITHDRAW: &str = "DELETE FROM {table} WHERE {key} = ? AND grantee = ?";
 
-/// Holds the shared row against every other grant change and hand-over of
-/// it until the transaction ends, reading who owns it now.
 const LOCK_SHARED: &str = "SELECT owner_person_id FROM {owned} WHERE id = ? FOR UPDATE";
 
-/// Whether a person holds an editor grant on it, to them or to everyone.
-///
 /// INVARIANT: read right after [`LOCK_SHARED`], before any other read in the
 /// transaction, so its snapshot starts once every other grant change of it
 /// has committed; a locking read here would gap-lock other dashboards'
@@ -39,8 +34,6 @@ const LOCK_SHARED: &str = "SELECT owner_person_id FROM {owned} WHERE id = ? FOR 
 const EDITOR_GRANTS: &str = "SELECT COUNT(*) AS total FROM {table}
 WHERE {key} = ? AND level = 'editor' AND grantee IN (?, 'everyone')";
 
-/// Stops each carrying entry of an owned dashboard whose placer is neither
-/// its owner nor an editor by a grant to them or to everyone from carrying.
 const DEMOTE_ENTRIES: &str = "UPDATE folder_entries
 JOIN dashboards placed ON placed.id = folder_entries.dashboard
 SET folder_entries.carries = FALSE
@@ -52,8 +45,6 @@ AND NOT EXISTS (SELECT 1 FROM dashboard_grants editors
 WHERE editors.dashboard = folder_entries.dashboard AND editors.level = 'editor'
 AND editors.grantee IN (folder_entries.placed_by, 'everyone'))";
 
-/// Conditional on the owner the caller read, so of two transfers racing
-/// only one moves it.
 const HAND_OVER: &str =
     "UPDATE {owned} SET owner_person_id = ? WHERE id = ? AND owner_person_id = ?";
 
@@ -64,7 +55,6 @@ LIMIT ? OFFSET ?";
 
 const COUNT_ORPHANED: &str = "SELECT COUNT(*) AS total FROM {owned} WHERE {orphaned}";
 
-/// A folder orphans only once it is shared with someone.
 const SHARED_FOLDER: &str =
     "EXISTS (SELECT 1 FROM folder_grants WHERE folder_grants.folder_id = folders.id)";
 
@@ -89,7 +79,6 @@ struct OrphanRow {
     updated_at: NaiveDateTime,
 }
 
-/// Which owned table an orphan listing or a hand-over reads.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Owned {
     Dashboards,
@@ -112,8 +101,6 @@ impl Owned {
     }
 }
 
-/// `{table}` and `{key}` are substituted from our own enum, never from
-/// anything a request carries.
 fn on(template: &str, shared: Shared<'_>) -> String {
     let (table, key) = match shared {
         Shared::Dashboard(_) => ("dashboard_grants", "dashboard"),
@@ -141,12 +128,9 @@ fn person(raw: &str) -> Result<PersonId, DefinitionStoreError> {
     PersonId::parse(raw).ok_or(DefinitionStoreError::UnreadableRow("person"))
 }
 
-/// Who stands where on something shared, read under its lock.
 #[derive(Debug)]
 struct Standing {
     owner: Owner,
-    /// Whether the one changing its grants owns it or holds an editor grant
-    /// on it, to them or to everyone.
     sharer: bool,
 }
 
@@ -164,8 +148,6 @@ fn editor_grants_statement(shared: Shared<'_>, by: PersonId) -> Statement {
     )
 }
 
-/// Locks it for the rest of the transaction and reads how `by` stands on
-/// it; none when it is not stored.
 async fn locked_standing(
     transaction: &DatabaseTransaction,
     shared: Shared<'_>,
@@ -218,8 +200,6 @@ pub(super) fn demote_statement(dashboard: &DefinitionId) -> Statement {
     statement(DEMOTE_ENTRIES, vec![dashboard.as_str().into()])
 }
 
-/// The clause keeping owned rows whose owner is none of `administrators`,
-/// with its values.
 pub(super) fn orphaned_clause(owned: Owned, administrators: &[PersonId]) -> (String, Vec<Value>) {
     let mut clauses = vec!["owner_person_id IS NOT NULL".to_owned()];
     let values: Vec<Value> = administrators
@@ -260,7 +240,6 @@ fn orphaned_count_statement(owned: Owned, administrators: &[PersonId]) -> Statem
     statement(&sql, values)
 }
 
-/// Keeps every carrying entry of a dashboard true to its grants and owner.
 async fn demote(transaction: &DatabaseTransaction, shared: Shared<'_>) -> Result<(), DbErr> {
     let Shared::Dashboard(dashboard) = shared else {
         return Ok(());

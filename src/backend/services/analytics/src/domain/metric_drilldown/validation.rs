@@ -97,12 +97,6 @@ pub async fn validate_export_request(
     .await
 }
 
-// Canonical person id, like every other person-keyed route since the identity
-// cutover; the pre-cutover email shape (and the nil UUID, which parses but is
-// never a person) is a loud 400.
-//
-// INVARIANT: this runs before the visibility gate on both drilldown handlers,
-// so it must not reach any backend — an unauthorized caller gets no further.
 pub(crate) fn parse_person_entity(
     entity: &MetricDrilldownEntity,
 ) -> Result<(String, Uuid), CanonicalError> {
@@ -118,11 +112,6 @@ pub(crate) fn parse_person_entity(
     Ok(("person".to_owned(), person_id))
 }
 
-/// Every person a selection reads, canonical and deduplicated.
-///
-/// INVARIANT: like `parse_person_entity`, this runs BEFORE the visibility gate
-/// on both handlers, so it reaches no backend — an unauthorized caller gets no
-/// further than the shape of their own request.
 pub(crate) fn parse_person_ids(
     entity: &MetricDrilldownEntity,
 ) -> Result<Vec<Uuid>, CanonicalError> {
@@ -145,16 +134,11 @@ pub(crate) fn parse_person_ids(
                 .ok_or_else(|| invalid_error("entity.ids", "entity.ids must be person UUIDs"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // Sorted and deduplicated so one set of people is one selection: the
-    // cursor fingerprint is taken over the selection, and the same roster in
-    // another order would otherwise reject its own next page.
     parsed.sort_unstable();
     parsed.dedup();
     Ok(parsed)
 }
 
-/// The entity in its canonical form: person ids parsed and re-rendered, a
-/// roster sorted and deduplicated, an unsupported shape refused.
 fn normalize_entity(
     entity: MetricDrilldownEntity,
 ) -> Result<MetricDrilldownEntity, CanonicalError> {
@@ -224,9 +208,6 @@ async fn validate_common(
     let filters = normalize_filters(&definition, filters)?;
     let display_dimensions = normalize_display_dimensions(&definition, display_dimensions)?;
     let plan = load_evidence_plan(db, definition_id, definition).await?;
-    // One column set answers three questions — what may be sorted, what the
-    // cursor is bound to, and what the compiler reads — so they cannot drift
-    // apart between here and the query.
     let columns = presentation_columns(&plan, &filters, &display_dimensions, &entity);
     let shape = RowShape::of(&plan);
     let sort = normalize_sort(&columns, sort)?;
@@ -269,14 +250,11 @@ async fn validate_common(
         ValidatedMetricDrilldown {
             selection,
             tenant_id,
-            // The handler overwrites this from config; false is the runtime-wide
-            // default (#1967) so tests compile queries in the degraded form.
             enforce_tenant_scope: false,
             from,
             to,
             limit,
             cursor,
-            // Filled by the handler, which is where the names are resolved.
             search_person_ids: Vec::new(),
             plan,
             snapshot_id,
@@ -285,8 +263,6 @@ async fn validate_common(
     )))
 }
 
-/// The page a cursor addresses, or nothing where the caller asked for the
-/// first one.
 async fn resume_from(
     ch: &insight_clickhouse::Client,
     cursor: Option<String>,
@@ -305,10 +281,6 @@ async fn resume_from(
         return invalid("cursor", "cursor does not match the metric selection");
     }
 
-    // A cursor is bytes the caller holds. Its key is replayed through the
-    // sorted column's own cast, and ClickHouse answers a value that will not
-    // cast by refusing the QUERY — so it is refused here, as the malformed
-    // cursor it is.
     let fits = column_sql(&sort.key, sort_column_type(columns, &sort.key), shape)
         .is_some_and(|sql| sql.accepts_cursor_key(&envelope.key.sort_value));
     if !fits {
@@ -325,9 +297,6 @@ fn sort_column_type(columns: &[MetricDrilldownColumn], key: &str) -> MetricDrill
         .map_or(MetricDrilldownColumnType::String, |column| column.r#type)
 }
 
-/// A sort the query cannot compile is refused rather than silently ignored: a
-/// client that believes it asked for one order and is served another has no way
-/// to tell.
 fn normalize_sort(
     columns: &[MetricDrilldownColumn],
     sort: Option<MetricDrilldownSort>,
@@ -628,9 +597,6 @@ mod tests {
         })
         .unwrap_or_else(|error| panic!("roster must parse: {error}"));
 
-        // One set of people is one selection: the cursor fingerprint is taken
-        // over the selection, so the same roster in another order must not
-        // reject its own next page.
         assert_eq!(parsed, [first, second]);
     }
 

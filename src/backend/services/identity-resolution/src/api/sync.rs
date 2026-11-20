@@ -1,19 +1,3 @@
-//! Persons-sync operations journal — read-only HTTP surface.
-//!
-//! The sync itself is CLI-only (`identity-resolution sync`, run by the Helm
-//! `CronJob` or a manual Job — see `crate::sync_runner`); like the
-//! persons-seed after #1690, there is no HTTP trigger. The GETs are the
-//! observability window over the `operations` rows the CLI runs write:
-//! status, summary (`rows` / `max_id` / `max_created_at` / `synced_at` — the
-//! resolution watermark), error per run.
-//!
-//! Own DTO types rather than reusing the seed's: same wire conventions
-//! (parsed JSON `request`/`summary`, ISO-8601 timestamps, nulls emitted) but
-//! an independent OpenAPI schema, free to grow sync-specific fields.
-//!
-//! Admin-gated like the seed journal: the caller is the gateway-JWT subject
-//! and must hold an active `admin` role in the tenant.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -31,7 +15,6 @@ use super::gate::require_admin;
 use super::seed::ListParams;
 use crate::infra::db::ops_repo::{self, Operation, PERSONS_SYNC_OP};
 
-/// Default page size / cap for the list endpoint (same as the seed journal).
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
 
@@ -85,7 +68,6 @@ pub struct PersonsSyncListResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSyncListResponse {}
 
-/// `GET /v1/persons-sync/{id}` — poll one operation.
 pub async fn get_persons_sync(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -108,9 +90,6 @@ pub async fn get_persons_sync(
     Ok(Json(PersonsSyncOperationResponse::from(op)))
 }
 
-/// `GET /v1/persons-sync` — list persons-sync operations. Optional `?status=`
-/// (unknown values ignored) and `?limit=` (default 50, capped 500), same
-/// semantics as the seed journal list.
 pub async fn list_persons_sync(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

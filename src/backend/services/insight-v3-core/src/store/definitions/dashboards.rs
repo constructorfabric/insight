@@ -1,5 +1,3 @@
-//! The dashboards one caller sees, as `MariaDB` answers it.
-
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
@@ -27,7 +25,6 @@ WHERE tags.name IN ({names}))";
 
 const OWNER_OF: &str = "SELECT id, owner_person_id FROM dashboards WHERE id = ?";
 
-// INVARIANT: the carrying terms match `folder_carrying` - a carrying folder shows the dashboard to its owner and its grantees.
 const VISIBILITY: &str = "CASE
 WHEN EXISTS (SELECT 1 FROM dashboard_grants WHERE dashboard_grants.dashboard = dashboards.id
 AND dashboard_grants.grantee = 'everyone')
@@ -64,12 +61,9 @@ ORDER BY tags.name";
 
 const COUNT_DASHBOARDS: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE {where}";
 
-/// The grants of these dashboards reaching one caller.
 const GRANTS_REACHING: &str = "SELECT dashboard, level FROM dashboard_grants
 WHERE grantee IN (?, 'everyone') AND dashboard IN ({ids})";
 
-/// Each folder carrying one of these dashboards, with its grants reaching
-/// one caller - a row per grant, or one with no level for none.
 const CARRIERS: &str = "SELECT carrying.dashboard, carrying.folder_id, carrier.owner_person_id,
 carrier_grants.level
 FROM folder_entries carrying
@@ -78,7 +72,6 @@ LEFT JOIN folder_grants carrier_grants ON carrier_grants.folder_id = carrier.id
 AND carrier_grants.grantee IN (?, 'everyone')
 WHERE carrying.carries AND carrying.dashboard IN ({ids})";
 
-/// An owner column as the store wrote it.
 pub(super) fn owner_of(column: Option<&str>) -> Result<Owner, DefinitionStoreError> {
     match column {
         None => Ok(Owner::Unowned),
@@ -88,12 +81,10 @@ pub(super) fn owner_of(column: Option<&str>) -> Result<Owner, DefinitionStoreErr
     }
 }
 
-/// An owner as its column holds it: null for ownerless.
 pub(super) fn owner_value(owner: Owner) -> Value {
     owner.person().map(|person| person.to_string()).into()
 }
 
-/// A level column as the store wrote it.
 pub(super) fn level_of(column: &str) -> Result<Level, DefinitionStoreError> {
     Level::parse(column).ok_or(DefinitionStoreError::UnreadableRow("level"))
 }
@@ -139,7 +130,6 @@ struct CarrierRow {
     level: Option<String>,
 }
 
-/// The `WHERE` clause a query keeps, with its values in order.
 pub(super) fn narrowed(caller: Caller, query: &DashboardQuery) -> Clause {
     let pattern = format!("%{}%", like_escaped(&query.needle));
     let (visible, mut values) = dashboard_visible(caller);
@@ -227,7 +217,6 @@ pub(super) fn count_statement(caller: Caller, query: &DashboardQuery) -> Stateme
     statement(&COUNT_DASHBOARDS.replace("{where}", &clause), values)
 }
 
-/// A query over `ids` binding the caller first, then each id.
 fn over_ids(template: &str, caller: Caller, ids: &[&str]) -> Statement {
     let marks = vec!["?"; ids.len()].join(", ");
     let mut values: Vec<Value> = vec![caller.person.to_string().into()];
@@ -257,8 +246,6 @@ async fn tags_of_page<C: ConnectionTrait>(
     Ok(tags)
 }
 
-/// What decides `caller`'s access to each of these owned dashboards, read
-/// in two queries whatever their number.
 pub(super) async fn standings<C: ConnectionTrait>(
     db: &C,
     owners: Vec<(String, Owner)>,

@@ -1,42 +1,3 @@
-//! ClickHouse writer for `identity.identity_persons` — the persons-log copy
-//! the metrics dbt builds resolve against.
-//!
-//! The live table is NOT this service's to create: dbt's
-//! `create_identity_persons` on-run-start hook is its one creator. What lives
-//! here is the runtime lifecycle — a full-snapshot replace with an atomic swap:
-//!
-//! 1. create a staging table UNIQUE to this run (suffix = UUIDv7) with the
-//!    CURRENT schema — concurrent syncs (another replica's worker) can never
-//!    write into or drop each other's staging, and the swap below upgrades
-//!    the live table's schema for free on the run after a schema change;
-//! 2. stream every row into staging (readers keep seeing the old snapshot);
-//! 3. count-verify staging against what we sent — a short write MUST NOT be
-//!    swapped in;
-//! 4. watermark guard: if the live table already carries a `_synced_at`
-//!    NEWER than this snapshot's, abort — a swap would regress the table.
-//!    This is a BACKSTOP, not the serialization: concurrent runs are
-//!    serialized cluster-wide by the persons-sync advisory lock the worker
-//!    holds around the whole run (`infra::db::persons_sync_lock`), which is
-//!    what makes check→swap safe. The guard still catches anything that
-//!    bypasses the worker (a by-hand EXCHANGE, a future lock-free caller);
-//! 5. `EXCHANGE TABLES` — atomic, readers never observe an empty/partial
-//!    table (requires an Atomic database, ClickHouse's default). An install
-//!    whose first sync beats its first dbt run has no second side to exchange
-//!    with, and this run's staging is renamed into place instead;
-//! 6. drop this run's staging (post-swap it holds the previous snapshot);
-//!    stagings orphaned by crashed runs are garbage-collected at the start
-//!    of every run once they are an hour old.
-//!
-//! Any failure before the swap leaves the live table untouched.
-//!
-//! On a replicated warehouse the staging is a `ReplicatedMergeTree` (the
-//! shared client renders the engine from its topology), and the verify and
-//! the guard are read behind a load balancer, so they can reach a replica that
-//! has not merged the parts this run just wrote; the insert and those reads go
-//! through the shared client's read-after-write pair. The database itself is
-//! `create-databases.sh`'s to make; a run refuses one whose engine contradicts
-//! the topology.
-
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -49,26 +10,13 @@ use uuid::Uuid;
 
 use crate::domain::sync_service::{IdentityPersonsWriter, PersonsLogRow};
 
-/// The whole snapshot (DDL + insert + verify) rides one client; generous bound,
-/// the sync operation as a whole is separately bounded by the worker.
 const WRITE_TIMEOUT: Duration = Duration::from_mins(5);
 
 const DATABASE: &str = "identity";
 const TARGET: &str = "identity_persons";
-/// Per-run staging tables are `identity_persons_staging_<uuidv7-simple>`.
 const STAGING_PREFIX: &str = "identity_persons_staging_";
-/// How old an orphaned staging table must be before the GC drops it — old
-/// enough that no live run (bounded well under this by `SYNC_TIMEOUT`) can
-/// still be writing to it.
 const STAGING_GC_AGE_SECONDS: u32 = 3600;
 
-/// Columns of this run's staging table, and so — through the swap — of the
-/// live table's next schema. Mirrors the MariaDB `persons` log
-/// (`000_baseline.sql`) minus the generated
-/// `value_hash`, plus the `_synced_at` watermark (same convention as
-/// `identity_inputs`). Keep in sync with `create_identity_persons.sql`, the
-/// hook that creates the live table: it is the shape a build meets before the
-/// first sync, and the shape a fresh install's `RENAME` has to match.
 const COLUMNS: [(&str, &str); 14] = [
     ("id", "UInt64"),
     ("value_type", "String"),
@@ -85,13 +33,8 @@ const COLUMNS: [(&str, &str); 14] = [
     ("created_at", "DateTime64(6, 'UTC')"),
     ("_synced_at", "DateTime64(3, 'UTC')"),
 ];
-/// The log's primary key, and the order a reader of the snapshot gets.
 const SORT_KEY: [&str; 1] = ["id"];
 
-/// Wire row for the `RowBinary` insert. Field order and names must match the
-/// DDL above — the clickhouse client sends `INSERT INTO … (field names)`.
-/// The watermark field is serde-renamed to `_synced_at` (a Rust field can't
-/// comfortably live with the underscore prefix under clippy).
 #[derive(Debug, Row, Serialize)]
 struct WireRow {
     id: u64,
@@ -119,29 +62,18 @@ struct WireRow {
     synced_at: chrono::DateTime<Utc>,
 }
 
-/// Whether anything has created the live table yet — the one fact that decides
-/// both the watermark guard and the swap verb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
-    /// Created, and carrying whatever snapshot was published last.
     Published,
-    /// Absent: the dbt hook that creates it has not run on this install yet.
     Absent,
 }
 
-/// The table this run stages into.
-///
-/// No `IF NOT EXISTS`: the name carries this run's UUIDv7, so anything
-/// already holding it is a collision no retry resolves.
 fn staging_spec(staging: &str) -> Ddl {
     Ddl::create_table(TableSpec::merge_tree(
         DATABASE, staging, &COLUMNS, &SORT_KEY,
     ))
 }
 
-/// The statement that makes this run's staging the live table. `EXCHANGE` needs
-/// both sides, so an absent target is reached by `RENAME` — publishing the
-/// snapshot without declaring a schema the hook does not write itself.
 fn swap_ddl(staging: &str, target: Target) -> Ddl {
     match target {
         Target::Published => Ddl::exchange_tables(DATABASE, staging, TARGET),
@@ -149,7 +81,6 @@ fn swap_ddl(staging: &str, target: Target) -> Ddl {
     }
 }
 
-/// [`IdentityPersonsWriter`] over the shared `insight-clickhouse` client.
 pub struct ClickHouseIdentityPersonsWriter {
     client: Client,
 }
@@ -160,9 +91,6 @@ impl ClickHouseIdentityPersonsWriter {
         Self { client }
     }
 
-    /// Build a writer from connection settings (empty user → no auth). The
-    /// client database is pinned to `identity` regardless of the configured
-    /// read database — the table's home is fixed by contract.
     #[must_use]
     pub fn connect(url: &str, user: &str, password: &str, topology: Topology) -> Self {
         let mut config = Config::new(url, DATABASE)
@@ -174,8 +102,6 @@ impl ClickHouseIdentityPersonsWriter {
         Self::new(Client::new(config))
     }
 
-    /// Whether the live table exists. Read fresh for every swap: the hook that
-    /// creates it runs on its own schedule, not this service's.
     async fn target_state(&self) -> anyhow::Result<Target> {
         let created: u64 = self
             .client
@@ -191,10 +117,6 @@ impl ClickHouseIdentityPersonsWriter {
         })
     }
 
-    /// Refuse to publish behind a snapshot already on the table — a swap would
-    /// regress it. Empty table → epoch 0, always passes. Equal stamps pass:
-    /// re-publishing an identical-instant snapshot is harmless, and the replica
-    /// clocks feeding `_synced_at` are the service's own.
     async fn guard_watermark(&self, synced_at: chrono::DateTime<Utc>) -> anyhow::Result<()> {
         let published_ms: i64 = self
             .client
@@ -212,10 +134,6 @@ impl ClickHouseIdentityPersonsWriter {
         Ok(())
     }
 
-    /// Drop staging tables orphaned by crashed runs. Only tables older than
-    /// [`STAGING_GC_AGE_SECONDS`] — a younger one may belong to a live
-    /// concurrent run on another replica. Best-effort: GC failures must not
-    /// fail the sync.
     async fn drop_stale_stagings(&self) {
         let stale: Result<Vec<String>, _> = self
             .client
@@ -237,10 +155,6 @@ impl ClickHouseIdentityPersonsWriter {
             }
         };
         for name in stale {
-            // Defense in depth: only names matching exactly what this code
-            // mints (prefix + 32 lowercase hex chars of a simple-format UUID)
-            // ever reach the identifier-interpolated DROP, even if the LIKE
-            // above were somehow loosened.
             let Some(suffix) = name.strip_prefix(STAGING_PREFIX) else {
                 continue;
             };
@@ -260,9 +174,6 @@ impl ClickHouseIdentityPersonsWriter {
         }
     }
 
-    /// Insert + verify + guard + swap against `staging`. Split out so
-    /// [`replace`](IdentityPersonsWriter::replace) can unconditionally drop this
-    /// run's staging afterwards, on success and failure alike.
     async fn fill_and_swap(
         &self,
         staging: &str,
@@ -275,7 +186,6 @@ impl ClickHouseIdentityPersonsWriter {
         }
         insert.end().await?;
 
-        // A lost batch must never be swapped in as "the new truth".
         let count: u64 = self
             .client
             .consistent_query(&format!("SELECT count() FROM {DATABASE}.`{staging}`"))
@@ -288,8 +198,6 @@ impl ClickHouseIdentityPersonsWriter {
              aborting swap (live table left untouched)"
         );
 
-        // SAFETY: read as late as possible — a creator racing in between here and
-        // the RENAME below fails this run loudly, and the next one exchanges.
         let target = self.target_state().await?;
         match target {
             Target::Published => self.guard_watermark(synced_at).await?,
@@ -301,10 +209,6 @@ impl ClickHouseIdentityPersonsWriter {
     }
 
     async fn probe_published_max_id(&self) -> anyhow::Result<Option<u64>> {
-        // A missing table/database (fresh install, sync running before the
-        // dbt hook that creates it) means "nothing published" — the copy path
-        // renames this run's staging into place and surfaces any real
-        // connectivity error loudly.
         let probed: Result<Vec<Option<u64>>, _> = self
             .client
             .query(&format!(
@@ -330,12 +234,8 @@ impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
 
     async fn replace(&self, rows: &[PersonsLogRow], synced_at: DateTime) -> anyhow::Result<()> {
         let synced_at = synced_at.and_utc();
-        // Unique per run: concurrent syncs never touch each other's staging.
         let staging = format!("{STAGING_PREFIX}{}", Uuid::now_v7().simple());
 
-        // Checked once per run: the database is create-databases.sh's to
-        // make, and a staging in one of the wrong engine would publish a
-        // table only one replica holds.
         self.client.assert_database_topology(DATABASE).await?;
         self.drop_stale_stagings().await;
 
@@ -343,9 +243,6 @@ impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
 
         let result = self.fill_and_swap(&staging, rows, synced_at).await;
 
-        // Unconditional cleanup of THIS run's staging: after a successful swap
-        // it holds the previous snapshot; after a failure, the partial write.
-        // Best-effort — an orphan is reclaimed by the next run's GC.
         if let Err(e) = self
             .client
             .execute_ddl(&Ddl::drop_table(DATABASE, &staging))
@@ -410,7 +307,6 @@ mod tests {
         assert_eq!(wire.id, 9);
         assert_eq!(wire.created_at.timestamp_subsec_micros(), 123_456);
         assert_eq!(wire.synced_at, synced);
-        // A NULL reason stays NULL — the copy is verbatim, not normalized.
         assert_eq!(wire.reason, None);
         Ok(())
     }
@@ -445,9 +341,6 @@ mod tests {
         ClickHouseIdentityPersonsWriter::connect("http://ch:8123", "", "", topology)
     }
 
-    /// A `Replicated` database replays the create on every replica but the
-    /// rows follow the engine, so a clustered install stages into a
-    /// `ReplicatedMergeTree` the swap then publishes.
     #[test]
     fn a_clustered_install_stages_into_a_replicated_table() -> anyhow::Result<()> {
         let clustered = writer(Topology::new(true, "insight_cluster"))
@@ -469,8 +362,6 @@ mod tests {
         Ok(())
     }
 
-    /// The staging table is what the swap publishes, so its shape is the live
-    /// table's next schema.
     #[test]
     fn the_staging_table_is_the_shape_the_swap_publishes() -> anyhow::Result<()> {
         let sql = writer(Topology::Standalone)

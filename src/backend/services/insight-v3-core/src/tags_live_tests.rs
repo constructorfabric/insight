@@ -14,7 +14,6 @@ use crate::store::definitions::MariaDefinitions;
 
 pub(crate) static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 
-/// Someone who owns nothing here, so sees exactly the ownerless dashboards.
 fn anyone() -> PersonId {
     PersonId::new(Uuid::now_v7())
 }
@@ -43,7 +42,6 @@ fn any_of(values: &[String]) -> TagFilter {
         .unwrap_or_else(|| panic!("a filter naming tags is one"))
 }
 
-/// Stores the board, or writes its body again when it is already there.
 async fn board(store: &MariaDefinitions, name: &DefinitionId) {
     let label = DefinitionLabel::of_id(name);
     let body = json!({ "title": "Board", "items": [] });
@@ -89,8 +87,6 @@ async fn set(store: &MariaDefinitions, name: &DefinitionId, values: &[String]) {
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// A folder no one owns, as one from before ownership is, which is where
-/// ownerless boards go.
 async fn ownerless_folder(
     store: &MariaDefinitions,
     name: &str,

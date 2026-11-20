@@ -1,7 +1,3 @@
-//! The alert tools: the same operations the API has, for a client that
-//! speaks MCP. A write is logged with the subject the token names; the
-//! store records no author for it, since the server resolves no person.
-
 use axum::http::request::Parts;
 use rmcp::model::CallToolResult;
 use schemars::JsonSchema;
@@ -78,7 +74,6 @@ pub(crate) struct AlertNotificationsRequest {
 }
 
 impl CustomSurfaces {
-    /// The alert operations, or the refusal that this installation has none.
     fn alerts(&self) -> Result<AlertRules<'_>, CallToolResult> {
         self.state()
             .alerts()
@@ -310,8 +305,6 @@ impl CustomSurfaces {
     }
 }
 
-/// Who is writing, as the token names them. Every call reaches a tool
-/// authenticated, so a request without a caller is refused, not guessed at.
 fn caller(parts: &Parts) -> Result<&str, CallToolResult> {
     parts
         .extensions
@@ -320,7 +313,6 @@ fn caller(parts: &Parts) -> Result<&str, CallToolResult> {
         .ok_or_else(|| refuse("only an administrator writes alerts"))
 }
 
-/// An id as a tool takes it. Anything else names no alert.
 fn parse_id(raw: &str) -> Result<uuid::Uuid, CallToolResult> {
     uuid::Uuid::parse_str(raw.trim()).map_err(|_| refuse(&format!("no alert has the id `{raw}`")))
 }

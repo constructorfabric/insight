@@ -14,15 +14,12 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve()
-SUBCHART = HERE.parents[1]  # .../identity-resolution/helm
+SUBCHART = HERE.parents[1]
 REPO_ROOT = HERE.parents[6]
 UMBRELLA = REPO_ROOT / "charts" / "insight"
 
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
-# Minimum viable umbrella install on the credentials.autoGenerate path (the
-# only path where the umbrella composes the identity-resolution config Secret
-# and can therefore vouch for the tenant inside it).
 UMBRELLA_BASE = [
     "--set",
     "identityResolution.deploy=true",

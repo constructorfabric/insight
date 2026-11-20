@@ -1,18 +1,8 @@
-//! The connector name as it crosses the request boundary.
-
-/// A connector name, parsed once at the edge so no raw path segment reaches a
-/// query.
-///
-/// The vocabulary is what the descriptors use: lowercase letters, digits and
-/// hyphens. Underscores are excluded deliberately — a connector name maps onto
-/// a bronze schema name by replacing hyphens with underscores, so a name
-/// carrying one already makes that mapping ambiguous.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorName(String);
 
 const MAX_LEN: usize = 64;
 
-/// Lowercase letters, digits and hyphens; neither end a hyphen; bounded.
 fn is_slug(raw: &str) -> bool {
     if raw.is_empty() || raw.len() > MAX_LEN {
         return false;
@@ -38,15 +28,9 @@ impl ConnectorName {
     }
 }
 
-/// The tenant half of an instance identity, parsed at the edge like the name.
-///
-/// Its own type rather than a shared one: the two halves carry the same
-/// vocabulary and mean different things, and a single type for both makes a
-/// window narrowed by a source id passed as a tenant a call that compiles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TenantId(String);
 
-/// The source half — which installation of the connector, within that tenant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceId(String);
 

@@ -1,14 +1,3 @@
-//! Wire shape and read path for `GET /v1/metric-definitions`.
-//!
-//! Read-only display listing of the unified metric definitions: every
-//! definition visible to the request tenant (product rows plus tenant
-//! overrides, tenant row winning per `metric_key`), regardless of
-//! `is_enabled` / schema state — the listing doubles as a health surface,
-//! so availability is reported (`is_enabled`, `schema_status`) rather than
-//! filtered. Computation internals (inputs, computation type, transform)
-//! stay off the wire: consumers get the meaning of a metric, not its
-//! implementation.
-
 use std::collections::{BTreeMap, HashMap};
 
 use chrono::{Datelike, Days, NaiveDate};
@@ -174,9 +163,6 @@ pub async fn list_definition_views(
     Ok(MetricDefinitionListResponse { metrics })
 }
 
-/// Collapse the tenant + product rows per `metric_key` to the one that wins:
-/// a tenant-scoped row overrides the product default. Input order is
-/// irrelevant; output is sorted by `metric_key` (`BTreeMap` key order).
 fn select_rows(rows: Vec<ListingRow>, tenant_metrics_enabled: bool) -> Vec<ListingRow> {
     let mut grouped: BTreeMap<String, Vec<ListingRow>> = BTreeMap::new();
     for row in rows {
@@ -184,7 +170,6 @@ fn select_rows(rows: Vec<ListingRow>, tenant_metrics_enabled: bool) -> Vec<Listi
     }
     let mut selected = Vec::with_capacity(grouped.len());
     for (_, mut candidates) in grouped {
-        // Tenant override (tenant_id = Some) sorts before the product default.
         candidates.sort_by_key(|row| row.tenant_id.is_none());
         let row = candidates.remove(0);
         if row.entity_type != "tenant" || tenant_metrics_enabled {
@@ -194,9 +179,6 @@ fn select_rows(rows: Vec<ListingRow>, tenant_metrics_enabled: bool) -> Vec<Listi
     selected
 }
 
-/// Map selected rows to wire views, attaching each row's dimensions and
-/// decoding its enum columns. Errors on a row whose stored enum value is not
-/// canonical (a corrupt-config invariant, not reachable via the write path).
 fn build_views(
     selected: Vec<ListingRow>,
     mut dimensions: HashMap<Uuid, Vec<String>>,
@@ -223,11 +205,6 @@ fn build_views(
                     .ok_or_else(|| config_error(&row.metric_key, "schema_error_code", code))
             })
             .transpose()?;
-        // INVARIANT: keyed by metric_key AND gated on origin. `metric_key` is
-        // unique per tenant, not globally, so a custom definition may carry a
-        // builtin's key and win the listing over it (`select_rows`). It reads
-        // its own SQL and no managed source, so the source's revision rule is
-        // not its to report.
         let rules = match origin {
             MetricOrigin::Builtin => revision_rules.get(row.metric_key.as_str()),
             MetricOrigin::Custom => None,
@@ -262,19 +239,6 @@ fn build_views(
     Ok(metrics)
 }
 
-/// The revision rules a builtin metric reads through, one per input measure.
-///
-/// The rule belongs to the supplier, not to the tenant, so it comes from the
-/// seed rather than from `metric_definitions` — a stored copy would be a second
-/// truth to keep in step with the registry. A custom metric reads no managed
-/// source and so appears here for no key.
-///
-/// Per measure rather than per source, because one supplier can report on two
-/// date anchors: `ai_cost` stamps its month-to-date totals at the month they
-/// bill for, which every later reading rewrites, and its per-day steps at the
-/// day they were read, which the ordinary next reading closes. A measure with
-/// no rule of its own inherits the source's, and a metric whose measures have
-/// none between them appears here not at all.
 fn revision_rules_by_metric() -> HashMap<&'static str, Vec<RevisionRule>> {
     let by_measure: HashMap<(&str, &str), RevisionRule> = builtin_sources()
         .iter()
@@ -307,11 +271,6 @@ fn revision_rules_by_metric() -> HashMap<&'static str, Vec<RevisionRule>> {
         .collect()
 }
 
-/// The newest date every one of a metric's rules considers settled.
-///
-/// The earliest of them: a metric is only as settled as its least settled
-/// input, and a ratio whose denominator is still moving has not settled because
-/// its numerator has.
 fn settled_through_all(
     rules: &[RevisionRule],
     last_observed: Option<NaiveDate>,
@@ -323,7 +282,6 @@ fn settled_through_all(
         .flatten()
 }
 
-/// The legacy window wide enough for every one of a metric's rules.
 fn legacy_window_all(rules: &[RevisionRule]) -> Option<u16> {
     rules
         .iter()
@@ -331,16 +289,8 @@ fn legacy_window_all(rules: &[RevisionRule]) -> Option<u16> {
         .max()
 }
 
-/// The longest a month can be, and so the longest a billing-month boundary can
-/// hold a day open. What the `ai_cost` source declared before the rule existed.
 const LONGEST_MONTH_DAYS: u16 = 31;
 
-/// The rule as the pre-`settled_through` wire field could express it.
-///
-/// A billing-month boundary is not a duration, so it collapses to the widest
-/// one it can ever take. That over-states, which is the safe direction: a
-/// consumer that reads this draws a settled day as provisional, where omitting
-/// the field would have it draw an open month as final.
 fn legacy_revision_window_days(rule: RevisionRule) -> u16 {
     match rule {
         RevisionRule::RollingDays(days) => days,
@@ -348,20 +298,12 @@ fn legacy_revision_window_days(rule: RevisionRule) -> u16 {
     }
 }
 
-/// The newest date the rule considers settled, given the newest date delivered.
-///
-/// Nothing is settled before anything has been delivered, so a metric with no
-/// observation gets no boundary rather than one in the distant past.
 fn settled_through(rule: RevisionRule, last_observed: Option<NaiveDate>) -> Option<NaiveDate> {
     let last_observed = last_observed?;
     match rule {
         RevisionRule::RollingDays(days) => {
             last_observed.checked_sub_days(Days::new(u64::from(days)))
         }
-        // The day before the reported month began. A reading always belongs to
-        // the month it reports, so every earlier month has closed and no
-        // reading of the reported one counts as settled yet — not even one
-        // already superseded, since a later reading can lower it again.
         RevisionRule::BillingMonth => last_observed.with_day(1).and_then(|first| first.pred_opt()),
     }
 }
@@ -489,7 +431,6 @@ mod tests {
             settled_through(RevisionRule::RollingDays(3), Some(date("2026-03-10"))),
             Some(date("2026-03-07"))
         );
-        // Crossing a month boundary is arithmetic, not a special case.
         assert_eq!(
             settled_through(RevisionRule::RollingDays(3), Some(date("2026-03-02"))),
             Some(date("2026-02-27"))
@@ -498,18 +439,14 @@ mod tests {
 
     #[test]
     fn a_billing_month_rule_settles_at_the_end_of_the_month_before_the_reported_one() {
-        // Mid-month: the whole reported month stays open, whatever the day.
         assert_eq!(
             settled_through(RevisionRule::BillingMonth, Some(date("2026-03-10"))),
             Some(date("2026-02-28"))
         );
-        // The last day of a month does not close it — a later reading inside
-        // the same month can still lower every day of it.
         assert_eq!(
             settled_through(RevisionRule::BillingMonth, Some(date("2026-03-31"))),
             Some(date("2026-02-28"))
         );
-        // The first day of a month settles every earlier month at once.
         assert_eq!(
             settled_through(RevisionRule::BillingMonth, Some(date("2026-01-01"))),
             Some(date("2025-12-31"))
@@ -518,10 +455,6 @@ mod tests {
 
     #[test]
     fn a_custom_definition_reports_no_revision_metadata_under_a_builtin_key() {
-        // metric_key is unique per tenant, so a tenant's custom definition can
-        // carry a builtin AI key and override it in the listing. It executes
-        // its own SQL and never reads `ai_cost`, so neither the boundary nor
-        // the legacy window may be attributed to it.
         let key = "ai.daily_approximate_extra_usage_cost";
         let mut custom = row(key, Some(Uuid::now_v7()), "Tenant's own");
         custom.origin = "custom".to_owned();
@@ -536,7 +469,6 @@ mod tests {
         assert_eq!(view.settled_through, None);
         assert_eq!(view.revision_window_days, None);
 
-        // The product row under the same key still reports both.
         let mut builtin = row(key, None, "AI extra cost, spread by day");
         builtin.last_observed_date = Some(date("2026-03-10"));
         let Ok(views) = build_views(vec![builtin], HashMap::new(), HashMap::new()) else {
@@ -551,9 +483,6 @@ mod tests {
 
     #[test]
     fn the_legacy_window_over_states_a_billing_month_rather_than_going_absent() {
-        // Absence means "settles on arrival" to a consumer written before
-        // `settled_through`, so a month-anchored source must report a number it
-        // can never fall short of rather than report nothing.
         assert_eq!(
             legacy_revision_window_days(RevisionRule::BillingMonth),
             LONGEST_MONTH_DAYS
@@ -571,9 +500,6 @@ mod tests {
     fn ai_cost_month_facts_settle_by_month_and_its_daily_step_on_arrival() {
         let rules = revision_rules_by_metric();
 
-        // The step between two readings is fixed once the later one lands, so
-        // it does not wait for the month to close the way the month-to-date
-        // figures beside it do.
         assert_eq!(
             rules.get("ai.daily_approximate_extra_usage_cost"),
             Some(&vec![RevisionRule::RollingDays(0)])
@@ -586,7 +512,6 @@ mod tests {
             rules.get("ai.seat_cost"),
             Some(&vec![RevisionRule::BillingMonth])
         );
-        // A ratio carries one rule per side; both of these are month-anchored.
         assert_eq!(
             rules.get("ai.extra_usage_utilisation"),
             Some(&vec![
@@ -594,19 +519,16 @@ mod tests {
                 RevisionRule::BillingMonth
             ])
         );
-        // A measure with no rule of its own inherits the source's.
         assert_eq!(
             rules.get("ai.accepted_lines"),
             Some(&vec![RevisionRule::RollingDays(3)])
         );
-        // A source that declares no rule leaves its metrics without one.
         assert_eq!(rules.get("git.commits"), None);
     }
 
     #[test]
     fn a_metric_is_only_as_settled_as_its_least_settled_input() {
         let last = Some(date("2026-03-10"));
-        // The earlier boundary wins, whichever side it came from.
         assert_eq!(
             settled_through_all(
                 &[RevisionRule::RollingDays(0), RevisionRule::BillingMonth],
@@ -618,7 +540,6 @@ mod tests {
             settled_through_all(&[RevisionRule::RollingDays(0)], last),
             Some(date("2026-03-10"))
         );
-        // And the legacy window is wide enough for every rule.
         assert_eq!(
             legacy_window_all(&[RevisionRule::RollingDays(0), RevisionRule::BillingMonth]),
             Some(LONGEST_MONTH_DAYS)
@@ -628,10 +549,6 @@ mod tests {
 
     #[test]
     fn the_daily_distribution_treats_a_read_day_as_settled_under_rolling_days_zero() {
-        // The operational semantics the measure declares, not a claim that the
-        // figure cannot move: under `rolling_days: 0` nothing already delivered
-        // is reported provisional, and a later lower reading may still correct
-        // it through the suffix minimum.
         let mut r = row(
             "ai.daily_approximate_extra_usage_cost",
             None,

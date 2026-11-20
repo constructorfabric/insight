@@ -1,5 +1,3 @@
-//! The datasets endpoints: declaring one, reading one, and taking one away.
-
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
@@ -106,24 +104,18 @@ impl DatasetItem {
     }
 }
 
-/// What a dataset holds, as a reader is shown it: one page of records, how
-/// many have arrived in all, and how wide the page was.
 #[derive(Debug, Serialize)]
 struct DatasetRecords {
     records: Vec<Record>,
     total: u64,
-    /// The page size this installation applied. A reader stepping by offset
-    /// reads it rather than assuming the limit it asked for was the one used.
     limit: u64,
 }
 
-/// What a reader asked one page of records for.
 #[derive(Debug, Deserialize)]
 struct LookQuery {
     limit: Option<u64>,
     #[serde(default)]
     offset: u64,
-    /// A declared field, or `received_at`. Absent means arrival order.
     order_by: Option<String>,
     #[serde(default)]
     direction: Direction,
@@ -143,7 +135,6 @@ struct DatasetDependents {
     metrics: Vec<String>,
 }
 
-/// What a catalogue read asks for.
 #[derive(Debug, Deserialize)]
 struct Search {
     #[serde(default)]
@@ -275,11 +266,6 @@ async fn put_dataset(
     .into_response())
 }
 
-/// One dataset, as a reader may open it.
-///
-/// A dataset mid-create or mid-removal is not found rather than half shown:
-/// its table is not there yet, or is about to go, so nothing on the page
-/// behind it would hold.
 async fn get_dataset(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
@@ -359,8 +345,6 @@ async fn list_datasets(
     .into_response())
 }
 
-/// What a dataset's page reads beside its declaration: the records that have
-/// arrived, and what would go with it.
 fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
     let name_param = ParamSpec::path("name").description("Dataset name");
 
@@ -417,7 +401,6 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
     router.merge(records).merge(dependents)
 }
 
-/// The latest records a dataset holds, as they arrived.
 async fn dataset_records(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
@@ -449,8 +432,6 @@ async fn dataset_records(
     .into_response())
 }
 
-/// Every metric that reads this dataset, so a reader sees what a removal
-/// would take with it before asking for one.
 async fn dataset_dependents(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
@@ -560,11 +541,6 @@ fn change_error(error: DatasetChangeError) -> CanonicalError {
     }
 }
 
-/// Every problem with the submitted declaration, each against the place in the
-/// body that carries it.
-///
-/// A body wrong in several places is answered once, with all of them, so it is
-/// corrected in one pass.
 fn invalid(violations: &[Violation]) -> CanonicalError {
     let Some((first, rest)) = violations.split_first() else {
         return DatasetApiError::invalid_field("body", "the declaration is not valid".to_owned());
@@ -586,7 +562,6 @@ fn invalid(violations: &[Violation]) -> CanonicalError {
     builder.create()
 }
 
-/// Every metric this replacement would not leave as it found it.
 fn would_break(broken: &[Broken]) -> CanonicalError {
     let Some((first, rest)) = broken.split_first() else {
         return DatasetApiError::failed_precondition()

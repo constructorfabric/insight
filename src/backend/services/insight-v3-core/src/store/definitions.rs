@@ -1,5 +1,3 @@
-//! The definitions as `MariaDB` holds them.
-
 mod dashboards;
 mod folders;
 pub(crate) mod migration;
@@ -28,8 +26,6 @@ use crate::domain::definition::{
 };
 use crate::store::like_escaped;
 
-/// The id is the primary key, so a create that meets one already held fails
-/// rather than overwriting it.
 const INSERT_NEW: &str = "INSERT INTO {table} (id, name, body, updated_at)
 VALUES (?, ?, ?, UTC_TIMESTAMP(6))";
 
@@ -40,9 +36,6 @@ const DELETE_ONE: &str = "DELETE FROM {table} WHERE id = ?";
 
 const OWN: &str = "UPDATE dashboards SET owner_person_id = ? WHERE id = ?";
 
-/// Each owned folder holding the original that the placer may arrange: their
-/// own, or one granted to them or to everyone as editor while they are an
-/// administrator.
 const CARRY_ENTRIES: &str =
     "INSERT INTO folder_entries (folder_id, dashboard, placed_by, carries, created_at)
 SELECT kept.folder_id, ?, ?, TRUE, UTC_TIMESTAMP(6) FROM folder_entries kept
@@ -59,7 +52,6 @@ const SELECT_IDS: &str = "SELECT id FROM {table} ORDER BY id";
 /// No ESCAPE clause: backslash is already the default LIKE escape here, and
 /// spelling it out needs a lone backslash in a string literal, which MariaDB
 /// reads as escaping the closing quote (error 1064).
-// INVARIANT: one search and order for every page of a library, so each reader and `COUNT_MATCHES` agree on what a page holds.
 const PAGE: &str = "SELECT {columns} FROM {table}
 WHERE name LIKE ? OR body LIKE ?
 ORDER BY name, id
@@ -73,13 +65,10 @@ const NAMES_OF: &str = "SELECT id, name FROM {table} WHERE id IN ({ids})";
 const COUNT_MATCHES: &str = "SELECT COUNT(*) AS total FROM {table}
 WHERE name LIKE ? OR body LIKE ?";
 
-/// `{table}` is substituted from [`DefinitionKind::table`], which returns one
-/// of three literals — never anything a request carries. Every value is bound.
 fn sql(template: &str, kind: DefinitionKind) -> String {
     template.replace("{table}", kind.table())
 }
 
-/// One read of the names of `ids`, each bound rather than written into it.
 fn names_statement(kind: LibraryKind, ids: &[&str]) -> Statement {
     let marks = vec!["?"; ids.len()].join(", ");
     let template = NAMES_OF.replace("{ids}", &marks);
@@ -92,7 +81,6 @@ fn like_pattern(needle: &str) -> String {
     format!("%{}%", like_escaped(needle))
 }
 
-/// One page of `template`'s rows matching `pattern` in a name or a body.
 fn page_sql(columns: &str, kind: DefinitionKind) -> String {
     sql(&PAGE.replace("{columns}", columns), kind)
 }
@@ -175,8 +163,6 @@ impl MariaDefinitions {
         Self { db }
     }
 
-    /// The connection itself, for a live test seeding rows no store method
-    /// writes.
     #[cfg(test)]
     pub(crate) fn connection(&self) -> &DatabaseConnection {
         &self.db
@@ -216,7 +202,6 @@ impl MariaDefinitions {
         ))
     }
 
-    /// One change of a batch, inside its transaction.
     async fn apply_one(
         transaction: &DatabaseTransaction,
         change: &Change,
@@ -458,8 +443,6 @@ impl fmt::Debug for MariaDefinitions {
     }
 }
 
-/// A create that met an id someone already holds, told apart from every
-/// other database failure so the caller hears which it was.
 fn taken_or(error: sea_orm::DbErr, id: &DefinitionId) -> DefinitionStoreError {
     match error.sql_err() {
         Some(sea_orm::SqlErr::UniqueConstraintViolation(_)) => {

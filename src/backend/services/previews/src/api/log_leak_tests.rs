@@ -1,7 +1,3 @@
-//! Seeded-leak checks (insight#2488 AC-4): previews holds no store credentials
-//! and no person records, so its logging path is the request itself — a seeded
-//! bearer token and session cookie must never surface in what a request logs.
-
 use insight_log_context::test_support::capture_probe_output;
 use insight_log_context::{CORRELATION_ID_HEADER, LogContextLayer};
 use uuid::Uuid;

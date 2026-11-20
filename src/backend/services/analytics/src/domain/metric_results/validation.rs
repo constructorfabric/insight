@@ -18,10 +18,6 @@ use super::view::Bucket;
 
 const ROW_LIMIT: usize = 5000;
 const MAX_METRICS: usize = 50;
-// Identity's `POST /v1/visible-persons` caps its batch at the same number
-// (`api::visible_persons::MAX_PERSON_IDS`). Keep them equal: a request that
-// clears this cap is forwarded to that endpoint whole, so a smaller cap there
-// would turn a legal request into a 400 from a service the caller never named.
 const MAX_PERSON_IDS: usize = 1000;
 const MAX_PERIOD_DAYS: i64 = 400;
 const MAX_FILTERS: usize = 10;
@@ -29,17 +25,8 @@ const MAX_FILTER_VALUES: usize = 100;
 const MAX_FILTER_VALUE_BYTES: usize = 512;
 const MAX_GROUP_COUNT: usize = 50;
 
-/// Server-owned histogram resolution: fixed-width bins over each entity's
-/// own exact [min, max]. A fixed count keeps responses deterministic and
-/// the projected-row math trivial; the choice of range strategy lives in
-/// the compiler's bounds CTE and can evolve without touching the wire.
 pub(crate) const HISTOGRAM_BINS: usize = 10;
 
-/// The validated entity selection. The specialization lives in the TYPE:
-/// `entity_type + entity_id` is the one polymorphic contract, and a person's
-/// ids are UUIDs — a variant carries its own id shape instead of a generic
-/// type string sitting next to person-only fields. A first non-person entity
-/// type has its own variant and authorization rule in the gate.
 #[derive(Debug, Clone)]
 pub enum ValidatedEntitySelection {
     Person { ids: Vec<Uuid> },
@@ -54,8 +41,6 @@ impl ValidatedEntitySelection {
         }
     }
 
-    /// The ids as the compiler binds and the wire echoes them: canonical
-    /// `entity_id` strings.
     pub fn entity_ids(&self) -> Vec<String> {
         match self {
             Self::Person { ids } => ids.iter().map(Uuid::to_string).collect(),
@@ -92,8 +77,6 @@ impl ValidatedEntitySelection {
     }
 }
 
-/// One closed day range. `from <= to` holds for every value the validator
-/// admits, so the compiler binds a window without re-checking it.
 #[derive(Debug, Clone, Copy)]
 pub struct DateWindow {
     pub from: NaiveDate,
@@ -106,14 +89,8 @@ pub struct ValidatedMetricResultsRequest {
     pub entity: ValidatedEntitySelection,
     pub from: NaiveDate,
     pub to: NaiveDate,
-    /// The comparison window the `period` and `breakdown` views carry alongside
-    /// `from..to`. `None` for a single-window request, and the compiler emits
-    /// byte-identical SQL in that case.
     pub compare_to: Option<DateWindow>,
     pub metrics: Vec<ValidatedMetricRequest>,
-    /// Whether the compiler injects the per-tenant observation filter (#1967).
-    /// Set from the `metric_catalog.enforce_tenant_scope` config key by the handler; the
-    /// validator defaults it to `false` (see the config knob for why).
     pub enforce_tenant_scope: bool,
 }
 
@@ -165,8 +142,6 @@ pub enum ValidatedMetricView {
         group_limit: Option<ValidatedGroupLimit>,
     },
     Histogram {
-        /// Empty: per-entity bins. Non-empty: bins pooled per dimension tuple
-        /// over all selected entities' events (no entity grain), like rollup.
         dimensions: Vec<String>,
     },
     Unattributed,
@@ -277,16 +252,12 @@ pub async fn validate_request(
         to,
         compare_to,
         metrics,
-        // Off unless the handler turns it on from config; the ingest tenant is
-        // not yet aligned to the JWT tenant (#1829), so enforcing here empties
-        // reads. See `MetricCatalogConfig::enforce_tenant_scope`.
         enforce_tenant_scope: false,
     };
     validate_projected_view_limits(&validated)?;
     Ok(validated)
 }
 
-/// Views that read people: a peer pool, or the work that reaches none of them.
 fn reject_person_only_views(req: &MetricResultsRequest) -> Result<(), CanonicalError> {
     for view in req.metrics.iter().flat_map(|metric| &metric.views) {
         match view {
@@ -505,8 +476,6 @@ fn validate_view_with_context(
             })
         }
         MetricViewRequest::Histogram { dimensions } => {
-            // Histograms bin per-event observation values; only the
-            // event-grain computations (median family) have observations to bin.
             if !matches!(
                 def.spec,
                 ComputationSpec::Median { .. }
@@ -529,9 +498,6 @@ fn validate_view_with_context(
     }
 }
 
-/// Only an additive reading has a share that adds to the members' values, and
-/// only a managed source resolves identity while it serves: a custom source's
-/// rows already name their person, so none of them reaches nobody.
 fn validate_unattributed_view(
     def: &MetricDefinition,
 ) -> Result<ValidatedMetricView, CanonicalError> {
@@ -719,9 +685,6 @@ fn validate_filters(
     Ok(out)
 }
 
-// Person ids are UUIDs since the identity cutover (the pre-cutover key was
-// the lowercased email); `Uuid::parse_str` accepts any casing and hyphenless
-// forms, and re-rendering canonicalizes — no bespoke normalization left.
 fn parse_person_ids(ids: &[String]) -> Result<Vec<Uuid>, CanonicalError> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::with_capacity(ids.len());
@@ -733,9 +696,6 @@ fn parse_person_ids(ids: &[String]) -> Result<Vec<Uuid>, CanonicalError> {
         let Ok(person_id) = Uuid::parse_str(trimmed) else {
             return invalid("entity.ids", "entity.ids must be person UUIDs");
         };
-        // The nil UUID is never a person: identity rejects it with a 400, and
-        // the gate maps every identity non-success to a 500 — so letting it
-        // through here turns a client mistake into a server alert.
         if person_id.is_nil() {
             return invalid("entity.ids", "entity.ids must be person UUIDs");
         }
@@ -802,10 +762,6 @@ fn validate_projected_view_limits(
                 ValidatedMetricView::Histogram { dimensions } if dimensions.is_empty() => {
                     req.entity.len().saturating_mul(HISTOGRAM_BINS)
                 }
-                // A pooled histogram's groups are data-dependent, like an
-                // uncapped rollup's and a breakdown's: not projectable here,
-                // capped by the query's row limit and the post-hoc view row
-                // limit instead.
                 ValidatedMetricView::Histogram { .. } | ValidatedMetricView::Breakdown { .. } => 0,
                 ValidatedMetricView::Rollup { group_limit, .. } => {
                     group_limit.as_ref().map_or(0, |limit| {
@@ -1170,15 +1126,11 @@ mod tests {
 
     #[test]
     fn person_ids_reject_the_nil_uuid() {
-        // Not a person; identity 400s on it and the gate would surface that
-        // as a 500, so it has to fail here as a client error.
         assert!(parse_person_ids(&[Uuid::nil().to_string()]).is_err());
     }
 
     #[test]
     fn person_ids_reject_non_uuid_values() {
-        // The pre-cutover key shape — an email — must now be a 400, loudly:
-        // a silent empty result would read as "person has no data".
         assert!(parse_person_ids(&["a@x.io".to_owned()]).is_err());
     }
 
@@ -1479,9 +1431,6 @@ mod tests {
 
     #[test]
     fn validate_view_gates_histogram_on_event_grain_computations() {
-        // Histograms bin per-event values; sum/ratio observations are
-        // day-aggregated, so binning them would present aggregates as events.
-        // Median and percentile share the per-event observation shape.
         let histogram = || MetricViewRequest::Histogram { dimensions: vec![] };
         assert!(validate_view(&sum_definition(vec![]), histogram()).is_err());
         assert!(validate_view(&ratio_definition(), histogram()).is_err());
@@ -1535,8 +1484,6 @@ mod tests {
 
     #[test]
     fn validate_view_pools_histogram_only_over_declared_dimensions() {
-        // The pooled shape reuses the breakdown/rollup dimension rule: every
-        // requested dimension must be declared on the metric.
         let mut def = median_definition();
         def.base.allowed_dimensions = vec!["repository".to_owned()];
 
@@ -1562,7 +1509,6 @@ mod tests {
             .is_err()
         );
 
-        // The computation gate still holds for the pooled shape.
         assert!(
             validate_view(
                 &sum_definition(vec!["repository"]),
@@ -1671,7 +1617,6 @@ mod tests {
 
     #[test]
     fn projected_view_limit_counts_histogram_bins() {
-        // 501 entities × 10 bins > 5000 projected rows.
         let validated = ValidatedMetricResultsRequest {
             tenant_id: Uuid::nil(),
             entity: ValidatedEntitySelection::Person {
@@ -1689,8 +1634,6 @@ mod tests {
         };
         assert!(validate_projected_view_limits(&validated).is_err());
 
-        // The pooled shape carries no entity grain, so entity count does not
-        // project rows for it — group cardinality is capped at query time.
         let mut pooled = validated;
         pooled.metrics[0].views = vec![ValidatedMetricView::Histogram {
             dimensions: vec!["repository".to_owned()],

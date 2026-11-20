@@ -1,10 +1,3 @@
-//! The providers a notification can be handed to, one HTTP call each.
-//!
-//! Every adapter answers the same three ways: a receipt when the provider
-//! confirmed the message, a rejection it will keep giving, or an outcome
-//! that is not known — a timeout, a rate limit, a server error — which a
-//! later attempt may repeat and which may therefore land twice.
-
 mod discord;
 mod slack;
 mod telegram;
@@ -25,10 +18,8 @@ pub(crate) use slack::Slack;
 pub(crate) use telegram::Telegram;
 pub(crate) use zulip::Zulip;
 
-/// The most of a provider's answer that is read into memory.
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
-/// Every configured destination as the adapter that reaches it.
 pub(crate) fn providers(
     destinations: &BTreeMap<String, DestinationConfig>,
     timeout: Duration,
@@ -71,9 +62,6 @@ pub(crate) fn providers(
         .collect())
 }
 
-/// The one client every adapter posts through: a bounded wait, and no
-/// following of redirects, since what a redirect's target answers is not
-/// the provider's answer to the message.
 fn client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .timeout(timeout)
@@ -81,8 +69,6 @@ fn client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
-/// What a transport failure means: a timeout or a dropped connection
-/// leaves the outcome unknown.
 fn transport(error: &reqwest::Error) -> SendError {
     if error.is_timeout() {
         return SendError::Unconfirmed("timed out".to_owned());
@@ -91,9 +77,6 @@ fn transport(error: &reqwest::Error) -> SendError {
     SendError::Unconfirmed("could not be reached".to_owned())
 }
 
-/// What a status the provider chose means. Rate limits and server errors
-/// are unknown outcomes; everything else that is not success, a redirect
-/// included, is final.
 fn status(response: &reqwest::Response) -> Result<(), SendError> {
     let status = response.status();
     if status.is_success() {
@@ -110,8 +93,6 @@ fn too_large() -> SendError {
     SendError::Unconfirmed("answer too large".to_owned())
 }
 
-/// The body, read a chunk at a time and given up on as soon as it passes
-/// the bound, or the reason it could not be read.
 async fn body(mut response: reqwest::Response) -> Result<Vec<u8>, SendError> {
     if response
         .content_length()

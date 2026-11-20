@@ -1,5 +1,3 @@
-//! A column a metric selects, and where its value is read from.
-
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -13,11 +11,8 @@ use crate::domain::kinds::dataset::declaration::FieldType as DeclaredType;
 
 pub(super) const MAX_IDENTIFIER_CHARS: usize = 128;
 
-/// How to sort the rows. Without it the grouping's own columns order the
-/// result, which cannot answer "the most" or "the largest".
 #[derive(Debug, Deserialize)]
 pub(super) struct OrderBy {
-    /// One of the query's own `as_name` values.
     pub(super) field: String,
     #[serde(default)]
     pub(super) direction: Direction,
@@ -42,8 +37,6 @@ impl Direction {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Field {
-    /// The declared field of the dataset this reads. The two below it are
-    /// refused on a metric that reads one.
     #[serde(default, rename = "field")]
     pub(super) declared: Option<String>,
     #[serde(default)]
@@ -54,24 +47,14 @@ pub(super) struct Field {
     #[serde(default)]
     pub(super) agg: Option<Agg>,
     pub(super) as_name: String,
-    /// What this column holds a person by, when it holds one.
     #[serde(default)]
     pub(super) person: Option<PersonHandle>,
-    /// What this aggregate counts, when it counts only part of the rows.
-    ///
-    /// A rate's numerator and denominator live in the same column, told apart
-    /// by another - `gate_passed` and `gate_runs` are both `value` - so each
-    /// aggregate carries its own condition rather than the query carrying one.
     #[serde(default)]
     pub(super) when: Vec<Filter>,
-    /// Which element of an array payload this field reads, when the elements
-    /// are told apart only by a name inside each one.
     #[serde(default, rename = "where")]
     pub(super) r#where: Option<Filter>,
-    /// Two of this query's own fields, divided: `[numerator, denominator]`.
     #[serde(default)]
     pub(super) divide: Option<Vec<String>>,
-    /// Whether that division reads as a percentage.
     #[serde(default)]
     pub(super) percent: bool,
     #[serde(default)]
@@ -79,12 +62,10 @@ pub(super) struct Field {
 }
 
 impl Field {
-    /// The declared field this reads, when it names one.
     pub(super) fn reads(&self) -> Option<&str> {
         self.declared.as_deref()
     }
 
-    /// What this field does to the value it reads.
     pub(super) fn aggregate(&self) -> Option<super::Aggregate> {
         self.agg.map(|agg| {
             if agg.arithmetic() {
@@ -95,15 +76,10 @@ impl Field {
         })
     }
 
-    /// What the selected column holds, which an aggregate or a ratio decides
-    /// rather than the field it read: a count is a whole number of anything,
-    /// a sum or an average a number of whatever it summed.
     pub(super) fn result_type(&self) -> FieldType {
         self.result_type_reading(self.r#type)
     }
 
-    /// The same, over a dataset: what a plain read holds is what the
-    /// declaration says, which is also what a column's kind follows.
     pub(super) fn result_type_over(&self, over: Over<'_>) -> FieldType {
         let declared = self
             .reads()
@@ -137,13 +113,10 @@ impl Field {
         }
     }
 
-    /// The conditions this aggregate alone keeps rows by.
     pub(super) fn conditions(&self) -> &[Filter] {
         &self.when
     }
 
-    /// Where this field addresses a record itself rather than naming a
-    /// declared field.
     pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
         if self.json.is_some() {
             into.push((format!("{at}.json"), "json"));
@@ -164,12 +137,6 @@ impl Field {
             .ok_or_else(|| MetricQueryError::FieldSource(format!("field `{}`", self.as_name)))
     }
 
-    /// What this field selects.
-    ///
-    /// Counting rows reads no value at all, so `count` alone is `count()` —
-    /// the most natural aggregate there is, and one the language could not
-    /// express while every field had to name a source. Every other
-    /// aggregate, and every plain field, still reads exactly one.
     pub(super) fn expression(
         &self,
         over: Option<Over<'_>>,
@@ -183,8 +150,6 @@ impl Field {
             });
         }
 
-        // The read binds before the condition does, because it is the read
-        // that SQL states first.
         let read = self.read(over, qualifier, binds)?;
         let condition = self.condition(over, qualifier, binds)?;
 
@@ -234,7 +199,6 @@ impl Field {
         self.r#type.extract(&element, path)
     }
 
-    /// This field's own conditions, as one expression, binding their values.
     pub(super) fn condition(
         &self,
         over: Option<Over<'_>>,
@@ -255,17 +219,13 @@ impl Field {
         Ok(Some(parts.join(" AND ")))
     }
 
-    /// Whether this field names nothing to read, which only counting rows may.
     fn reads_nothing(&self) -> bool {
         self.declared.is_none() && self.json.is_none() && self.column.is_none()
     }
 
-    /// One field over another, when this field is a rate rather than a value.
-    ///
     /// The two are this query's own `as_name`s, already selected: `ClickHouse`
     /// resolves an alias inside the same select list, so a rate needs no
-    /// second pass over the table. `nullIf` keeps a zero denominator a
-    /// missing rate instead of an error.
+    /// second pass over the table.
     pub(super) fn ratio(
         &self,
         selected: &HashSet<&str>,
@@ -299,7 +259,6 @@ impl Field {
         }))
     }
 
-    /// The same, keeping only the rows this field's own conditions admit.
     pub(super) fn aggregated_if(&self, read: String, condition: Option<String>) -> String {
         match (self.agg, condition) {
             (Some(agg), Some(condition)) => format!("{}If({read}, {condition})", agg.sql()),
@@ -309,8 +268,6 @@ impl Field {
     }
 }
 
-/// Where a value is read from. A JSON payload is `raw_data` unless the
-/// source names the column holding it.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(super) enum Source<'a> {
     Json {
@@ -384,7 +341,6 @@ pub(crate) enum FieldType {
 }
 
 impl FieldType {
-    /// `path` is dotted: one key per segment.
     pub(super) fn extract(self, payload: &str, path: &str) -> Result<String, MetricQueryError> {
         let function = match self {
             Self::String => "JSONExtractString",
@@ -415,7 +371,6 @@ pub(super) enum Agg {
 }
 
 impl Agg {
-    /// Whether this aggregate needs a number under it.
     pub(super) fn arithmetic(self) -> bool {
         match self {
             Self::Sum | Self::Avg => true,
@@ -442,8 +397,7 @@ pub(super) fn is_identifier(value: &str) -> bool {
 
 /// `?` doubles because the driver binds by scanning the raw query text with
 /// no regard for quoting, so a single `?` here would take a bound parameter
-/// and shift every later one. Backslash first, or it would escape the
-/// backslashes the later replacements add.
+/// and shift every later one.
 fn json_key_literal(key: &str) -> String {
     format!(
         "'{}'",

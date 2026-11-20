@@ -1,25 +1,3 @@
-//! Person listing — the operator's roster and the picker over it.
-//!
-//! `GET /v1/persons` lists every person of the caller's tenant, ordered by the
-//! name the row shows, a page at a time. `?q=` narrows the same list: every
-//! whitespace-separated term must match some CURRENT observed value (the
-//! latest observation per person × source × value type — the same window rule
-//! `/v1/profiles` resolves by, so search and resolution cannot disagree).
-//! Superseded values stop matching their old owner; a value two persons both
-//! currently claim returns both — the operator is the disambiguator, and
-//! hiding one of them by recency would decide a contested case silently.
-//!
-//! A term that parses as a UUID names a person id instead: it is the one
-//! identifier an operator can copy off a card, and the only way to reach a
-//! person the journal holds no values for.
-//!
-//! Browsing is bounded by the page, not by a refusal: an operator reviewing
-//! identities needs to see who exists, and `?cursor=` walks the rest rather
-//! than asking them to guess a narrower term.
-//!
-//! Admin-gated and deliberately NOT visibility-filtered: this is the operator
-//! surface, and the seeded operator sits outside the org chart on purpose.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -46,13 +24,10 @@ const MAX_LIMIT: u64 = 100;
 #[derive(Debug, Deserialize)]
 pub struct SearchParams {
     pub q: Option<String>,
-    // Signed so a negative `?limit=` clamps to 1 (parity with the other
-    // listings) rather than failing query deserialization.
     pub limit: Option<i64>,
     pub cursor: Option<String>,
 }
 
-/// Where the next page resumes. Opaque on the wire; the shape is ours.
 #[derive(Debug, Serialize, Deserialize)]
 struct PageKey {
     order_key: String,
@@ -72,7 +47,6 @@ pub struct PersonListResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonListResponse {}
 
-/// `GET /v1/persons` — one page of the tenant's persons, narrowed by `?q=`.
 pub async fn search_persons(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -88,8 +62,6 @@ pub async fn search_persons(
     let query = terms.join(" ");
     let resume = resume_from(params.cursor.as_deref(), tenant, &query)?;
 
-    // Terms that named nobody must answer nobody. Without this the page would
-    // fall through to the unfiltered listing and hand back the whole tenant.
     let rows = if listing::person_terms_name_nobody(&terms, &named, &values) {
         Vec::new()
     } else {
@@ -102,7 +74,6 @@ pub async fn search_persons(
     Ok(Json(PersonListResponse { items, next_cursor }))
 }
 
-/// One page plus the over-fetched truncation probe.
 async fn page_of_persons(
     state: &AppState,
     tenant: Uuid,
@@ -116,8 +87,6 @@ async fn page_of_persons(
         person_id: key.person_id,
     });
 
-    // Every identity, claimed or not: an address nobody holds yet is exactly
-    // what an operator opens this picker to attach to someone.
     person_listing::list_persons(
         &state.db,
         tenant,
@@ -134,7 +103,6 @@ async fn page_of_persons(
     .map_err(|e| read_err(&e))
 }
 
-/// Drop the probe row and, when it was there, mint the cursor that resumes
 fn cut_to_page(
     rows: Vec<PersonListRow>,
     limit: u64,
@@ -151,7 +119,6 @@ fn cut_to_page(
     })
 }
 
-/// Cards for the page, in the order the listing put them.
 async fn hydrate(
     state: &AppState,
     tenant: Uuid,
@@ -167,8 +134,6 @@ async fn hydrate(
         .map(PersonSummaryResponse::from)
         .collect();
 
-    // A picker is where the wrong person gets chosen, so a person who exists
-    // only because somebody signed in must say so here of all places.
     super::resolution::mark_provisional(state, tenant, &mut items).await?;
     Ok(items)
 }
@@ -182,8 +147,6 @@ fn resume_from(
         .map_err(|rejected: CursorRejected| invalid("cursor", rejected.message()))
 }
 
-/// Split `q` into terms: non-empty, whitespace-separated, capped in count and
-/// total length. An absent or blank `q` is the whole roster, not an error.
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
     listing::search_terms(q.unwrap_or_default()).map_err(|message| invalid("q", &message))
 }
@@ -234,9 +197,6 @@ mod tests {
 
     #[test]
     fn an_absent_or_blank_query_lists_the_roster_rather_than_failing() -> R {
-        // The page bounds the answer, so there is nothing to protect against
-        // by refusing: a UI that races its debounce gets a first page, not the
-        // tenant.
         for q in [None, Some(""), Some("   ")] {
             let terms = search_terms(q).map_err(|e| anyhow::anyhow!("{e:?}"))?;
             assert!(terms.is_empty(), "should browse: {q:?}");
@@ -259,8 +219,6 @@ mod tests {
 
     #[test]
     fn the_excluded_sentinel_names_nobody() {
-        // It accumulates a journal row per exclusion, so it exists in the
-        // table — and it is still not a person the picker may offer.
         let terms = vec![EXCLUDED_PERSON.to_string()];
 
         let (named, values) = listing::partition_person_terms(&terms);

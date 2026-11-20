@@ -1,9 +1,3 @@
-//! The dataset store the tests use.
-//!
-//! It holds rows in a map under one lock, which is the serialization the real
-//! store gets from holding the row, and it decides with the same rule the real
-//! store does.
-
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -24,8 +18,6 @@ mod tests;
 #[derive(Debug)]
 pub(crate) struct MemoryDatasets {
     stored: Mutex<BTreeMap<String, Dataset>>,
-    /// The clock the leases are read against, so a test can let one lapse
-    /// without waiting for it.
     now: Mutex<DateTime<Utc>>,
 }
 
@@ -37,7 +29,6 @@ impl MemoryDatasets {
         }
     }
 
-    /// Moves the clock the leases are read against.
     pub(crate) fn set_now(&self, now: DateTime<Utc>) {
         *self
             .now
@@ -151,7 +142,6 @@ impl Datasets for MemoryDatasets {
     async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         match self.take(name, Operation::Remove, None)? {
             Taken::Attempt(attempt) => Ok(attempt),
-            // Only a create is answered with a dataset that stands.
             Taken::Stands => Err(Refused::Gone.into()),
         }
     }
@@ -211,8 +201,6 @@ impl Datasets for MemoryDatasets {
     }
 }
 
-/// Whether a dataset answers this search: its name or its declaration holds
-/// the needle, as the stored listing matches it.
 fn matches(dataset: &Dataset, needle: &str) -> bool {
     let needle = needle.trim();
     if needle.is_empty() {

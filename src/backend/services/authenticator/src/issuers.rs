@@ -1,32 +1,16 @@
-//! Host-keyed issuer selection (ADR-0003): the request `Host` picks the
-//! broker realm, but only where a flow STARTS (`/auth/login`); everywhere
-//! else (callback, refresh, logout) the issuer is already pinned server-side
-//! and Host is never re-consulted. Empty `idp.hosts` = single-issuer mode,
-//! matching every host; in map mode an unmatched host fails closed.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::config::AuthenticatorConfig;
 use crate::oidc::OidcClient;
 
-/// The configured issuers, keyed by normalized host and by issuer URL.
 pub struct IssuerSelector {
     by_host: HashMap<String, Arc<OidcClient>>,
     by_issuer: HashMap<String, Arc<OidcClient>>,
-    /// Single-issuer (degenerate) mode: this client matches every host.
     any_host: Option<Arc<OidcClient>>,
 }
 
 impl IssuerSelector {
-    /// Build every issuer's client up front (fail closed at boot, not on the
-    /// first login), sharing one HTTP connection pool.
-    ///
-    /// # Errors
-    /// Fails on an unbuildable HTTP client (bad `extra_ca_cert_path`), two
-    /// host keys normalizing to the same host, or one issuer URL appearing
-    /// under two hosts (sessions pin the issuer alone, so it must resolve to
-    /// exactly one client registration).
     pub fn build(cfg: &AuthenticatorConfig) -> anyhow::Result<Self> {
         let idp = &cfg.idp;
         let http = crate::oidc::build_http(idp)?;
@@ -68,8 +52,6 @@ impl IssuerSelector {
         })
     }
 
-    /// Select the issuer for a flow-starting request by its `Host` header.
-    /// `None` = no configured issuer serves this host: reject fail closed.
     #[must_use]
     pub fn for_host(&self, host: &str) -> Option<Arc<OidcClient>> {
         if let Some(single) = &self.any_host {
@@ -78,15 +60,11 @@ impl IssuerSelector {
         self.by_host.get(&normalize_host(host)).cloned()
     }
 
-    /// Resolve a server-side pinned issuer (session record / validated token).
     #[must_use]
     pub fn for_issuer(&self, issuer: &str) -> Option<Arc<OidcClient>> {
         self.by_issuer.get(issuer).cloned()
     }
 
-    /// Like [`Self::for_issuer`], tolerating the empty issuer that state
-    /// written by a pre-map replica carries: in single-issuer mode it can
-    /// only mean the one client; in map mode it stays unresolvable.
     #[must_use]
     pub fn for_stored_issuer(&self, issuer: &str) -> Option<Arc<OidcClient>> {
         if issuer.is_empty() {
@@ -96,10 +74,6 @@ impl IssuerSelector {
     }
 }
 
-/// Canonical form of a request `Host` / map key for the exact-match lookup:
-/// lowercased, port stripped (`:8443`; bracketed IPv6 literals keep their
-/// colons), trailing FQDN dot dropped. Anything beyond that (scheme, path,
-/// userinfo) is not a hostname and simply won't match a validated map key.
 #[must_use]
 pub fn normalize_host(raw: &str) -> String {
     let host = raw.trim().to_ascii_lowercase();
@@ -115,9 +89,6 @@ pub fn normalize_host(raw: &str) -> String {
     host.trim_end_matches('.').to_owned()
 }
 
-/// Peek a `logout_token`'s `iss` claim WITHOUT verification — used only to
-/// select the issuer whose JWKS/claims checks then validate the token in
-/// full, so a forged `iss` buys nothing but a verification failure.
 #[must_use]
 pub fn unverified_issuer(jwt: &str) -> Option<String> {
     crate::oidc::payload_string(jwt, "iss")
@@ -188,7 +159,6 @@ mod tests {
                 "should fail closed: {unknown:?}"
             );
         }
-        // The flat idp.* fields take no part in selection in map mode.
         assert!(selector.for_issuer("https://idp.example").is_none());
         assert!(selector.for_stored_issuer("").is_none());
         assert!(
@@ -228,7 +198,6 @@ mod tests {
             ("  portal.example  ", "portal.example"),
             ("[::1]:8443", "::1"),
             ("[2001:db8::1]", "2001:db8::1"),
-            // Not a numeric port: leave the value alone (it just won't match).
             ("portal.example:x", "portal.example:x"),
         ];
         for (raw, expected) in cases {

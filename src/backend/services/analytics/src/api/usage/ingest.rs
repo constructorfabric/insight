@@ -15,16 +15,12 @@ use super::{PAGE_VIEW, TABLE};
 
 const MAX_RECORDS: usize = 200;
 
-/// The two `LowCardinality` columns, where an unbounded value blows the dictionary.
 const MAX_NAME: usize = 64;
 
 const MAX_FIELD: usize = 128;
 
 const MAX_PATH: usize = 512;
 
-/// How long a record may plausibly have waited in the browser's buffer. Past
-/// this the correction cannot place it in the right day, which is the only
-/// thing it exists to protect.
 const MAX_BUFFERED_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// SDK v2 body. Fields shared by every record are hoisted out of them into
@@ -74,9 +70,6 @@ pub async fn ingest_usage_events(
     let rows = recordable_rows(&req, tenant_id, person_id, arrival);
 
     if let Err(error) = insert_records(&state, &rows).await {
-        // SAFETY: a write that fails forever reads as "nobody used the
-        // product", so the swallow is logged even though one lost beacon
-        // does not matter.
         tracing::warn!(error = %error, "usage event write failed");
     }
 
@@ -114,10 +107,6 @@ struct UsageEventRow {
     app_version: String,
 }
 
-/// Both stamps come off the browser's clock, so their difference — how long the
-/// record waited to be flushed — survives a clock that is hours out. Anchoring
-/// that to the arrival instant keeps the timestamp ours while still separating
-/// records the SDK sent in one beacon.
 fn event_time(
     record: &TelemetryRecord,
     meta: &TelemetryRecord,
@@ -137,8 +126,6 @@ fn event_time(
     }
 }
 
-/// A field the SDK hoists into `meta` is cloned into every record of the batch,
-/// so an unclipped one costs `MAX_RECORDS` times its own size.
 fn shared(own: Option<&str>, meta: Option<&str>, max: usize) -> String {
     clip(own.or(meta).unwrap_or_default(), max)
 }

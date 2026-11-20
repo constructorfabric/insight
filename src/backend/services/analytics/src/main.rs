@@ -1,33 +1,3 @@
-//! Analytics API — query service over `ClickHouse` metric observations.
-//!
-//! Serves metric definitions stored in `MariaDB` over tenant- and
-//! visibility-scoped reads of the gold serving relations.
-//!
-//! # Architecture
-//!
-//! Runs as a gears-rust host on [`toolkit::bootstrap::run_server`]. The
-//! `api-gateway` system gear is the REST host; the analytics functionality is
-//! the [`gear::AnalyticsApiGear`] (`rest`). Auth is **enabled** on
-//! this host: `oidc-authn-plugin` verifies the ES256 gateway JWT (signature /
-//! `iss` / `aud` / `exp`) against the authenticator's JWKS, and the `authverify`
-//! layer maps the signed claims (`sub`, `roles`, `tenant_id`) into the request
-//! `SecurityContext` (`NGINX_BFF` R1 / G2). There is no `auth_disabled` path — a
-//! request without a valid gateway JWT gets 401.
-//!
-//! The MariaDB connection, its sea-orm migrations, and the startup CHECK /
-//! product-default probes remain self-managed inside the gear (we do not use
-//! the toolkit `db` capability — `ClickHouse` is not a toolkit-db backend
-//! anyway).
-//!
-//! # Usage
-//!
-//! ```text
-//! analytics --config config.yaml          # run the host
-//! analytics --config config.yaml migrate  # run migrations + probes and exit
-//! analytics openapi                        # print the OpenAPI document and exit
-//! analytics passports                      # print the metric passports and exit
-//! ```
-
 mod api;
 mod config;
 mod domain;
@@ -38,9 +8,6 @@ mod migration;
 mod sql_explorer;
 
 // System gears — linked via inventory for the REST host + auth pipeline.
-// `oidc-authn-plugin` verifies the ES256 gateway JWT against the authenticator's
-// JWKS (host config points its issuer/JWKS at the authenticator); `authverify`
-// then maps the signed claims (see `api::register_routes`).
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
@@ -103,8 +70,6 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Layered config: defaults -> YAML -> env (APP__*) -> CLI overrides.
-    // Logging/OTel are initialized by the bootstrap runtime, not here.
     let mut config = AppConfig::load_or_default(cli.config.as_ref())?;
     config.apply_cli_overrides(cli.verbose);
 
@@ -129,12 +94,8 @@ async fn main() -> Result<()> {
             init_subcommand_logging();
             gear::run_migrate(&config).await
         }
-        // Validate the gear config (section present, deserializes, required
-        // URLs set) without connecting to any backend.
         Commands::Check => gear::check_config(&config),
-        // Emit the OpenAPI document offline (no backends) — see `print_openapi`.
         Commands::Openapi => print_openapi(),
-        // Emit the metric passports offline (no backends) — see `print_passports`.
         Commands::Passports => {
             print_passports();
             Ok(())
@@ -142,11 +103,8 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Plain stdout logging for the `migrate` subcommand. The bootstrap runtime only
-/// installs its subscriber inside `run_server`, so without this every
-/// `tracing::…` on the subcommand path is a silent no-op — and the migration
-/// Job's log is the only record the schema change leaves behind. `try_init`
-/// keeps this safe if a future toolkit starts initializing earlier.
+// WORKAROUND: the bootstrap runtime installs its subscriber only inside
+// `run_server`, so every `tracing::…` on the subcommand path is otherwise a no-op.
 fn init_subcommand_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -156,18 +114,12 @@ fn init_subcommand_logging() {
         .try_init();
 }
 
-/// Print the analytics `OpenAPI` document in canonical JSON. Offline — see
-/// [`api::openapi_document`]. No config or backends are touched, and no logging
-/// subscriber is initialized on this path, so stdout stays pure JSON.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
     print!("{}", insight_openapi::canonical_json(&doc)?);
     Ok(())
 }
 
-/// Print the metric passports document rendered from the embedded registry.
-/// Offline — no config or backends. Regenerates the committed `passports.md`
-/// pinned by the `metric_definitions::passport` drift test.
 fn print_passports() {
     print!(
         "{}",
@@ -177,8 +129,6 @@ fn print_passports() {
 
 #[cfg(test)]
 mod tests {
-    /// The `openapi` subcommand's happy path: build the document offline and
-    /// write it to stdout (captured by the harness).
     #[test]
     fn print_openapi_writes_the_document() -> anyhow::Result<()> {
         super::print_openapi()
@@ -191,8 +141,6 @@ mod tests {
         Ok(())
     }
 
-    /// The `passports` subcommand's happy path: render the passports offline
-    /// and write them to stdout (captured by the harness).
     #[test]
     fn print_passports_writes_the_document() {
         super::print_passports();

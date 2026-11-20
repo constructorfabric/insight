@@ -1,21 +1,3 @@
-//! Alert rules and notifications hold a condition and a witness as JSON.
-//!
-//! A row written by `m20260928_000006_alerts` holds a column, an operator
-//! and a threshold, and the one value a check read. Each becomes the
-//! condition that means the same - exactly one row, one number test - and
-//! the witness of that one value, before the old columns go.
-//!
-//! INVARIANT: every step is safe to run again. Columns are added and
-//! dropped with `IF [NOT] EXISTS`, the rewrite runs only while the old
-//! columns are there, and it writes the same JSON from the same row. Every
-//! rule is rewritten, so a check or an edit the previous build wrote before
-//! a rerun is taken up; notifications are only ever added, so only those
-//! without a condition are.
-//!
-//! INVARIANT: the JSON written here is spelled out, not built by the
-//! domain types, so a later change to them never changes what this
-//! migration wrote.
-
 use sea_orm::{
     ConnectionTrait as _, DbBackend, DbErr, FromQueryResult, Statement, TransactionTrait as _,
 };
@@ -41,9 +23,6 @@ const REQUIRE_COLUMNS: [&str; 2] = [
     "ALTER TABLE alert_notifications MODIFY COLUMN rule_condition MEDIUMTEXT NOT NULL, MODIFY COLUMN witness MEDIUMTEXT NOT NULL",
 ];
 
-/// A valid check the previous build recorded after the guard and before
-/// the drop carries no witness; it is forgotten, as an edit forgets one,
-/// and the next check records it again.
 const FORGET_CHECKS_WITHOUT_A_WITNESS: &str = "UPDATE alert_rules SET last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_valid_breached = NULL, breached_since = NULL WHERE last_outcome IN ('breach', 'no_breach') AND last_witness IS NULL";
 
 const DROP_COLUMNS: [&str; 2] = [
@@ -51,22 +30,17 @@ const DROP_COLUMNS: [&str; 2] = [
     "ALTER TABLE alert_notifications DROP COLUMN IF EXISTS column_name, DROP COLUMN IF EXISTS operator, DROP COLUMN IF EXISTS threshold, DROP COLUMN IF EXISTS value",
 ];
 
-/// Held until the rewrite commits, so a write of the previous build waits
-/// for it instead of landing between the read and the rewrite.
 const SELECT_RULES: &str = "SELECT id, column_name, operator, threshold, last_outcome, last_value FROM alert_rules FOR UPDATE";
 const UPDATE_RULE: &str =
     "UPDATE alert_rules SET rule_condition = ?, last_witness = ? WHERE id = ?";
 const SELECT_NOTIFICATIONS: &str = "SELECT id, column_name, operator, threshold, value FROM alert_notifications WHERE rule_condition IS NULL";
 const UPDATE_NOTIFICATION: &str =
     "UPDATE alert_notifications SET rule_condition = ?, witness = ? WHERE id = ?";
-/// Rows the rewrite has not caught up with: a writer of the previous build
-/// may have added a rule, or recorded a valid check, after it.
 const UNCONVERTED: [&str; 2] = [
     "SELECT COUNT(*) AS total FROM alert_rules WHERE rule_condition IS NULL OR (last_outcome IN ('breach', 'no_breach') AND last_witness IS NULL)",
     "SELECT COUNT(*) AS total FROM alert_notifications WHERE rule_condition IS NULL OR witness IS NULL",
 ];
 
-/// The operators the previous build wrote.
 const OPERATORS: [&str; 4] = [">", ">=", "<", "<="];
 
 pub struct Migration;
@@ -95,9 +69,6 @@ impl MigrationTrait for Migration {
         if notifications_unconverted {
             rewrite_notifications(manager).await?;
         }
-        // INVARIANT: the guard only means anything while a drop is still
-        // ahead; once the old columns are gone, what it would refuse is
-        // what the heal below repairs.
         if rules_unconverted || notifications_unconverted {
             refuse_unconverted(manager).await?;
         }
@@ -228,8 +199,6 @@ fn unreadable(what: &str, id: &str) -> DbErr {
     ))
 }
 
-/// The stored condition one column, operator and threshold meant:
-/// exactly one row, and its number compared.
 fn condition_of(column: &str, operator: &str, threshold: &str) -> Option<String> {
     if !OPERATORS.contains(&operator) {
         return None;
@@ -247,7 +216,6 @@ fn condition_of(column: &str, operator: &str, threshold: &str) -> Option<String>
     Some(stored.to_string())
 }
 
-/// The stored witness of the one value a check read.
 fn witness_of(column: &str, value: &str, breached: bool) -> Option<String> {
     let value = Number::from_stored(value)?;
 

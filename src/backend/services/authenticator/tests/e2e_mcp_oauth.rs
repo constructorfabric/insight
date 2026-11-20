@@ -53,9 +53,6 @@ async fn assert_metadata(http: &common::Client, auth_base: &str) {
         assert_eq!(response.status(), 200, "metadata endpoint {path}");
     }
 
-    // The two MCP servers are told apart by what their metadata claims: a
-    // client that discovered the authoring one must not be handed the
-    // read-only scope, or authoring would be granted by whichever it found.
     let custom: serde_json::Value = http
         .get(format!(
             "{auth_base}/.well-known/oauth-protected-resource/mcp/v3"

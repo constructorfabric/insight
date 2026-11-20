@@ -1,6 +1,3 @@
-//! Fires one request through a probe route wrapped in a [`LogContextLayer`]
-//! and returns the captured JSON probe line plus its `log_ctx` span fields.
-
 use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -35,7 +32,6 @@ struct SharedWriter(Arc<Mutex<Vec<u8>>>);
 
 impl io::Write for SharedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // SAFETY: a poisoned buffer is still appendable — the writer never leaves it torn.
         let mut inner = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         inner.extend_from_slice(buf);
         Ok(buf.len())
@@ -59,9 +55,7 @@ async fn probe_handler() -> &'static str {
     "ok"
 }
 
-/// Everything a JSON subscriber captured while `f` ran — the raw material for
-/// seeded-leak assertions: log through the real call site inside `f`, then
-/// assert the seeded secret is absent from the returned lines.
+/// Everything a JSON subscriber captured while `f` ran.
 pub fn capture_output(f: impl FnOnce()) -> String {
     let writer = SharedWriter::default();
     let subscriber = tracing_subscriber::fmt()
@@ -76,8 +70,7 @@ pub fn capture_output(f: impl FnOnce()) -> String {
     String::from_utf8_lossy(&captured).into_owned()
 }
 
-/// Everything logged while one probe request travels the layer — for leak
-/// checks over a whole request (seeded credential headers must not surface).
+/// Everything logged while one probe request travels the layer.
 ///
 /// # Errors
 /// The probe request could not be built or served.
@@ -94,7 +87,7 @@ pub fn capture_probe_output(
 
 /// # Errors
 /// The probe line is missing from the captured output or carries no `log_ctx`
-/// span — either means the layer is not doing its job.
+/// span.
 pub fn capture_probe_line(
     layer: LogContextLayer,
     headers: &[(&str, &str)],
