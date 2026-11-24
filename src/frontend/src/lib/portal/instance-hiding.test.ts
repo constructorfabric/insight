@@ -30,7 +30,7 @@ function planned(paths: string[]) {
 }
 
 function adminManageItems(policy: ReturnType<typeof parseNavPolicy>) {
-  return manageGroupsFor({ isAdmin: true, canManagePreviews: true }, policy).flatMap(
+  return manageGroupsFor({ isAdmin: true }, policy).flatMap(
     (group) => group.items,
   );
 }

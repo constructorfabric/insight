@@ -16,7 +16,6 @@ describe("sessionAuthorizationScope", () => {
         csrfToken: "csrf",
         expiresAt: 1,
         refreshAt: 1,
-        experimentsEnabled: false,
       } satisfies Session)
     ).toBe(
       JSON.stringify({

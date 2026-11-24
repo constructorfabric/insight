@@ -9,7 +9,6 @@ import { IngestionView } from "@/components/portal/ingestion-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { AiAssistantBody } from "@/screens/ai-assistant";
-import { PreviewsBody } from "@/screens/previews";
 import { WhatsNewBody } from "@/screens/whats-new";
 
 export function ManageView({ item }: { item: string | null }) {
@@ -39,8 +38,6 @@ export function ManageView({ item }: { item: string | null }) {
     );
   if (item === "ai-assistant") return <AiAssistantBody />;
   if (item === "whats-new") return <WhatsNewBody />;
-  // PreviewsBody carries its own gate, so no wrapper.
-  if (item === "previews") return <PreviewsBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
       <ComingSoon variant="card" state="empty" label="Not built yet" />

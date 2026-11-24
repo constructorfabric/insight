@@ -129,7 +129,7 @@ describe("the ingestion lens", () => {
     const item = MANAGE_ITEMS.find((i) => i.id === "ingestion");
     expect(item?.adminOnly).toBe(true);
     const shows = (isAdmin: boolean) =>
-      manageGroupsFor({ isAdmin, canManagePreviews: false })
+      manageGroupsFor({ isAdmin })
         .flatMap((g) => g.items)
         .some((i) => i.id === "ingestion");
     expect(shows(false)).toBe(false);
@@ -145,16 +145,16 @@ describe("the ingestion lens", () => {
 });
 
 describe("manageGroupsFor", () => {
-  const labelsOf = (isAdmin: boolean, canManagePreviews = false) =>
+  const labelsOf = (isAdmin: boolean) =>
     Object.fromEntries(
-      manageGroupsFor({ isAdmin, canManagePreviews }).map((g) => [
+      manageGroupsFor({ isAdmin }).map((g) => [
         g.label,
         g.items.map((i) => i.label),
       ]),
     );
 
   it("groups an admin's pane into Data, People & access and Platform", () => {
-    expect(labelsOf(true, true)).toEqual({
+    expect(labelsOf(true)).toEqual({
       Data: ["Sources & connectors", "Data exclusions", "Org snapshots"],
       "People & access": [
         "Identities · roles & taxonomy",
@@ -163,7 +163,6 @@ describe("manageGroupsFor", () => {
       ],
       Platform: [
         "Ingestion",
-        "Previews",
         "AI assistant config",
         "What's new",
         "Platform usage",
@@ -186,15 +185,6 @@ describe("manageGroupsFor", () => {
         "Scorecard management",
       ],
     });
-  });
-
-  it("gates previews independently of admin-ness", () => {
-    const ids = manageGroupsFor({ isAdmin: false, canManagePreviews: true })
-      .flatMap((g) => g.items)
-      .map((i) => i.id);
-
-    expect(ids).toContain("previews");
-    expect(ids).not.toContain("identities");
   });
 
   it("marks Access as a row with nothing behind it yet", () => {

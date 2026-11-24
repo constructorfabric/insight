@@ -31,10 +31,6 @@ export default defineConfig(({ mode }) => {
   // Assigning undefined would store the literal string "undefined".
   if (release) process.env.VITE_APP_RELEASE = release;
   return {
-    // Relative asset base: one image serves at "/" AND under an /exp/<name>
-    // preview prefix. Correct resolution on nested routes comes from the
-    // runtime <base href> injected in index.html.
-    base: "./",
     plugins: [
       tanstackRouter({ target: "react", autoCodeSplitting: true }),
       react(),

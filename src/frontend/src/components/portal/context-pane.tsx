@@ -43,7 +43,6 @@ import {
 } from "@/lib/portal/home-subject";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/queries/identity-me";
-import { usePreviewsGate } from "@/queries/previews";
 
 /**
  * Secondary navigation for the rail item that owns the active zone.
@@ -254,11 +253,8 @@ function homeGroupsFor(subject: HomeSubject) {
 }
 
 function ManageNav({ active }: { active: string | null }) {
-  // Gated surfaces (Identities, Previews) drop from the pane for everyone
-  // else; the view behind each refuses direct URLs on its own.
+  // Gated surfaces drop from the pane for everyone else; the view behind
+  // each refuses direct URLs on its own.
   const { isAdmin } = useIsAdmin();
-  const canManagePreviews = usePreviewsGate();
-  return (
-    <GroupsNav groups={manageGroupsFor({ isAdmin, canManagePreviews })} active={active} />
-  );
+  return <GroupsNav groups={manageGroupsFor({ isAdmin })} active={active} />;
 }

@@ -12,7 +12,6 @@ import {
   Filter,
   Database,
   Fingerprint,
-  FlaskConical,
   GitPullRequest,
   LayoutGrid,
   Layers,
@@ -193,11 +192,6 @@ export interface PaneItem {
    * regardless of what the frontend draws.
    */
   adminOnly?: boolean;
-  /**
-   * Rendered only when the previews gate passes (`usePreviewsGate`) — the
-   * same courtesy-over-server-gate doctrine as `adminOnly`.
-   */
-  previewsGated?: boolean;
   unbuilt?: boolean;
 }
 
@@ -367,7 +361,6 @@ export function peopleItemsFor(
 /** The viewer facts that decide which gated Manage surfaces exist for them. */
 export interface ManageGates {
   isAdmin: boolean;
-  canManagePreviews: boolean;
 }
 
 /** The Manage pane for one viewer: gated surfaces drop for everyone else. */
@@ -381,7 +374,6 @@ export function manageGroupsFor(
       .filter(
         (item) =>
           (!item.adminOnly || gates.isAdmin) &&
-          (!item.previewsGated || gates.canManagePreviews) &&
           !itemHidden("manage", item.id, policy),
       )
       .map((item) => withConfigReadiness("manage", item, policy)),
@@ -419,7 +411,6 @@ export const MANAGE_GROUPS: readonly PaneGroup[] = [
     label: "Platform",
     items: [
       { id: "ingestion", label: "Ingestion", icon: Database, adminOnly: true },
-      { id: "previews", label: "Previews", icon: FlaskConical, previewsGated: true },
       { id: "ai-assistant", label: "AI assistant config", icon: Sparkles },
       { id: "whats-new", label: "What's new", icon: Megaphone },
       { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
@@ -455,5 +446,5 @@ export function resolveZoneItem(
   const live = (i: PaneItem) => !itemPlanned(zoneId, i.id, policy);
   const items = zoneItems(zoneId);
   if (item && items.some((i) => i.id === item && shown(i))) return item;
-  return items.find((i) => live(i) && shown(i) && !i.adminOnly && !i.previewsGated)?.id ?? null;
+  return items.find((i) => live(i) && shown(i) && !i.adminOnly)?.id ?? null;
 }
