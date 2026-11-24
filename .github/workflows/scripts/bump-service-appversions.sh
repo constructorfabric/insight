@@ -14,7 +14,7 @@
 #
 # Env: BUILD_TAG (required), FULL_REBUILD (default false), and one flag per
 # service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY_RESOLUTION/
-# INSIGHT_V3_CORE/GIT_CLI_PROXY/PREVIEWS/FRONTEND)
+# INSIGHT_V3_CORE/GIT_CLI_PROXY/FRONTEND)
 # carrying the paths-filter output ('true' when that service changed).
 set -euo pipefail
 
@@ -29,7 +29,6 @@ services=(
   "IDENTITY_RESOLUTION:src/backend/services/identity-resolution/helm/Chart.yaml"
   "INSIGHT_V3_CORE:src/backend/services/insight-v3-core/helm/Chart.yaml"
   "GIT_CLI_PROXY:src/backend/services/git-cli-proxy/helm/Chart.yaml"
-  "PREVIEWS:src/backend/services/previews/helm/Chart.yaml"
   "FRONTEND:src/frontend/helm/Chart.yaml"
 )
 

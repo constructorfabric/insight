@@ -49,7 +49,6 @@ INVENTORY        := environments/$(ENV)/inventory.yaml
 KUBE_CTX         ?= $(shell yq -r '.kubeContext // ""' $(INVENTORY) 2>/dev/null)
 NS_APP           ?= $(shell yq -r '.namespaces.services // "insight"'        $(INVENTORY) 2>/dev/null)
 NS_INFRA         ?= $(shell yq -r '.namespaces.infra    // "insight-infra"'  $(INVENTORY) 2>/dev/null)
-NS_PREVIEWS      ?= $(shell yq -r '.namespaces.previews // "insight-previews"' $(INVENTORY) 2>/dev/null)
 RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(INVENTORY) 2>/dev/null)
 
 # Namespaces for the cross-service hostnames in system/*/values.yaml
@@ -274,7 +273,7 @@ help:
 	@echo
 	@echo "Resolved values (inventory + CLI/env overrides):"
 	@echo "  ENV=$(ENV)  KUBE_CTX=$(KUBE_CTX)  RELEASE=$(RELEASE)"
-	@echo "  NS_APP=$(NS_APP)  NS_INFRA=$(NS_INFRA)  NS_PREVIEWS=$(NS_PREVIEWS)"
+	@echo "  NS_APP=$(NS_APP)  NS_INFRA=$(NS_INFRA)"
 	@echo "  CHART=$(CHART)"
 	@echo "  INSIGHT_VERSION=$(INSIGHT_VERSION)"
 	@echo "  VALUES=$(VALUES)"
@@ -627,7 +626,6 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \
-		--set previews.experiments.namespace=$(NS_PREVIEWS) \
 		$$(cat $(REALIP_ARGS)) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
@@ -674,7 +672,6 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) "$${SET_ARGS[@]}" \
 		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
-		--set previews.experiments.namespace=$(NS_PREVIEWS) \
 		$$(cat $(REALIP_ARGS)) \
 		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
@@ -1060,8 +1057,6 @@ verify-ci-credential: vpn-up kube-ctx
 		|| { echo "$(C_RED)ERROR$(C_RST): no kubeconfig at $(CI_DEPLOYER_OUT) — run 'make provision-ci ENV=$(ENV)' first"; exit 1; }
 	@test -n "$(AIRBYTE_NAMESPACE)" \
 		|| { echo "$(C_RED)ERROR$(C_RST): airbyte.namespace is empty in $(VALUES) — nothing to verify the airbyte supplement against"; exit 1; }
-	@test -n "$(NS_PREVIEWS)" \
-		|| { echo "$(C_RED)ERROR$(C_RST): namespaces.previews is empty in $(INVENTORY) — nothing to verify the previews supplement against"; exit 1; }
 	@FAILURES=0; \
 	check() { \
 		WANT=$$1; DESC=$$2; shift 2; \
@@ -1086,11 +1081,6 @@ verify-ci-credential: vpn-up kube-ctx
 	check yes "create Roles in $(AIRBYTE_NAMESPACE)"                         create roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
 	check yes "create RoleBindings in $(AIRBYTE_NAMESPACE) (the chart's airbyte-auth-reader)" create rolebindings.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
 	check no  "read pods in $(AIRBYTE_NAMESPACE) (the exception is RBAC-only)" get pods -n $(AIRBYTE_NAMESPACE); \
-	check yes "create Roles in $(NS_PREVIEWS) (the chart's experiments RBAC lands there)" create roles.rbac.authorization.k8s.io -n $(NS_PREVIEWS); \
-	check yes "create RoleBindings in $(NS_PREVIEWS) (same object, the binding half)" create rolebindings.rbac.authorization.k8s.io -n $(NS_PREVIEWS); \
-	check yes "create Deployments in $(NS_PREVIEWS) (escalation prevention: the chart's Role grants it)" create deployments.apps -n $(NS_PREVIEWS); \
-	check yes "create HTTPRoutes in $(NS_PREVIEWS) (escalation prevention: the chart's Role grants it)" create httproutes.gateway.networking.k8s.io -n $(NS_PREVIEWS); \
-	check no  "read pods in $(NS_PREVIEWS) (the exception is RBAC-only)"     get pods -n $(NS_PREVIEWS); \
 	check no  "anything, anywhere (the blanket check)"                       '*' '*' --all-namespaces; \
 	check no  "list namespaces at cluster scope"                            list namespaces --all-namespaces; \
 	check no  "create namespaces (hence the --create-namespace limitation)" create namespaces --all-namespaces; \
@@ -1293,13 +1283,12 @@ bootstrap-envoy-gateway: vpn-up kube-ctx
 		$$VALUES_ARGS \
 		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 	@# Namespaces come from inventory.yaml (namespaces.*), never hardcoded:
-	@# ${NS_APP} / ${NS_INFRA} / ${NS_PREVIEWS} placeholders in gateway.yaml
+	@# ${NS_APP} / ${NS_INFRA} placeholders in gateway.yaml
 	@# are substituted here. A manifest without placeholders applies as-is.
 	@if [ -f $(BOOTSTRAP_DIR)/gateway.yaml ]; then \
 		echo "applying $(BOOTSTRAP_DIR)/gateway.yaml"; \
 		sed -e 's|$${NS_APP}|$(NS_APP)|g' \
 		    -e 's|$${NS_INFRA}|$(NS_INFRA)|g' \
-		    -e 's|$${NS_PREVIEWS}|$(NS_PREVIEWS)|g' \
 		    $(BOOTSTRAP_DIR)/gateway.yaml \
 		| kubectl --context $(KUBE_CTX) apply -f -; \
 	fi

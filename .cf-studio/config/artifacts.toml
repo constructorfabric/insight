@@ -72,12 +72,6 @@ name = "ADR-0003: Keycloak as the Identity Broker (Configured as Code)"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/backend/previews/specs/PRD.md"
-name = "Previews Service PRD"
-traceability = "DOCS-ONLY"
-
-[[systems.artifacts]]
-kind = "PRD"
 path = "docs/domain/insight-v3/specs/PRD.md"
 name = "Insight v3 Core PRD"
 traceability = "DOCS-ONLY"

@@ -430,14 +430,6 @@ gitCliProxy:
   # skips any connector whose descriptor sets `platform_config.git_proxy`.
   deploy: false
 
-previews:
-  # Stays deployed (the chart default, `global.previews.enabled`); the stand
-  # only opts out of namespace management below.
-  experiments:
-    # Off, against the chart default: the namespace is L0 here. `create
-    # namespaces` takes no resourceNames, so CI must never hold it.
-    manageNamespace: false
-
 frontend: # the web UI (dashboard)
   replicaCount: 1
   route:

@@ -28,7 +28,6 @@ local `file://` subchart:
 | Insight v3 Core      | `src/backend/services/insight-v3-core/helm`         | `global.insightV3Core.deploy` | off     |
 | Identity Resolution  | `src/backend/services/identity-resolution/helm`     | `identityResolution.deploy`  | on — the validator refuses `false` |
 | Keycloak (broker)    | `src/backend/services/keycloak/helm`                | `keycloak.deploy`            | off     |
-| Previews             | `src/backend/services/previews/helm`                | `global.previews.enabled`    | on      |
 | Git CLI proxy        | `src/backend/services/git-cli-proxy/helm`           | `gitCliProxy.deploy`         | on      |
 | Frontend (SPA)       | `src/frontend/helm`                                 | `frontend.deploy`            | on      |
 
@@ -314,7 +313,7 @@ Key groups:
 - `clickhouse.createDatabases` — whether the pre-install Hook creates the release's ClickHouse databases. `false` is for a warehouse provisioned out of band: the post-install Hook converges them only with `clickhouse.runMigrations: true` and `ingestion.toolboxImage` set, and on a fresh install with v3-core deployed its pre-install migrate Job (weight 10) asserts `insight_datasets` before that Hook runs, so the install fails unless the database already stands (see [ClickHouse topology](#clickhouse-topology))
 - `clickhouse.provisionAccess` — whether the release provisions the ClickHouse roles and grant-less users beside them; `false` leaves access to the operator (a cluster without a replicated user directory)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
-- `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
+- `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster
 
 ## Operations

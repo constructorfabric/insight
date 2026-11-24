@@ -422,9 +422,8 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                # Substituted from inventory.yaml `namespaces.*` at apply time;
-                # the previews namespace carries the per-experiment HTTPRoutes.
-                values: [${NS_APP}, ${NS_INFRA}, ${NS_PREVIEWS}]
+                # Substituted from inventory.yaml `namespaces.*` at apply time.
+                values: [${NS_APP}, ${NS_INFRA}]
 ```
 
 cert-manager (installed with `config.enableGatewayAPI=true`) watches

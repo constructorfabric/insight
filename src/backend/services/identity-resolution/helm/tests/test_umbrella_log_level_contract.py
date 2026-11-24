@@ -15,14 +15,7 @@ import re
 
 from conftest import TENANT, UMBRELLA, UMBRELLA_BASE, render
 
-GEARS_SERVICES = {
-    "analytics",
-    "authenticator",
-    "gitCliProxy",
-    "identityResolution",
-    "insightV3Core",
-    "previews",
-}
+GEARS_SERVICES = {"analytics", "authenticator", "gitCliProxy", "identityResolution", "insightV3Core"}
 
 # Minimum count of platform-ConfigMap-sourced INSIGHT_LOG_LEVEL env entries per
 # ingestion template; airbyte-sync carries one in each of its two step scripts.

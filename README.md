@@ -48,7 +48,7 @@ Add `--version <x.y.z>` to pin a release. Values, credentials and OIDC setup: [c
 | Path | Contents |
 |---|---|
 | [`src/frontend`](src/frontend/README.md) | Web app: React, TanStack, Vite |
-| [`src/backend/services`](src/backend/services) | Rust services (`analytics`, `authenticator`, `identity-resolution`, `insight-v3-core`, `git-cli-proxy`, `previews`), the nginx `gateway`, and the Keycloak chart used for local sign-in |
+| [`src/backend/services`](src/backend/services) | Rust services (`analytics`, `authenticator`, `identity-resolution`, `insight-v3-core`, `git-cli-proxy`), the nginx `gateway`, and the Keycloak chart used for local sign-in |
 | [`src/ingestion`](src/ingestion/README.md) | Connectors, dbt models, and the reconcile loop that registers connectors in Airbyte |
 | [`charts/insight`](charts/insight/README.md) | Umbrella Helm chart |
 | [`deploy`](deploy/gitops/README.md) | Compose wizard and configs, sample GitOps layout |

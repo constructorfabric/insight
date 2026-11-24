@@ -6,7 +6,7 @@
 ##
 ## What is INCLUDED here:
 ##   - Edge / auth: gateway (nginx+auth), authenticator, keycloak
-##   - Application: analytics, insight-v3-core, identity-resolution, previews,
+##   - Application: analytics, insight-v3-core, identity-resolution,
 ##     frontend
 ##
 ## What is NOT included (deployed separately):
@@ -87,9 +87,9 @@ dependencies:
     repository: "file://../../src/backend/services/analytics/helm"
   # The one app service with a flag, and off by default: it cannot boot until
   # its instance's ingest token is sealed, so an instance opts in once that
-  # exists. Global, like previews, so the same switch drops the gateway's three
-  # v3 routes — a route pointing at a Service the release does not create keeps
-  # nginx from loading its config.
+  # exists. Global, so the same switch drops the gateway's three v3 routes — a
+  # route pointing at a Service the release does not create keeps nginx from
+  # loading its config.
   - name: insight-v3-core
     alias: insightV3Core
     version: "0.1.0"
@@ -103,18 +103,6 @@ dependencies:
     version: "0.2.0"
     repository: "file://../../src/backend/services/identity-resolution/helm"
     condition: identityResolution.deploy
-  # Previews — preview-experiment provisioning (epic #1981). Manages the
-  # per-experiment FE Deployment/Service/HTTPRoute trio in a dedicated
-  # namespace via the Kubernetes API; the objects ARE the experiments (no
-  # database). Reached through the gateway at /api/previews.
-  - name: insight-previews
-    alias: previews
-    version: "0.1.0"
-    repository: "file://../../src/backend/services/previews/helm"
-    # Global so the gateway subchart drops the /api/previews route in the
-    # same render — a route to a Service the release does not create keeps
-    # nginx from loading its config at pod start.
-    condition: global.previews.enabled
   # Clone-based git extraction for the nocode git connectors. Consumed ONLY by
   # Airbyte connector pods — no gateway route, absent from platform-config, and
   # its own NetworkPolicy closes ingress to everything else.
