@@ -973,14 +973,11 @@ mod tests {
     fn internal_active_roles_wire_shape() -> anyhow::Result<()> {
         let body = InternalActiveRolesResponse {
             person_id: Uuid::from_u128(1),
-            roles: vec!["admin".to_owned(), "previews-admin".to_owned()],
+            roles: vec!["admin".to_owned(), "auditor".to_owned()],
         };
         let json = serde_json::to_value(&body)?;
         assert_eq!(json["person_id"], "00000000-0000-0000-0000-000000000001");
-        assert_eq!(
-            json["roles"],
-            serde_json::json!(["admin", "previews-admin"])
-        );
+        assert_eq!(json["roles"], serde_json::json!(["admin", "auditor"]));
         Ok(())
     }
 }

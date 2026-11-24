@@ -410,16 +410,8 @@ pub struct AuthenticatorConfig {
     /// named no (or an unsafe) `return_to`. A site-relative path.
     pub default_return_to: String,
     /// `return_to` prefix honored at login time; must be site-relative and end
-    /// in `/`. Empty (default) = any same-origin path. A preview host sets
-    /// `/exp/` to confine logins to `/exp/<name>`.
+    /// in `/`. Empty (default) = any same-origin path.
     pub return_to_prefix: String,
-    /// Master switch for the preview experiments capability (`/exp/<name>`
-    /// tier-3 frontends). Default `false`: a login can never return into the
-    /// `/exp/` subtree, so a production stand cannot host experimental
-    /// frontends against its data. Dev/demo preview hosts set `true` and serve
-    /// experiments over that stand's own data. A per-user RBAC capability will
-    /// supersede this environment-level gate.
-    pub experiments_enabled: bool,
 
     // NOTE: first-admin bootstrap (DD-AUTH-08) and RBAC/ACL are deliberately
     // NOT in step 04 — deferred to a separate universe-admin initiative. Local
@@ -539,7 +531,6 @@ impl Default for AuthenticatorConfig {
             ],
             default_return_to: "/".to_owned(),
             return_to_prefix: String::new(),
-            experiments_enabled: false,
             csrf_origins: Vec::new(),
             janitor_interval_seconds: 30,
             rate_limit: RateLimitConfig::default(),
@@ -647,8 +638,8 @@ impl AuthenticatorConfig {
             "default_return_to must be a site-relative path without a fragment"
         );
 
-        // Trailing `/` keeps prefix matching on a path boundary: `/exp/` admits
-        // `/exp/<name>`, not `/expunge`.
+        // Trailing `/` keeps prefix matching on a path boundary: `/app/` admits
+        // `/app/<name>`, not `/apple`.
         let prefix = &self.return_to_prefix;
         anyhow::ensure!(
             prefix.is_empty()
@@ -787,7 +778,7 @@ mod tests {
 
     #[test]
     fn return_to_prefix_must_be_site_relative_and_boundaried() {
-        for ok in ["", "/exp/"] {
+        for ok in ["", "/app/"] {
             let cfg = AuthenticatorConfig {
                 return_to_prefix: ok.to_owned(),
                 ..valid_config()
@@ -795,7 +786,7 @@ mod tests {
             assert!(cfg.validate().is_ok(), "should accept prefix {ok:?}");
         }
 
-        for bad in ["/exp", "exp/", "//evil/", "https://evil/"] {
+        for bad in ["/app", "app/", "//evil/", "https://evil/"] {
             let cfg = AuthenticatorConfig {
                 return_to_prefix: bad.to_owned(),
                 ..valid_config()

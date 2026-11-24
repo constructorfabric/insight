@@ -76,23 +76,6 @@ pub async fn login(
         ),
     };
 
-    // Preview experiments (`/exp/<name>`) are a capability, off by default. A
-    // production stand leaves `experiments_enabled=false`, so a login can never
-    // return into the preview subtree — an experimental frontend cannot be
-    // driven against that stand's data. Dev/demo preview hosts opt in. A future
-    // per-user RBAC check replaces this environment-level gate.
-    let return_to = if state.cfg.experiments_enabled || !is_preview_return(&return_to) {
-        return_to
-    } else {
-        tracing::warn!(
-            target: "audit",
-            event = "experiment_return_ignored",
-            "return_to under the /exp/ preview prefix but experiments_enabled=false: \
-             falling back to default_return_to"
-        );
-        state.cfg.default_return_to.clone()
-    };
-
     // `__override` (view-as, #1941): carried into the login state only when
     // the environment opts in; otherwise the parameter is inert — and logged
     // as an event, so an attempt against a real environment is visible, not
@@ -903,7 +886,6 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,
         "csrf_token": record.csrf_token,
-        "experiments_enabled": state.cfg.experiments_enabled,
     });
     // View-as session (#1941): name the real principal so the SPA can show a
     // "viewing as X" banner. Absent on normal sessions.
@@ -1589,23 +1571,10 @@ fn is_mcp_oauth_return(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-/// Reserved path prefix that preview experiments (`/exp/<name>`) are served
-/// under. The single point the experiments capability keys on — a login return
-/// into this subtree is honored only when experiments are enabled.
-const PREVIEW_RETURN_PREFIX: &str = "/exp/";
-
-/// Whether a (already-sanitized, site-relative) `return_to` targets the preview
-/// experiments subtree. Case-folded so `/EXP/` cannot slip the gate.
-fn is_preview_return(return_to: &str) -> bool {
-    return_to
-        .to_ascii_lowercase()
-        .starts_with(PREVIEW_RETURN_PREFIX)
-}
-
 /// Same-origin and (when `prefix` is set) confined to it — checked on a form
 /// the browser cannot fold into an escape. `\`, `%5c`, `%2e`, `%2f`, and a
 /// literal `..` path segment are rejected, since the WHATWG URL parser turns
-/// them into `/` or `..` *after* this check (`/\host`, `/exp/%2e%2e/admin`).
+/// them into `/` or `..` *after* this check (`/\host`, `/app/%2e%2e/admin`).
 fn is_safe_return_to(p: &str, prefix: &str) -> bool {
     if !p.starts_with('/') || p.starts_with("//") || p.starts_with("/\\") {
         return false;
@@ -1780,8 +1749,8 @@ mod tests {
         for (case, fetched, expected) in [
             (
                 "grants win",
-                Some(vec!["admin".to_owned(), "previews-admin".to_owned()]),
-                vec!["admin".to_owned(), "previews-admin".to_owned()],
+                Some(vec!["admin".to_owned(), "auditor".to_owned()]),
+                vec!["admin".to_owned(), "auditor".to_owned()],
             ),
             ("no grants falls back", Some(vec![]), defaults.clone()),
             ("no answer falls back", None, defaults.clone()),
@@ -1858,17 +1827,17 @@ mod tests {
     #[test]
     fn return_to_prefix_admits_only_matching_paths() {
         assert_eq!(
-            sanitize_return_to(Some("/exp/widget-1/"), "/", "/exp/"),
-            "/exp/widget-1/"
+            sanitize_return_to(Some("/app/widget-1/"), "/", "/app/"),
+            "/app/widget-1/"
         );
         // Outside the prefix, traversal, and open-redirect shapes all fall back.
-        assert_eq!(sanitize_return_to(Some("/dashboard"), "/", "/exp/"), "/");
-        assert_eq!(sanitize_return_to(Some("/exp/../admin"), "/", "/exp/"), "/");
+        assert_eq!(sanitize_return_to(Some("/dashboard"), "/", "/app/"), "/");
+        assert_eq!(sanitize_return_to(Some("/app/../admin"), "/", "/app/"), "/");
         assert_eq!(
-            sanitize_return_to(Some("//evil.example"), "/", "/exp/"),
+            sanitize_return_to(Some("//evil.example"), "/", "/app/"),
             "/"
         );
-        assert_eq!(sanitize_return_to(None, "/", "/exp/"), "/");
+        assert_eq!(sanitize_return_to(None, "/", "/app/"), "/");
     }
 
     #[test]
@@ -1876,12 +1845,12 @@ mod tests {
         // `%2e%2e` / `%2f` normalize to `../` in the browser and would escape
         // the prefix after this check, so they are rejected up front.
         for encoded in [
-            "/exp/%2e%2e/admin",
-            "/exp/%2E%2E/admin",
-            "/exp/%2e%2e%2fadmin",
+            "/app/%2e%2e/admin",
+            "/app/%2E%2E/admin",
+            "/app/%2e%2e%2fadmin",
         ] {
             assert_eq!(
-                sanitize_return_to(Some(encoded), "/", "/exp/"),
+                sanitize_return_to(Some(encoded), "/", "/app/"),
                 "/",
                 "should reject: {encoded:?}"
             );
@@ -1897,22 +1866,6 @@ mod tests {
                 sanitize_return_to(Some(evil), "/", ""),
                 "/",
                 "should reject: {evil:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn is_preview_return_matches_exp_subtree_case_folded() {
-        for hit in ["/exp/widget-1/", "/exp/", "/EXP/Widget/", "/Exp/x"] {
-            assert!(
-                is_preview_return(hit),
-                "should be a preview return: {hit:?}"
-            );
-        }
-        for miss in ["/", "/dashboard", "/expunge", "/experiments"] {
-            assert!(
-                !is_preview_return(miss),
-                "should not be a preview return: {miss:?}"
             );
         }
     }

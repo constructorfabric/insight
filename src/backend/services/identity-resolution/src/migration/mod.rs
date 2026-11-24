@@ -11,6 +11,7 @@
 
 mod m20261014_000019_drop_dbup_ledger_lowercase;
 mod m20261030_000001_baseline;
+mod m20261124_000020_drop_previews_admin_role;
 
 use insight_migration::squash;
 use sea_orm_migration::prelude::*;
@@ -52,6 +53,9 @@ impl MigratorTrait for Migrator {
         migrations.extend(squash::squashed(SQUASHED));
         migrations.push(Box::new(
             m20261014_000019_drop_dbup_ledger_lowercase::Migration,
+        ));
+        migrations.push(Box::new(
+            m20261124_000020_drop_previews_admin_role::Migration,
         ));
         migrations
     }
@@ -112,6 +116,11 @@ mod tests {
                 include_str!("sql/019_drop_dbup_ledger_lowercase.sql"),
                 1,
             ),
+            (
+                "020_drop_previews_admin_role",
+                include_str!("sql/020_drop_previews_admin_role.sql"),
+                2,
+            ),
         ];
         for (name, script, expected) in cases {
             let stmts = split_statements(script);
@@ -160,6 +169,7 @@ mod tests {
         let mut expected = vec!["m20261030_000001_baseline".to_owned()];
         expected.extend(SQUASHED.iter().map(|name| (*name).to_owned()));
         expected.push("m20261014_000019_drop_dbup_ledger_lowercase".to_owned());
+        expected.push("m20261124_000020_drop_previews_admin_role".to_owned());
         assert_eq!(names, expected);
     }
 
