@@ -46,9 +46,6 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/metrics/export",
         "/v1/metrics/import",
         "/v1/metrics/{metric_key}",
-        "/v1/queries",
-        "/v1/queries/{id}",
-        "/v1/queries/{id}/run",
         "/v1/usage/actions",
         "/v1/usage/config",
         "/v1/usage/events",
@@ -60,7 +57,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        29,
+        26,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );
@@ -74,10 +71,6 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         schemas.len() >= 20,
         "expected the typed contract to register many schemas, got {}",
         schemas.len()
-    );
-    assert!(
-        schemas.contains_key("SavedQuery"),
-        "SavedQuery schema missing"
     );
     assert!(
         schemas.contains_key("MetricResultsRequest"),

@@ -30,7 +30,7 @@ user, P2 one control with a workaround. Not screen prominence.
 | **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer, including the `peer` view and the `ai.cost` currency metric. Reach, honesty and suppression are assertable; **values are not** — the seed publishes no expected values |
 | **S-2** Analysis and diagnosis | **No surface** | no conclusion, bottleneck, anomaly or forecast endpoint exists |
 | **S-3** Recommendations and validation | **No surface** | no recommendation object, no validation window |
-| **S-4** Dashboards and exploration | **Partial** | `/v1/queries` CRUD + run, `/v1/metric-drilldown` exist; saved/shared *views* are an Appendix C proposal, not a surface |
+| **S-4** Dashboards and exploration | **Partial** | `/v1/metric-drilldown` exists; saved/shared *views* are an Appendix C proposal, not a surface |
 | **S-5** Sharing and reuse | **Partial** | `POST /v1/metric-drilldown/export` exists; "the definition travels with the number" is unverified in the export payload |
 | **S-6** External comparison | **No surface** | Appendix C says so outright |
 | **S-7** Sources and evidence coverage | **Partial** | the catalogue carries `schema_status` / `schema_error_code` / `last_observed_date`; readiness mode itself is unbuilt, and this stand declares `ingestion: no` |

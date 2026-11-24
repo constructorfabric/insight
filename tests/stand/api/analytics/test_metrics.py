@@ -69,10 +69,9 @@ def test_list_metrics_200(api: ApiClient, scratch_custom_metric: CustomMetric) -
 def test_custom_metric_create_get_update_delete_round_trip(api: ApiClient) -> None:
     """One cycle: create → read → update → delete → gone.
 
-    Asserted as a cycle rather than as separate cases for the same reason the
-    saved-query round trip is: a create that leaks its row and a delete that runs
-    against a row it did not make are the two ways this coverage rots, and a
-    single cycle can do neither.
+    Asserted as a cycle rather than as separate cases: a create that leaks its
+    row and a delete that runs against a row it did not make are the two ways
+    this coverage rots, and a single cycle can do neither.
     """
     created = create_custom_metric(api, "roundtrip")
     metric_key = created.metric_key

@@ -44,7 +44,7 @@ A request names the metrics, the people or the tenant, a period and the views it
 
 Authorization and computation fail differently. Before any ClickHouse work the requested people are checked, in one call, against the set identity says the caller may see, and one invisible id refuses the whole request. Once authorized, a view whose ClickHouse query fails answers in its own slot with a stable error code, and the rest of the response stands; a request that cannot be planned, or a view that exceeds its row limit, fails as a whole.
 
-Around that core the service carries the surfaces that read the same relations or the same definitions: evidence drilldown and its export, metric report preview and export, saved ad-hoc queries, an AI explanation of one reading, product-usage recording, connector sync history and bronze ingestion intensity. The API Gateway mounts it at `/api/analytics`; every route is versioned under `/v1/...`.
+Around that core the service carries the surfaces that read the same relations or the same definitions: evidence drilldown and its export, metric report preview and export, an AI explanation of one reading, product-usage recording, connector sync history and bronze ingestion intensity. The API Gateway mounts it at `/api/analytics`; every route is versioned under `/v1/...`.
 
 ### 1.2 Architecture Drivers
 
@@ -69,7 +69,7 @@ The service has no PRD of its own; the drivers below are the product behaviours 
 | Query safety | No SQL injection through request values | Metric results compiler, drilldown compiler | Every request value is a bound parameter; keys rendered into SQL are escaped literals; failures log a SQL hash, not the SQL | Compiler unit tests; HTTP live tests |
 | Person-level authorization | No reading about a person the caller may not see | Visibility gate | Whole-request refusal on any invisible id; an identity that cannot answer is a server error, never a permit | Gate unit tests; stand API tests |
 | Failure isolation | One broken metric cannot take down a dashboard | Metric results handler | A failed ClickHouse query becomes a per-view `error` variant with a stable code, detail only for admins; a relation not built yet becomes a `not_ready` view; planning errors and the per-view row limit still fail the whole request | Failure-mapping unit tests |
-| Bounded work | No request can hold unbounded warehouse or memory resources | Metric results, drilldown, reports, SQL explorer, AI | Per-request caps on metrics, people, period, filters and rows; per-query ClickHouse limits; per-process semaphores on exports and explanations. Saved-query runs are the exception: the service buffers the whole result with no row or byte cap of its own, and only the query's ClickHouse execution-time and memory limits apply (section 4) | Validation unit tests; configuration defaults |
+| Bounded work | No request can hold unbounded warehouse or memory resources | Metric results, drilldown, reports, SQL explorer, AI | Per-request caps on metrics, people, period, filters and rows; per-query ClickHouse limits; per-process semaphores on exports and explanations | Validation unit tests; configuration defaults |
 | Schema drift is visible | A definition whose relation changed reports itself unavailable instead of failing every read | Definition validator | Periodic probe of each source relation and definition; status stored on the definition | Validator unit and live tests |
 
 ### 1.3 Architecture Layers
@@ -91,7 +91,7 @@ graph TB
         QE[Metric results compiler]
         VIS[Visibility gate]
         DD[Drilldown and reports]
-        SQLX[Saved queries and SQL explorer]
+        SQLX[SQL explorer]
     end
 
     subgraph Identity["Identity Resolution"]
@@ -146,7 +146,7 @@ The portal never names a ClickHouse relation. It asks for metric keys; the defin
 
 Requested person ids are checked against identity's answer to "which of these may this caller see" before any warehouse work. One id outside the answer refuses the whole request with 403; a partial response would be indistinguishable from absent data. Reaching identity is required: an unconfigured or failing identity service is a server error, never a permit. On readings and drilldown, callers authenticated as `service` subjects bypass the gate; reports have no bypass.
 
-Once authorized, a ClickHouse failure while computing one view answers 200 with a `view: "error"` variant in that slot, carrying a stable code. A source relation the warehouse has not built yet is not a failure: the view answers `view: "not_ready"` with reason `SOURCE_RELATION_MISSING`, and drilldown, saved-query runs and report previews carry the same marker beside empty rows. A relation whose columns disagree with the code still fails. A request that cannot be planned, or a view over its row limit, is refused as a whole. The message carries the underlying description only when identity confirms the caller holds the admin role; an identity that cannot answer the role check degrades the message to generic text and never turns a partial answer into a server error.
+Once authorized, a ClickHouse failure while computing one view answers 200 with a `view: "error"` variant in that slot, carrying a stable code. A source relation the warehouse has not built yet is not a failure: the view answers `view: "not_ready"` with reason `SOURCE_RELATION_MISSING`, and drilldown and report previews carry the same marker beside empty rows. A relation whose columns disagree with the code still fails. A request that cannot be planned, or a view over its row limit, is refused as a whole. The message carries the underlying description only when identity confirms the caller holds the admin role; an identity that cannot answer the role check degrades the message to generic text and never turns a partial answer into a server error.
 
 **Why**: Permission must never leak through a partial answer, and one broken metric must never blank a dashboard.
 
@@ -184,7 +184,7 @@ The service reads the gold, silver, identity and ingestion-history relations and
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-tenant-claim`
 
-The tenant is the signed `tenant_id` claim of the gateway JWT, resolved by the single-tenant resolver; there is no tenant header. The tenant predicate on readings, drilldown, reports and absences is enforced only when `metric_catalog.enforce_tenant_scope` is on; it defaults to off and no chart value sets it, so by default those reads match every tenant in the warehouse. Custom SQL observations carry whatever tenant their author emits. Saved queries, the SQL explorer, connector health and ingestion intensity are not filtered by tenant.
+The tenant is the signed `tenant_id` claim of the gateway JWT, resolved by the single-tenant resolver; there is no tenant header. The tenant predicate on readings, drilldown, reports and absences is enforced only when `metric_catalog.enforce_tenant_scope` is on; it defaults to off and no chart value sets it, so by default those reads match every tenant in the warehouse. Custom SQL observations carry whatever tenant their author emits. The SQL explorer, connector health and ingestion intensity are not filtered by tenant.
 
 ## 3. Technical Architecture
 
@@ -320,21 +320,21 @@ Does not define metrics; reads the same definitions as the compiler.
 
 - `cpt-insightspec-component-analytics-query-engine` -- shares model with: definitions and the time-series compiler
 
-#### Saved Queries and SQL Explorer
+#### SQL Explorer
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-analytics-sql-surfaces`
 
 ##### Why this component exists
 
-Analysts read the warehouse directly, through stored queries in the portal and through an MCP tool or a token-protected HTTP endpoint.
+Analysts read the warehouse directly, through an MCP tool or a token-protected HTTP endpoint.
 
 ##### Responsibility scope
 
-Store, list, update, delete and run saved queries per tenant; allow a single SELECT, and require the admin role to create, update or run SQL that names `product_usage` or a `bronze_*` database. Run the SQL explorer on its own listener with its own ClickHouse user, gating each statement and bounding SQL size, result size and fetch time.
+Run the SQL explorer on its own listener with its own ClickHouse user, gating each statement and bounding SQL size, result size and fetch time.
 
 ##### Responsibility boundaries
 
-Does not apply a tenant row filter to the SQL it runs. The saved-query gate does not refuse external table functions the custom-metric and MCP gates refuse.
+Does not apply a tenant row filter to the SQL it runs.
 
 ##### Related components (by ID)
 
@@ -401,9 +401,6 @@ Every read but the usage configuration is admin-only; nothing here feeds metric 
 | `POST` | `/v1/metric-drilldown` | Page the evidence behind a reading | authenticated |
 | `POST` | `/v1/metric-drilldown/export` | Export that evidence | authenticated |
 | `POST` | `/v1/reports/preview`, `/v1/reports/export` | Preview or export a metric report | authenticated |
-| `GET`, `POST` | `/v1/queries` | List or create saved queries | authenticated; admin when the SQL names restricted data |
-| `GET`, `PUT`, `DELETE` | `/v1/queries/{id}` | Read, update or delete a saved query | authenticated; admin to update with restricted data |
-| `POST` | `/v1/queries/{id}/run` | Run a saved query | authenticated; admin when it names restricted data |
 | `GET` | `/v1/ai/config` | Whether AI explanation is on | authenticated |
 | `GET`, `PUT`, `DELETE` | `/v1/ai/credentials` | The caller's own Anthropic key | authenticated |
 | `GET`, `PUT`, `DELETE` | `/v1/ai/settings` | The tenant's system prompt | read authenticated; write admin |
@@ -420,7 +417,7 @@ Every read but the usage configuration is admin-only; nothing here feeds metric 
 
 The SQL explorer listens separately: an MCP tool authenticated by an OAuth access token with the `mcp:query` scope, and an HTTP query endpoint authenticated by a static bearer token.
 
-**Error responses** (the contract lists every status per route): 400 for a malformed request, an unknown or unavailable metric key, or a view over its row limit; 401 without a valid token; 403 for an invisible person, a missing admin role, or a tenant-level read while tenant metrics are off; 404 for a missing saved query or custom metric, and for AI routes while the feature is off; 409 for a custom metric key already taken; 415 for a body that is not JSON; 429 when export, drilldown or explanation capacity is exhausted; 500 when identity cannot answer an authorization question.
+**Error responses** (the contract lists every status per route): 400 for a malformed request, an unknown or unavailable metric key, or a view over its row limit; 401 without a valid token; 403 for an invisible person, a missing admin role, or a tenant-level read while tenant metrics are off; 404 for a missing custom metric, and for AI routes while the feature is off; 409 for a custom metric key already taken; 415 for a body that is not JSON; 429 when export, drilldown or explanation capacity is exhausted; 500 when identity cannot answer an authorization question.
 
 ### 3.4 Internal Dependencies
 
@@ -438,13 +435,13 @@ The SQL explorer listens separately: an MCP tool authenticated by an OAuth acces
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| insight-clickhouse | HTTP, bound parameters, per-query settings | Readings, drilldown, reports, saved queries, usage writes and reads, connector health, person names |
+| insight-clickhouse | HTTP, bound parameters, per-query settings | Readings, drilldown, reports, usage writes and reads, connector health, person names |
 
 #### MariaDB
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| SeaORM | Connection pool, migrations, advisory lock | Definitions, saved queries, feedback, AI settings and keys |
+| SeaORM | Connection pool, migrations, advisory lock | Definitions, feedback, AI settings and keys |
 
 #### Anthropic API
 
@@ -537,7 +534,6 @@ Built-in rows carry a NULL tenant and `origin = 'builtin'`; a tenant's rows carr
 
 | Table | Holds | Written by | Read by |
 |-------|-------|------------|---------|
-| `saved_queries` | Per-tenant named SQL | `/v1/queries` | `/v1/queries` |
 | `feedback` | Feedback submissions | `POST /v1/feedback` | Admin list |
 | `ai_context_entries` | Context an explanation reads, per person or tenant-wide | `/v1/ai/context` | Explanation, listing |
 | `ai_credentials` | A person's Anthropic key, sealed with a per-write nonce | `/v1/ai/credentials` | Explanation |
@@ -561,8 +557,7 @@ The code as it stands, recorded so a reader does not assume otherwise:
 
 - **Tenant isolation of metric reads is opt-in.** The tenant predicate on readings, drilldown, reports and absences is a no-op until `metric_catalog.enforce_tenant_scope` is turned on (section 2.2).
 - **Any authenticated caller can redefine a built-in metric for the tenant.** The custom-metric routes carry no admin check, and a custom metric may reuse a built-in key, which then takes its place for every reader in the tenant.
-- **Saved-query runs are loosely bounded.** The whole result is buffered with no row, byte or concurrency cap beyond the ClickHouse execution-time and memory limits; the gate does not refuse external table functions; and a failing run logs its full SQL.
-- **The SQL explorer and saved queries read across tenants.** Neither applies a tenant filter; they rely on their ClickHouse grants.
+- **The SQL explorer reads across tenants.** It applies no tenant filter; it relies on its ClickHouse grants.
 - **No caching.** A Redis URL setting and dependency exist; nothing reads or writes Redis.
 
 ### Metric passports
@@ -584,5 +579,5 @@ The code as it stands, recorded so a reader does not assume otherwise:
 | Metric Results Compiler (3.2) | `src/backend/services/analytics/src/domain/metric_results/` |
 | Visibility Gate (3.2) | `src/backend/services/analytics/src/domain/person_visibility.rs`, `src/backend/services/analytics/src/domain/metric_access.rs` |
 | Evidence and Reports (3.2) | `src/backend/services/analytics/src/domain/metric_drilldown/`, `src/backend/services/analytics/src/domain/reports/` |
-| Saved Queries and SQL Explorer (3.2) | `src/backend/services/analytics/src/api/saved_queries.rs`, `src/backend/services/analytics/src/sql_explorer/`, `src/backend/services/analytics/src/domain/query_gate.rs` |
+| SQL Explorer (3.2) | `src/backend/services/analytics/src/sql_explorer/`, `src/backend/services/analytics/src/domain/query_gate.rs` |
 | Startup gates (2.2) | `src/backend/services/analytics/src/gear.rs`, `src/backend/services/analytics/src/infra/db/` |

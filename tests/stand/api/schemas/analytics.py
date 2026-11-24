@@ -24,8 +24,6 @@ service serialises timestamps with no offset. See `common.UnzonedDatetime`.
 
 from __future__ import annotations
 
-from .common import UnzonedDatetime
-
 from datetime import date as date_aliased
 from enum import StrEnum
 from typing import Any
@@ -153,18 +151,6 @@ class ComputationDto6(BaseModel):
 
 class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6]):
     root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6
-
-
-class CreateSavedQueryRequest(BaseModel):
-    """
-    Request to create a saved query.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    description: str | None = None
-    name: str
-    sql: str
 
 
 class EntityType(StrEnum):
@@ -872,63 +858,6 @@ class RollupValueDto(BaseModel):
     value: float | None = None
 
 
-class RunResponse(BaseModel):
-    """
-    Result of `POST /v1/queries/{id}/run`.
-
-    `rows` carry a per-query dynamic schema (the `SELECT` columns vary), so each
-    row is an untyped JSON object — the same shape as the metric query path.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    not_ready: NotReadyReason | None = None
-    rows: list[Any]
-
-
-class RunSavedQueryRequest(BaseModel):
-    """
-    Optional parameters for `POST /v1/queries/{id}/run` (#1966).
-
-    The `{tenant}` parameter is always injected from the session context and is
-    never client-settable, so it is absent here. `period` is the first optional
-    named parameter an author can reference as `{period:<Type>}`; it is bound as
-    a ClickHouse server-side parameter, never interpolated into the SQL text.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    period: str | None = None
-
-
-class SavedQuery(BaseModel):
-    """
-    A saved query row.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    created_at: UnzonedDatetime
-    description: str | None = None
-    id: UUID
-    insight_tenant_id: UUID
-    name: str
-    sql: str
-    updated_at: UnzonedDatetime
-
-
-class SavedQuerySummary(BaseModel):
-    """
-    Summary returned by the list endpoint (no `sql` body).
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    description: str | None = None
-    id: UUID
-    name: str
-
-
 class ScheduleOrigin(StrEnum):
     annotation = 'annotation'
     descriptor = 'descriptor'
@@ -1031,21 +960,6 @@ class UpdateContextRequest(BaseModel):
     )
     body: str | None = None
     title: str | None = None
-
-
-class UpdateSavedQueryRequest(BaseModel):
-    """
-    Request to update a saved query.
-
-    `description` uses double-Option (absent → unchanged, `null` → clear,
-    value → set), matching [`super::metric::UpdateMetricRequest`].
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    description: str | None = None
-    name: str | None = None
-    sql: str | None = None
 
 
 class UsageConfigResponse(BaseModel):
@@ -1467,16 +1381,6 @@ class ReportRecipe(BaseModel):
     metric_keys: list[str] = Field(..., max_length=100)
     period: ReportPeriod
     subject: ReportSubject
-
-
-class SavedQueryListResponse(BaseModel):
-    """
-    Response envelope for `GET /v1/queries` (`{ "items": [SavedQuerySummary] }`).
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    items: list[SavedQuerySummary]
 
 
 class TimeseriesDto(BaseModel):

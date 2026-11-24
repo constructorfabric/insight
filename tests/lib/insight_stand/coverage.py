@@ -101,8 +101,7 @@ UNIVERSAL_BOILERPLATE = frozenset({429})
 #:
 #: Nothing else in the service gates on anything: `is_tenant_admin`,
 #: `authorize_*` and `require_admin` appear nowhere in `handlers.rs`,
-#: `saved_queries.rs`, `catalog.rs`, `metric_definitions.rs` or
-#: `metric_drilldown.rs`. The spec declared 403 on every route anyway, because
+#: `catalog.rs`, `metric_definitions.rs` or `metric_drilldown.rs`. The spec declared 403 on every route anyway, because
 #: `.standard_errors` stamped the same seven codes on all of them (#1669); the
 #: fidelity fixes are correcting that route by route, and each one that lands
 #: retires an entry below.
@@ -122,13 +121,6 @@ _NO_CONFLICT_PATH = frozenset({409})
 _NO_AUTHZ_OR_CONFLICT = _NO_AUTHORIZATION_PATH | _NO_CONFLICT_PATH
 
 BLOCKED: dict[str, frozenset[int]] = {
-    # Saved queries — no owner check and no role check; cross-tenant is 404.
-    "GET /v1/queries": _NO_AUTHZ_OR_CONFLICT,
-    "POST /v1/queries": _NO_AUTHZ_OR_CONFLICT,
-    "GET /v1/queries/{id}": _NO_AUTHZ_OR_CONFLICT,
-    "PUT /v1/queries/{id}": _NO_AUTHZ_OR_CONFLICT,
-    "DELETE /v1/queries/{id}": _NO_AUTHZ_OR_CONFLICT,
-    "POST /v1/queries/{id}/run": _NO_AUTHZ_OR_CONFLICT,
     # `POST /v1/metric-drilldown` and `GET /v1/metric-definitions` used to sit
     # here. #2134 corrected their declarations, so there is no longer a 403 to
     # subtract — the gate reported both as stale and they came out.
@@ -299,7 +291,7 @@ def dump(path: str | Path) -> Path:
 class Operation:
     """One catalogued operation, as the ledger will have seen it.
 
-    `template` is the parameterised form (`/v1/queries/{id}`); `path` is the
+    `template` is the parameterised form (`/v1/metrics/{metric_key}`); `path` is the
     concrete url the catalogue names, with a stand-in substituted. They differ
     for every operation that takes a path parameter, and conflating them is
     what this field exists to stop — see `fold_onto_catalogue`.
@@ -316,7 +308,7 @@ class Operation:
     @property
     def key(self) -> str:
         """How the operation is identified in a report: the template if it has
-        one, so `PUT /v1/queries/{id}` is one row rather than one per id."""
+        one, so `PUT /v1/metrics/{metric_key}` is one row rather than one per key."""
         return f"{self.method} {self.template or self.path}"
 
 
@@ -327,9 +319,9 @@ def fold_onto_catalogue(
 
     Without this the catalogue half compares literal paths while the spec half
     folds templates, and the two disagree about the same run. A test that
-    updates a real threshold records
-    `PUT /api/analytics/v1/queries/019fc6c8-…`, which matches
-    the catalogue's stand-in id nowhere — so the only call left against the
+    updates a real metric records
+    `PUT /api/analytics/v1/metrics/scratch_…`, which matches
+    the catalogue's stand-in key nowhere — so the only call left against the
     catalogued url is the anonymous sweep's, and the operation is reported
     SWEPT ONLY while a passing test is exercising it.
 
@@ -467,8 +459,8 @@ def match_against_spec(
 ) -> tuple[dict[str, set[int]], list[dict[str, Any]]]:
     """Fold gateway-prefixed observations onto the service's own operations.
 
-    The suite calls `/api/analytics/v1/queries`; the document describes
-    `/v1/queries`. `strip_prefix: true` in the gateway's route table is what
+    The suite calls `/api/analytics/v1/metrics`; the document describes
+    `/v1/metrics`. `strip_prefix: true` in the gateway's route table is what
     makes those the same request, so stripping it here is reading the route
     table, not guessing.
     """

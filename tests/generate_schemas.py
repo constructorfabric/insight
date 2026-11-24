@@ -349,6 +349,8 @@ def _substitute_unzoned_datetime(source: str) -> str:
     """The single pinned deviation — see `common.UnzonedDatetime`. Applied here
     rather than by hand because the file is regenerated: an edit would be lost,
     and this way `--check` still passes on a clean tree."""
+    if "AwareDatetime" not in source:
+        return source
     source = source.replace("AwareDatetime", "UnzonedDatetime")
     source = source.replace("from pydantic import UnzonedDatetime, ", "from pydantic import ")
     source = source.replace("from pydantic import UnzonedDatetime\n", "")

@@ -27,7 +27,7 @@ from insight_stand import (
 
 from . import scratch
 from .operations import ALL_OPERATIONS
-from .schemas import CustomMetric, SavedQuery
+from .schemas import CustomMetric
 
 #: Written beside the coverage ledger at session end (see the root conftest for
 #: the ledger itself). The gate compares the two, so it needs no import from
@@ -67,20 +67,11 @@ def api(lead_session: PersonaSession) -> ApiClient:
     """An authenticated client, for cases that are not about who is calling.
 
     A lead rather than an admin on purpose: every analytics operation but
-    `/v1/usage/summary`, and every saved query but one reading an admin-only
-    database, is open to any authenticated caller — so an ordinary persona is
-    what those endpoints actually face. The usage summary takes
+    `/v1/usage/summary` is open to any authenticated caller — so an ordinary
+    persona is what those endpoints actually face. The usage summary takes
     `admin_operator_session` directly, and uses this client for its refusal case.
     """
     return lead_session.client
-
-
-@pytest.fixture
-def scratch_saved_query(api: ApiClient) -> Iterator[SavedQuery]:
-    """A scratch saved query, hard-deleted afterwards."""
-    query = scratch.create_saved_query(api, "query")
-    yield query
-    api.delete(analytics_path(f"/v1/queries/{query.id}"))
 
 
 @pytest.fixture

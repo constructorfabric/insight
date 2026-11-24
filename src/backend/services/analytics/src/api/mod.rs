@@ -12,7 +12,6 @@ mod metrics;
 mod person_names;
 mod reports;
 mod roster_names;
-mod saved_queries;
 mod sort_direction;
 pub(crate) mod usage;
 
@@ -45,7 +44,6 @@ use crate::domain::connector_health as connector_health_domain;
 use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
-use crate::domain::saved_query;
 use crate::infra::anthropic::AnthropicClient;
 use crate::infra::identity::IdentityClient;
 
@@ -156,8 +154,7 @@ fn openapi_info() -> OpenApiInfo {
         version: "1.0.0".to_owned(),
         description: Some(
             "Read-only query service over ClickHouse. Serves declarative metric \
-             definitions, computed metric results and their evidence, plus \
-             tenant-authored saved queries. The API Gateway mounts this service \
+             definitions, computed metric results and their evidence. The API Gateway mounts this service \
              at /api/analytics."
                 .to_owned(),
         ),
@@ -634,98 +631,6 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .error_429(openapi)
         .error_500(openapi)
         .handler(reports::export_report)
-        .register(router, openapi);
-
-    // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
-    // surface. CRUD is service-DB metadata; only `/run` reaches ClickHouse.
-    router = OperationBuilder::get("/v1/queries")
-        .operation_id("analytics_api.queries.list")
-        .summary("List saved queries")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<saved_query::SavedQueryListResponse>(
-            openapi,
-            StatusCode::OK,
-            "List of saved queries",
-        )
-        .standard_errors(openapi)
-        .handler(saved_queries::list_saved_queries)
-        .register(router, openapi);
-
-    router = OperationBuilder::post("/v1/queries")
-        .operation_id("analytics_api.queries.create")
-        .summary("Create a saved query")
-        .authenticated()
-        .no_license_required()
-        .json_request::<saved_query::CreateSavedQueryRequest>(openapi, "Saved query to create")
-        .json_response_with_schema::<saved_query::SavedQuery>(
-            openapi,
-            StatusCode::CREATED,
-            "Created saved query",
-        )
-        .standard_errors(openapi)
-        .handler(saved_queries::create_saved_query)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/v1/queries/{id}")
-        .operation_id("analytics_api.queries.get")
-        .summary("Get a saved query by id")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<saved_query::SavedQuery>(
-            openapi,
-            StatusCode::OK,
-            "Saved query",
-        )
-        .standard_errors(openapi)
-        .handler(saved_queries::get_saved_query)
-        .register(router, openapi);
-
-    router = OperationBuilder::put("/v1/queries/{id}")
-        .operation_id("analytics_api.queries.update")
-        .summary("Update a saved query")
-        .authenticated()
-        .no_license_required()
-        .json_request::<saved_query::UpdateSavedQueryRequest>(
-            openapi,
-            "Saved query fields to update",
-        )
-        .json_response_with_schema::<saved_query::SavedQuery>(
-            openapi,
-            StatusCode::OK,
-            "Updated saved query",
-        )
-        .standard_errors(openapi)
-        .handler(saved_queries::update_saved_query)
-        .register(router, openapi);
-
-    router = OperationBuilder::delete("/v1/queries/{id}")
-        .operation_id("analytics_api.queries.delete")
-        .summary("Delete a saved query")
-        .authenticated()
-        .no_license_required()
-        .no_content_response(StatusCode::NO_CONTENT, "Saved query deleted")
-        .standard_errors(openapi)
-        .handler(saved_queries::delete_saved_query)
-        .register(router, openapi);
-
-    router = OperationBuilder::post("/v1/queries/{id}/run")
-        .operation_id("analytics_api.queries.run")
-        .summary("Run a saved query")
-        .authenticated()
-        .no_license_required()
-        .json_request::<saved_query::RunSavedQueryRequest>(
-            openapi,
-            "Optional named parameters (`period`); `tenant` is always injected from context",
-        )
-        .request_optional()
-        .json_response_with_schema::<saved_query::RunResponse>(
-            openapi,
-            StatusCode::OK,
-            "Query result rows",
-        )
-        .standard_errors(openapi)
-        .handler(saved_queries::run_saved_query)
         .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-drilldown")

@@ -27,7 +27,7 @@ which a test's setup differs. Identity's answers depend on **who is asking**
 
 | Path | Holds |
 |---|---|
-| `api/conftest.py` | the `api` client, the one scratch fixture (`scratch_saved_query`), the leak detector, catalogue export |
+| `api/conftest.py` | the `api` client, the scratch fixture (`scratch_custom_metric`), the leak detector, catalogue export |
 | `api/operations.py` | every operation the gateway routes, named once |
 | `api/scratch.py` | the mutation policy and the resources that implement it |
 | `api/schemas/` | response models — see *Models* below |

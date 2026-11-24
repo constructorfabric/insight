@@ -156,7 +156,7 @@ fn query_output_control(query: &Query) -> Option<QueryOutputControl> {
 /// contract is what keeps a custom source inside the same boundary a managed one
 /// has. Tenant-row isolation of
 /// the warehouse relations themselves is the authorship-trust + experimental
-/// gate, the same posture as the saved-query console.
+/// gate.
 pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
     validate_single_select(sql)?;
 

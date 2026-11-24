@@ -2,7 +2,7 @@
 
 `POST /api/sql/query` executes SQL without saving a query. It uses the same
 read-only ClickHouse account, grants, SQL validation, and per-pod concurrency
-budget as MCP. Saved-query endpoints and MCP OAuth are unchanged.
+budget as MCP. MCP OAuth is unchanged.
 
 ## Enable
 

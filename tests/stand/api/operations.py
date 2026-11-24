@@ -60,7 +60,7 @@ _PARAMETERS: Final[dict[str, str]] = {
 
 
 def _templated(path: str) -> str:
-    """`/v1/queries/01900000-…` -> `/v1/queries/{id}`."""
+    """`/v1/people/01900000-…` -> `/v1/people/{id}`."""
     return "/".join(_PARAMETERS.get(segment, segment) for segment in path.split("/"))
 
 
@@ -70,7 +70,7 @@ class Operation:
 
     Carries BOTH forms. `path` is the concrete url the sweep calls; `template`
     is what the operation is, and it is what the coverage gate groups by. A
-    test updating a real saved query records a url containing that query's id,
+    test updating a real metric records a url containing that metric's key,
     which matches the stand-in nowhere — so without the template the gate sees
     only the sweep's call against the catalogued url and reports an exercised
     operation as swept-only.
@@ -83,7 +83,7 @@ class Operation:
 
     @property
     def label(self) -> str:
-        """`GET /api/analytics/v1/queries`, for a readable parametrize id."""
+        """`GET /api/analytics/v1/metrics`, for a readable parametrize id."""
         return f"{self.method} {self.path}"
 
     @property
@@ -99,14 +99,8 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 26 operations.
+#: analytics — 24 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
-    _a("GET", "/v1/queries"),
-    _a("POST", "/v1/queries"),
-    _a("GET", f"/v1/queries/{SOME_ID}"),
-    _a("PUT", f"/v1/queries/{SOME_ID}"),
-    _a("DELETE", f"/v1/queries/{SOME_ID}"),
-    _a("POST", f"/v1/queries/{SOME_ID}/run"),
     _a("GET", "/v1/metric-definitions"),
     _a("POST", "/v1/metric-results"),
     _a("POST", "/v1/reports/preview"),

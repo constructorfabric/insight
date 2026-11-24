@@ -18,10 +18,6 @@ pub struct MetricError;
 #[resource_error("gts.cf.insight.analytics_api.report.v1~")]
 pub struct ReportError;
 
-/// Resource namespace for `/v1/queries*` (saved-query CRUD + run, #1965).
-#[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
-pub struct SavedQueryError;
-
 /// Resource namespace for `/v1/usage*` (adoption events + the admin read model).
 #[resource_error("gts.cf.insight.analytics_api.usage.v1~")]
 pub struct UsageError;
@@ -129,28 +125,6 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0]["field"], "query_ref");
         assert_eq!(violations[0]["reason"], "INVALID");
-        Ok(())
-    }
-
-    #[test]
-    fn saved_query_invalid_sql_envelope() -> Result<(), Box<dyn std::error::Error>> {
-        // POST/PUT /v1/queries with SQL the single-SELECT gate rejects: a 400
-        // pinning the `sql` field under the saved-query resource namespace.
-        let err = SavedQueryError::invalid_argument()
-            .with_resource("q-123")
-            .with_field_violation("sql", "query must be a single SELECT statement", "INVALID")
-            .create();
-        let p = problem(err)?;
-        assert_eq!(p["status"], 400);
-        assert_eq!(
-            p["context"]["resource_type"],
-            "gts.cf.insight.analytics_api.saved_query.v1~"
-        );
-        let violations = p["context"]["field_violations"]
-            .as_array()
-            .ok_or("field_violations must be an array")?;
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0]["field"], "sql");
         Ok(())
     }
 

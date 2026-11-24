@@ -28,7 +28,6 @@ is the one place this suite should be stricter than the rig.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 from typing import Final
 
 from insight_stand import (
@@ -44,7 +43,7 @@ from insight_stand import (
     scratch_name,
 )
 
-from .schemas import CustomMetric, ListResponse, SavedQuery
+from .schemas import CustomMetric, ListResponse
 
 #: A listing reduced to the two fields the sweep needs. Deliberately not the
 #: real per-resource models: this walks four listings across two services
@@ -56,11 +55,6 @@ _Named = ListResponse[dict[str, object]]
 # journeys can file a correction under the same pair without importing across
 # suites. Re-exported here because every existing caller reads them from this
 # module, and because the issued-name registry must stay single.
-
-#: SQL the query gate accepts (a single `SELECT … FROM db.table`) that executes
-#: deterministically on ANY ClickHouse — `system.one` has exactly one row — so
-#: `POST /v1/queries/{id}/run` drives the real engine end to end.
-SCRATCH_QUERY_REF: Final[str] = "SELECT 1 AS one FROM system.one"
 
 #: A well-formed v7 UUID nothing claims, for the unknown-id 404 cases.
 UNKNOWN_ID: Final[str] = "01900000-0000-7000-8000-000000000000"
@@ -123,31 +117,6 @@ def track(listing_path: str, id_field: str, value: object) -> str:
     identifier = str(value)
     _CREATED_IDS.append((listing_path, id_field, identifier))
     return identifier
-
-
-def create_saved_query(client: ApiClient, tag: str, sql: str = SCRATCH_QUERY_REF) -> SavedQuery:
-    """`POST /v1/queries` → 201, validated. The caller hard-deletes it.
-
-    `sql` overridable for the parameter-binding cases, which need a statement
-    that REFERENCES a named parameter — the deterministic default has none, and
-    a query with no parameters cannot show which value was bound to one.
-    """
-    name = scratch_name(tag)
-    response = client.post(
-        analytics_path("/v1/queries"),
-        json_body={
-            "name": name,
-            "description": "stand endpoint-contract scratch saved query",
-            "sql": sql,
-        },
-    )
-    assert response.status_code == 201, (
-        f"create saved query: status={response.status_code} body={response.text[:300]}"
-    )
-    query = response.parse(SavedQuery)
-    assert query.name == name
-    assert query.sql == sql
-    return query
 
 
 def scratch_metric_identity(tag: str) -> tuple[str, str]:
@@ -217,10 +186,7 @@ def create_custom_metric(client: ApiClient, tag: str) -> CustomMetric:
 
 
 #: Named resources, and the listing that would still show a leaked one.
-_NAMED_LISTINGS: Final[tuple[str, ...]] = (
-    analytics_path("/v1/queries"),
-    identity_path("/v1/roles"),
-)
+_NAMED_LISTINGS: Final[tuple[str, ...]] = (identity_path("/v1/roles"),)
 
 
 def _listing_items(client: ApiClient, path: str) -> list[dict[str, object]]:
@@ -247,7 +213,7 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
     differently, and conflating them would make this either useless or a
     permanent false alarm:
 
-    * Metrics, saved queries and roles are removed — soft-deleted or hard — and
+    * Metrics and roles are removed — soft-deleted or hard — and
       stop being listed. Any appearance is a leak.
     * Person-role assignments and visibility grants are TEMPORAL. `DELETE` sets
       `valid_to`; the row stays and the listing keeps returning it. Only a row
@@ -282,18 +248,16 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
     return leaked
 
 
-__all__: Sequence[str] = (
+__all__ = (
     "NON_UUID",
     "RUN_TAG",
     "SCRATCH_OBSERVATION_SQL",
     "SCRATCH_PREFIX",
-    "SCRATCH_QUERY_REF",
     "SCRATCH_SOURCE_ID",
     "SCRATCH_SOURCE_TYPE",
     "UNKNOWN_ID",
     "UNKNOWN_METRIC_KEY",
     "create_custom_metric",
-    "create_saved_query",
     "custom_metric_body",
     "issued_names",
     "scratch_metric_identity",

@@ -116,8 +116,8 @@ where
         })
 }
 
-/// One failure line per stage. The SQL never reaches the line — a drilldown or
-/// saved-query predicate can embed a person's name or address (insight#2488
+/// One failure line per stage. The SQL never reaches the line — a drilldown
+/// predicate can embed a person's name or address (insight#2488
 /// AC-4) — so the line carries its SHA-256 instead, joinable against the
 /// ClickHouse query log via `log_comment`. The server echoes the query into
 /// exception text too (syntax and analyzer errors quote it), so the error is
